@@ -1,0 +1,5 @@
+{
+  "name": "Remix: Purchase Management Dashboard",
+  "description": "An all-in-one dashboard for managing the entire purchasing lifecycle, from SKU creation and purchase planning to logistics, shipment tracking, and financial reconciliation. Features analytics and an AI-powered smart assistant for insights.",
+  "requestFramePermissions": []
+}
