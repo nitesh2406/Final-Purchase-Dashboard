@@ -23,47 +23,47 @@ export type ViewType = 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 
 export const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycby2w_vPzSmxd1gFxlhbqdQevKuA-_bThNZG1s7AK-gIONmBCDmUg3-rBmC6S4HvZVDd/exec';
 
 export const API_ACTIONS = {
-  // Draft Operations
-  GET_DRAFTS: 'get_drafts',
-  GET_DRAFT_BY_ID: 'get_draft_by_id',
-  CREATE_DRAFT_FROM_FORECAST: 'create_draft_from_forecast',
-  SAVE_DRAFT: 'save_draft',
-  CREATE_DRAFT: 'create_draft',
-  SUBMIT_DRAFT: 'submit_draft',
-  CANCEL_DRAFT: 'cancel_draft',
-  DUPLICATE_DRAFT: 'duplicate_draft',
-  
-  // Purchase Order Operations
-  GET_PURCHASE_ORDERS: 'get_pos',
-  GET_PURCHASE_ORDER_DETAILS: 'get_purchase_order_details',
-  
-  // Catalog Operations
-  SEARCH_SKU_CATALOG: 'search_sku_catalog',
-  ADD_SKU: 'add_sku',
-  
-  // Vendor Operations
-  GET_VENDOR_MASTERS: 'get_vendor_masters',
+    // Draft Operations
+    GET_DRAFTS: 'get_drafts',
+    GET_DRAFT_BY_ID: 'get_draft_by_id',
+    CREATE_DRAFT_FROM_FORECAST: 'create_draft_from_forecast',
+    SAVE_DRAFT: 'save_draft',
+    CREATE_DRAFT: 'create_draft',
+    SUBMIT_DRAFT: 'submit_draft',
+    CANCEL_DRAFT: 'cancel_draft',
+    DUPLICATE_DRAFT: 'duplicate_draft',
 
-  // Shipment Operations
-  UPLOAD_SHIPMENT_DOCS: 'upload_shipment_docs',
-  SHIPMENT_RERUN_MATCHING: 'shipment_rerun_matching',
-  SHIPMENT_GET_ALLOCATION: 'shipment_get_allocation',
-  SHIPMENT_CREATE: 'shipment_create',
-  GET_OPEN_BATCHES: 'get_open_batches',
-  
-  // Finance Operations
-  GET_BATCHES_FINANCE: 'get_batches_finance',
-  GET_BATCH_FINANCE_DETAIL: 'get_batch_finance_detail',
-  UPDATE_BATCH_TRACKING: 'update_batch_tracking',
-  UPDATE_SHIPMENT_FINANCE: 'update_shipment_finance',
-  UPDATE_BATCH_CURRENCY: 'update_batch_currency',
-  GET_FX_RATES: 'get_fx_rates',
-  GET_VENDOR_ACCOUNTS: 'get_vendor_accounts',
-  LOG_PAYMENT: 'log_payment',
-  GET_PAYMENTS: 'get_payments',
-  GET_AGENT_INVOICES: 'get_agent_invoices',
-  LOG_AGENT_INVOICE: 'log_agent_invoice',
-  MAP_INVOICE_SHIPMENTS: 'map_invoice_shipments',
+    // Purchase Order Operations
+    GET_PURCHASE_ORDERS: 'get_pos',
+    GET_PURCHASE_ORDER_DETAILS: 'get_purchase_order_details',
+
+    // Catalog Operations
+    SEARCH_SKU_CATALOG: 'search_sku_catalog',
+    ADD_SKU: 'add_sku',
+
+    // Vendor Operations
+    GET_VENDOR_MASTERS: 'get_vendor_masters',
+
+    // Shipment Operations
+    UPLOAD_SHIPMENT_DOCS: 'upload_shipment_docs',
+    SHIPMENT_RERUN_MATCHING: 'shipment_rerun_matching',
+    SHIPMENT_GET_ALLOCATION: 'shipment_get_allocation',
+    SHIPMENT_CREATE: 'shipment_create',
+    GET_OPEN_BATCHES: 'get_open_batches',
+
+    // Finance Operations
+    GET_BATCHES_FINANCE: 'get_batches_finance',
+    GET_BATCH_FINANCE_DETAIL: 'get_batch_finance_detail',
+    UPDATE_BATCH_TRACKING: 'update_batch_tracking',
+    UPDATE_SHIPMENT_FINANCE: 'update_shipment_finance',
+    UPDATE_BATCH_CURRENCY: 'update_batch_currency',
+    GET_FX_RATES: 'get_fx_rates',
+    GET_VENDOR_ACCOUNTS: 'get_vendor_accounts',
+    LOG_PAYMENT: 'log_payment',
+    GET_PAYMENTS: 'get_payments',
+    GET_AGENT_INVOICES: 'get_agent_invoices',
+    LOG_AGENT_INVOICE: 'log_agent_invoice',
+    MAP_INVOICE_SHIPMENTS: 'map_invoice_shipments',
 };
 
 const App: React.FC = () => {
@@ -100,7 +100,7 @@ const App: React.FC = () => {
 
             const [draftsResponse, ...otherResponses] = await Promise.all([draftsPromise, ...otherPromises]);
             const [skusData, posData, shpData, invData, venData, notifData, venMastersData] = otherResponses;
-            
+
             if (draftsResponse && draftsResponse.drafts) {
                 setDrafts(draftsResponse.drafts);
             }
@@ -136,7 +136,7 @@ const App: React.FC = () => {
     const updateSku = (updatedSku: Sku) => {
         setSkus(prevSkus => prevSkus.map(sku => sku.id === updatedSku.id ? updatedSku : sku));
     };
-    
+
     const addInvoice = (invoiceData: Omit<Invoice, 'id'>) => {
         const newInvoice: Invoice = {
             id: `INV-2024-${(invoices.length + 1).toString().padStart(3, '0')}`,
@@ -148,7 +148,7 @@ const App: React.FC = () => {
     const updateInvoice = (updatedInvoice: Invoice) => {
         setInvoices(prev => prev.map(inv => inv.id === updatedInvoice.id ? updatedInvoice : inv));
     };
-    
+
     const updateMultipleInvoices = (updatedInvoices: Invoice[]) => {
         setInvoices(prev => prev.map(inv => {
             const updated = updatedInvoices.find(u => u.id === inv.id);
@@ -157,7 +157,7 @@ const App: React.FC = () => {
     };
 
     const addVendor = (vendorData: Omit<Vendor, 'id'>) => {
-         const newVendor: Vendor = {
+        const newVendor: Vendor = {
             id: `V-${(vendors.length + 1).toString().padStart(3, '0')}`,
             ...vendorData
         };
@@ -184,10 +184,10 @@ const App: React.FC = () => {
             case 'Dashboard':
                 return <Dashboard />;
             case 'Inventory Forecasting':
-                return <InventoryForecasting isSidebarCollapsed={isSidebarCollapsed} />;
+                return <InventoryForecasting isSidebarCollapsed={isSidebarCollapsed} onNavigate={(v: ViewType) => setCurrentView(v)} />;
             case 'Draft Orders':
-                return <DraftOrdersTable 
-                    purchaseOrders={purchaseOrders} 
+                return <DraftOrdersTable
+                    purchaseOrders={purchaseOrders}
                     setPurchaseOrders={setPurchaseOrders}
                     drafts={drafts}
                     setDrafts={setDrafts}
@@ -201,8 +201,8 @@ const App: React.FC = () => {
             case 'Purchase Orders':
                 return <PurchaseOrders onNavigate={(v: ViewType) => setCurrentView(v)} />;
             case 'Vendor Shipments':
-                return <VendorShipments 
-                    onNavigate={(v: ViewType | string) => setCurrentView(v as ViewType)} 
+                return <VendorShipments
+                    onNavigate={(v: ViewType | string) => setCurrentView(v as ViewType)}
                     vendorMasters={vendorMasters}
                     productMasterList={skus}
                 />;
@@ -213,17 +213,17 @@ const App: React.FC = () => {
                 }} />;
             case 'Batch Detail':
                 return selectedBatchId ? (
-                    <BatchDetail 
-                        batchId={selectedBatchId} 
-                        onBack={() => setCurrentView('Shipment Tracker')} 
+                    <BatchDetail
+                        batchId={selectedBatchId}
+                        onBack={() => setCurrentView('Shipment Tracker')}
                     />
                 ) : <ShipmentTracker onNavigateToBatch={(id) => {
                     setSelectedBatchId(id);
                     setCurrentView('Batch Detail');
                 }} />;
             case 'Finance':
-                return <Finance 
-                    invoices={invoices} 
+                return <Finance
+                    invoices={invoices}
                     vendors={vendors}
                     purchaseOrders={purchaseOrders}
                     shipments={shipments}
@@ -240,7 +240,7 @@ const App: React.FC = () => {
                 }} />;
             case 'Shipment Finance Detail':
                 return selectedFinanceBatchId ? (
-                    <ShipmentFinanceDetail 
+                    <ShipmentFinanceDetail
                         batchId={selectedFinanceBatchId}
                         onBack={() => setCurrentView('Shipment Finance')}
                     />
@@ -273,7 +273,7 @@ const App: React.FC = () => {
                 setIsCollapsed={setIsSidebarCollapsed}
             />
             <div className={`flex-1 flex flex-col transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
-                <Header 
+                <Header
                     currentView={currentView}
                     notifications={notifications}
                     setNotifications={setNotifications}
