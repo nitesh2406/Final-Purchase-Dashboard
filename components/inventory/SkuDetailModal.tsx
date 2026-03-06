@@ -4,7 +4,7 @@ import { ForecastingSku } from '../../types';
 import { Button } from '../ui/Button';
 import { XMarkIcon, ChartBarIcon, TruckIcon, GiftIcon, CheckBadgeIcon, ExclamationTriangleIcon, BeakerIcon } from '../icons/Icons';
 import { Card } from '../ui/Card';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 
 interface SkuDetailModalProps {
     sku: ForecastingSku | null;
@@ -118,7 +118,16 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
         const startDate = new Date(endDate);
         startDate.setDate(endDate.getDate() - daysToSubtract);
 
-        // 5. Fill gaps with 0
+        // 5. Fill gaps with 0, and also merge B2C data
+        const b2cMap = new Map<string, number>();
+        (sku.salesHistory90B2C || []).forEach(item => {
+            const d = new Date(item.date);
+            if (!isNaN(d.getTime())) {
+                const key = d.toISOString().split('T')[0];
+                b2cMap.set(key, parseUnits(item.units));
+            }
+        });
+
         const denseData = [];
         for (let i = 0; i <= daysToSubtract; i++) {
             const current = new Date(startDate);
@@ -128,7 +137,8 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
             denseData.push({
                 timestamp: current.getTime(),
                 originalDate: key,
-                units: dataMap.get(key) || 0 // Use 0 if date is missing
+                units: dataMap.get(key) || 0,
+                unitsB2C: b2cMap.size > 0 ? (b2cMap.get(key) || 0) : undefined,
             });
         }
 
@@ -211,14 +221,33 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                                                     formatter={(value: number) => [value, 'Units Sold']}
                                                     labelFormatter={(unixTime) => new Date(unixTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
                                                 />
+                                                {/* Task 5: Two lines — Total (blue) + B2C Only (green dashed) */}
+                                                <Legend
+                                                    verticalAlign="top"
+                                                    height={24}
+                                                    formatter={(value: string) => <span style={{ color: '#94a3b8', fontSize: 11 }}>{value}</span>}
+                                                />
                                                 <Line
                                                     type="monotone"
                                                     dataKey="units"
+                                                    name="Total"
                                                     stroke="#3b82f6"
                                                     strokeWidth={3}
                                                     dot={false}
                                                     activeDot={{ r: 6 }}
                                                 />
+                                                {(sku.salesHistory90B2C || []).length > 0 && (
+                                                    <Line
+                                                        type="monotone"
+                                                        dataKey="unitsB2C"
+                                                        name="B2C Only"
+                                                        stroke="#10b981"
+                                                        strokeWidth={2}
+                                                        dot={false}
+                                                        activeDot={{ r: 5 }}
+                                                        strokeDasharray="4 2"
+                                                    />
+                                                )}
                                             </LineChart>
                                         </ResponsiveContainer>
                                     ) : <EmptyState message={`No ${chartPeriod}-day sales history data available`} />}
@@ -315,8 +344,9 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                                             <tbody className="divide-y divide-slate-700">
                                                 {channelData.map((ch, idx) => <tr key={idx} className="even:bg-slate-700/30 text-slate-200">
                                                     <td className="px-4 py-2">{ch.name}</td>
+                                                    {/* Task 9: Round percentage to 1 decimal */}
                                                     <td className="px-4 py-2 text-right">{formatNumber(ch.units)}</td>
-                                                    <td className="px-4 py-2 text-right">{ch.percentage}%</td>
+                                                    <td className="px-4 py-2 text-right">{(ch.percentage).toFixed(1)}%</td>
                                                 </tr>)}
                                             </tbody>
                                         </table>
@@ -338,7 +368,34 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                             <Metric label="Avg Air Lead Time" value={`${avgAirLeadTime} days`} />
                         </div>
 
-                        <h4 className="font-semibold text-slate-300 mb-2">In-Transit POs</h4>
+                        {/* Task 2: Split into In Production + In Transit sections */}
+                        {/* Section A: In Production */}
+                        {(sku.inProductionPOs || []).length > 0 && (
+                            <>
+                                <h4 className="font-semibold text-amber-400 mb-2">🏭 In Production</h4>
+                                <div className="overflow-x-auto border border-amber-500/30 rounded-lg mb-4">
+                                    <table className="min-w-full text-sm">
+                                        <thead className="bg-amber-500/10">
+                                            <tr>
+                                                {['PO #', 'Qty', 'Status'].map(h => <th key={h} className="px-4 py-2 text-left font-medium text-amber-400">{h}</th>)}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-700">
+                                            {(sku.inProductionPOs || []).map(po => (
+                                                <tr key={po.poId} className="even:bg-slate-700/30 text-slate-200">
+                                                    <td className="px-4 py-2 font-medium">{po.poId}</td>
+                                                    <td className="px-4 py-2">{formatNumber(po.qty)}</td>
+                                                    <td className="px-4 py-2"><span className="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-300">{po.status}</span></td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </>
+                        )}
+
+                        {/* Section B: In Transit */}
+                        <h4 className="font-semibold text-slate-300 mb-2">🚢 In Transit</h4>
                         {inTransitPOs.length > 0 ? (
                             <div className="overflow-x-auto border border-slate-600 rounded-lg mb-6">
                                 <table className="min-w-full text-sm">
@@ -417,6 +474,15 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                                         <span className="font-medium text-slate-200">{formatCurrency(sku.businessRules?.unitCost || sku.unitCost || 0)}</span>
                                     </div>
                                 </div>
+                                {/* Task 3: BULK pattern ticker */}
+                                {sku.suggestBulkSs && (
+                                    <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 mt-2">
+                                        <span className="text-amber-400">⚡</span>
+                                        <p className="text-amber-400 text-xs font-medium">
+                                            BULK pattern detected ({sku.bulkOrders || 0} orders in 90 days) — consider adding this SKU to the BULK_SKUs sheet for SS_BULK calculation.
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                             <div>
                                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white"><GiftIcon className="w-5 h-5 text-purple-400" /> Combo Usage</h3>
@@ -425,12 +491,14 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                                         <p className="text-sm text-gray-500">This item is part of <span className="font-bold text-purple-600">{comboUsage.length}</span> combo(s), driving <span className="font-bold">{sku.comboImpactPercent}%</span> of sales.</p>
                                         <div className="border border-slate-600 rounded-lg overflow-hidden">
                                             <table className="min-w-full text-sm">
-                                                <thead className="bg-slate-700"><tr><th className="px-4 py-2 text-left text-slate-300">Combo Name</th><th className="px-4 py-2 text-right text-slate-300">Qty/Combo</th></tr></thead>
+                                                {/* Task 6: Added 90D Sales column */}
+                                                <thead className="bg-slate-700"><tr><th className="px-4 py-2 text-left text-slate-300">Combo Name</th><th className="px-4 py-2 text-right text-slate-300">Qty/Combo</th><th className="px-4 py-2 text-right text-slate-300">90D Sales</th></tr></thead>
                                                 <tbody className="divide-y divide-slate-700">
                                                     {comboUsage.map(c => (
                                                         <tr key={c.comboSKU} className="even:bg-slate-700/30 text-slate-200">
                                                             <td className="px-4 py-2">{c.comboName}</td>
                                                             <td className="px-4 py-2 text-right">{c.qtyPerCombo}</td>
+                                                            <td className="px-4 py-2 text-right">{c.unitsSold90Days !== undefined ? formatNumber(Math.round(c.unitsSold90Days)) : '—'}</td>
                                                         </tr>
                                                     ))}
                                                 </tbody>
@@ -453,7 +521,19 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                         </button>
                         {showDebug && (
                             <pre className="mt-4 p-4 bg-slate-900 rounded-lg text-xs overflow-x-auto border border-slate-700 text-slate-300">
-                                {JSON.stringify(sku, null, 2)}
+                                {/* Debug: focused on new fields */}
+                                {JSON.stringify({
+                                    b2bRegularUnits: sku.b2bRegularUnits,
+                                    bulkUnits: sku.bulkUnits,
+                                    bulkOrders: sku.bulkOrders,
+                                    suggestBulkSs: sku.suggestBulkSs,
+                                    daysOfCover: sku.daysOfCover,
+                                    effectiveDaysOfCover: sku.effectiveDaysOfCover,
+                                    inProduction: sku.inProduction,
+                                    inProductionPOs_count: (sku.inProductionPOs || []).length,
+                                    salesHistory90B2C_points: (sku.salesHistory90B2C || []).length,
+                                    _fullData: sku,
+                                }, null, 2)}
                             </pre>
                         )}
                     </section>

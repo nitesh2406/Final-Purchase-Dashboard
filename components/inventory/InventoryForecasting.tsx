@@ -387,6 +387,12 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
                                         </span>
                                     )}
                                 </div>
+                                {/* Task 4: Show effectiveDaysOfCover if it's larger than on-hand */}
+                                {sku.effectiveDaysOfCover !== undefined && sku.effectiveDaysOfCover > sku.daysOfCover && (
+                                    <div className="text-xs text-slate-400 mt-0.5">
+                                        ↑ {sku.effectiveDaysOfCover.toFixed(0)}d with inbound
+                                    </div>
+                                )}
                                 {sku.outOfStock30Days > 0 && (
                                     <div className="text-xs text-red-500 mt-0.5" title={`Out of stock for ${sku.outOfStock30Days} days in last 30 days`}>
                                         (OOS: {sku.outOfStock30Days}d)
@@ -398,7 +404,11 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
                                     <input
                                         type="number"
                                         value={sku.reorderQty}
-                                        onFocus={(e) => setOriginalReorderValues(prev => ({ ...prev, [sku.masterSKU]: Number(e.target.value) }))}
+                                        onFocus={(e) => {
+                                            // Task 7: Select all on focus so user can immediately type a new value
+                                            e.target.select();
+                                            setOriginalReorderValues(prev => ({ ...prev, [sku.masterSKU]: Number(e.target.value) }));
+                                        }}
                                         onChange={(e) => handleReorderQtyChange(sku.masterSKU, e.target.value)}
                                         onKeyDown={(e) => handleReorderQtyKeyDown(e, sku.masterSKU)}
                                         onBlur={() => {
@@ -521,7 +531,26 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <KpiCard title={isSelectionActive ? "Selected SKUs" : "SKUs for Order"} value={formatNumber(summaryData.count)} />
                 <KpiCard title={isSelectionActive ? "Selected Qty" : "Total Qty"} value={`${formatNumber(summaryData.qty)} units`} />
-                <KpiCard title={isSelectionActive ? "Selected Value" : "Total Order Value"} value={formatLakhs(summaryData.value)} />
+                {/* Task 1: In-Transit + In-Production combined card */}
+                <Card className="p-3 sm:p-4">
+                    <div>
+                        <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Inbound</p>
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm text-blue-300">🚢 In Transit</span>
+                            <span className="text-sm font-semibold text-blue-300">
+                                {skus.filter(s => s.inTransit > 0).length} SKUs · {formatNumber(skus.reduce((a, s) => a + (s.inTransit || 0), 0))} units
+                            </span>
+                        </div>
+                        {skus.some(s => (s.inProduction || 0) > 0) && (
+                            <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-slate-700">
+                                <span className="text-sm text-amber-400">🏭 In Production</span>
+                                <span className="text-sm font-semibold text-amber-400">
+                                    {skus.filter(s => (s.inProduction || 0) > 0).length} SKUs · {formatNumber(skus.reduce((a, s) => a + (s.inProduction || 0), 0))} units
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                </Card>
                 <Button
                     className="w-full h-full text-lg font-bold"
                     disabled={summaryData.count === 0 || isLoading || isCreatingDraft}
