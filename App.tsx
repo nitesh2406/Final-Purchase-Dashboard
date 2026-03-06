@@ -81,6 +81,8 @@ const App: React.FC = () => {
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [drafts, setDrafts] = useState<DraftOrder[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [forecastingConfig, setForecastingConfig] = useState<any>(null);
+    const [configLastLoaded, setConfigLastLoaded] = useState<Date | null>(null);
 
     const fetchAllData = useCallback(async (silent = false) => {
         if (!silent) setIsLoading(true);
@@ -120,9 +122,23 @@ const App: React.FC = () => {
         }
     }, []);
 
+    const fetchConfig = useCallback(async () => {
+        try {
+            const response = await fetch(`${APPS_SCRIPT_URL}?request=get_forecasting_config`);
+            const data = await response.json();
+            if (data && !data.error) {
+                setForecastingConfig(data);
+                setConfigLastLoaded(new Date());
+            }
+        } catch (e) {
+            console.error("Config fetch error:", e);
+        }
+    }, []);
+
     useEffect(() => {
         fetchAllData();
-    }, [fetchAllData]);
+        fetchConfig();
+    }, [fetchAllData, fetchConfig]);
 
     const addSku = (newSkuData: Omit<Sku, 'id'>) => {
         const newSku: Sku = {
@@ -258,7 +274,7 @@ const App: React.FC = () => {
             case 'Inventory Analytics':
                 return <InventoryAnalytics />;
             case 'Settings':
-                return <Settings />;
+                return <Settings config={forecastingConfig} onRefreshConfig={fetchConfig} lastLoaded={configLastLoaded} />;
             default:
                 return <Dashboard />;
         }

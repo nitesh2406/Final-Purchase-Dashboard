@@ -2,10 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { APPS_SCRIPT_URL } from '../../App';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { 
-    ArrowPathIcon, 
-    InformationCircleIcon, 
-    CheckIcon, 
+import {
+    ArrowPathIcon,
+    InformationCircleIcon,
+    CheckIcon,
     XMarkIcon,
     ChartBarIcon,
     ShipIcon,
@@ -17,66 +17,66 @@ import {
 // I will use fallback icons or define them if needed. 
 // Looking at Icons.tsx again, I'll use CheckBadgeIcon for Shield and ArrowsUpDownIcon for Routing.
 
-import { 
+import {
     CheckBadgeIcon,
     ArrowsUpDownIcon
 } from '../icons/Icons';
 
 interface ForecastingConfigData {
-  // Transit & Lead Times
-  SEA_TRANSIT_DAYS: number;
-  AIR_TRANSIT_DAYS: number;
-  PROTECTION_DAYS_B2B_SEA: number;
-  PROTECTION_DAYS_B2B_AIR: number;
-  // Buffer & Cover
-  BUFFER_SEA: number;
-  BUFFER_AIR: number;
-  FREQUENCY_SEA: number;
-  FREQUENCY_AIR: number;
-  BULK_PERCENTILE: number;
-  // Demand Calculation
-  SALES_HISTORY_DAYS: number;
-  ADS_WEIGHT_15D: number;
-  ADS_WEIGHT_30D: number;
-  ADS_WEIGHT_60D: number;
-  ADS_WEIGHT_90D: number;
-  LOW_VELOCITY_FLOOR: number;
-  B2B_MULTIPLIER: number;
-  SERVICE_LEVEL_Z: number;
-  // SKU Routing
-  MIN_COST_AIR: number;
-  LOW_MMA_AIR: number;
+    // Transit & Lead Times
+    SEA_TRANSIT_DAYS: number;
+    AIR_TRANSIT_DAYS: number;
+    PROTECTION_DAYS_B2B_SEA: number;
+    PROTECTION_DAYS_B2B_AIR: number;
+    // Buffer & Cover
+    BUFFER_SEA: number;
+    BUFFER_AIR: number;
+    FREQUENCY_SEA: number;
+    FREQUENCY_AIR: number;
+    BULK_PERCENTILE: number;
+    // Demand Calculation
+    SALES_HISTORY_DAYS: number;
+    ADS_WEIGHT_15D: number;
+    ADS_WEIGHT_30D: number;
+    ADS_WEIGHT_60D: number;
+    ADS_WEIGHT_90D: number;
+    LOW_VELOCITY_FLOOR: number;
+    B2B_MULTIPLIER: number;
+    SERVICE_LEVEL_Z: number;
+    // SKU Routing
+    MIN_COST_AIR: number;
+    LOW_MMA_AIR: number;
 }
 
 type SectionKey = 'transit' | 'buffer' | 'demand' | 'routing';
 
 const DEFAULTS: ForecastingConfigData = {
-  SEA_TRANSIT_DAYS: 60,
-  AIR_TRANSIT_DAYS: 20,
-  PROTECTION_DAYS_B2B_SEA: 20,
-  PROTECTION_DAYS_B2B_AIR: 10,
-  BUFFER_SEA: 45,
-  BUFFER_AIR: 30,
-  FREQUENCY_SEA: 15,
-  FREQUENCY_AIR: 7,
-  BULK_PERCENTILE: 75,
-  SALES_HISTORY_DAYS: 90,
-  ADS_WEIGHT_15D: 0.40,
-  ADS_WEIGHT_30D: 0.30,
-  ADS_WEIGHT_60D: 0.20,
-  ADS_WEIGHT_90D: 0.10,
-  LOW_VELOCITY_FLOOR: 0.3,
-  B2B_MULTIPLIER: 1.2,
-  SERVICE_LEVEL_Z: 1.65,
-  MIN_COST_AIR: 500,
-  LOW_MMA_AIR: 10,
+    SEA_TRANSIT_DAYS: 60,
+    AIR_TRANSIT_DAYS: 20,
+    PROTECTION_DAYS_B2B_SEA: 20,
+    PROTECTION_DAYS_B2B_AIR: 10,
+    BUFFER_SEA: 45,
+    BUFFER_AIR: 30,
+    FREQUENCY_SEA: 15,
+    FREQUENCY_AIR: 7,
+    BULK_PERCENTILE: 75,
+    SALES_HISTORY_DAYS: 90,
+    ADS_WEIGHT_15D: 0.40,
+    ADS_WEIGHT_30D: 0.30,
+    ADS_WEIGHT_60D: 0.20,
+    ADS_WEIGHT_90D: 0.10,
+    LOW_VELOCITY_FLOOR: 0.3,
+    B2B_MULTIPLIER: 1.2,
+    SERVICE_LEVEL_Z: 1.65,
+    MIN_COST_AIR: 500,
+    LOW_MMA_AIR: 10,
 };
 
 const SECTION_FIELDS: Record<SectionKey, (keyof ForecastingConfigData)[]> = {
-  transit: ['SEA_TRANSIT_DAYS', 'AIR_TRANSIT_DAYS', 'PROTECTION_DAYS_B2B_SEA', 'PROTECTION_DAYS_B2B_AIR'],
-  buffer:  ['BUFFER_SEA', 'BUFFER_AIR', 'FREQUENCY_SEA', 'FREQUENCY_AIR', 'BULK_PERCENTILE'],
-  demand:  ['SALES_HISTORY_DAYS', 'ADS_WEIGHT_15D', 'ADS_WEIGHT_30D', 'ADS_WEIGHT_60D', 'ADS_WEIGHT_90D', 'LOW_VELOCITY_FLOOR', 'B2B_MULTIPLIER', 'SERVICE_LEVEL_Z'],
-  routing: ['MIN_COST_AIR', 'LOW_MMA_AIR'],
+    transit: ['SEA_TRANSIT_DAYS', 'AIR_TRANSIT_DAYS', 'PROTECTION_DAYS_B2B_SEA', 'PROTECTION_DAYS_B2B_AIR'],
+    buffer: ['BUFFER_SEA', 'BUFFER_AIR', 'FREQUENCY_SEA', 'FREQUENCY_AIR', 'BULK_PERCENTILE'],
+    demand: ['SALES_HISTORY_DAYS', 'ADS_WEIGHT_15D', 'ADS_WEIGHT_30D', 'ADS_WEIGHT_60D', 'ADS_WEIGHT_90D', 'LOW_VELOCITY_FLOOR', 'B2B_MULTIPLIER', 'SERVICE_LEVEL_Z'],
+    routing: ['MIN_COST_AIR', 'LOW_MMA_AIR'],
 };
 
 interface DebugEntry {
@@ -85,7 +85,11 @@ interface DebugEntry {
     data: any;
 }
 
-export const ForecastingConfig: React.FC = () => {
+export const ForecastingConfig: React.FC<{
+    externalConfig?: ForecastingConfigData;
+    onRefreshExternal?: () => void;
+    lastLoaded?: Date | null;
+}> = ({ externalConfig, onRefreshExternal, lastLoaded }) => {
     const [config, setConfig] = useState<ForecastingConfigData>(DEFAULTS);
     const [savedConfig, setSavedConfig] = useState<ForecastingConfigData>(DEFAULTS);
     const [isLoading, setIsLoading] = useState(true);
@@ -99,8 +103,8 @@ export const ForecastingConfig: React.FC = () => {
         hasChanges: boolean;
     }>>({
         transit: { isSaving: false, isSaved: false, hasChanges: false },
-        buffer:  { isSaving: false, isSaved: false, hasChanges: false },
-        demand:  { isSaving: false, isSaved: false, hasChanges: false },
+        buffer: { isSaving: false, isSaved: false, hasChanges: false },
+        demand: { isSaving: false, isSaved: false, hasChanges: false },
         routing: { isSaving: false, isSaved: false, hasChanges: false },
     });
 
@@ -110,38 +114,17 @@ export const ForecastingConfig: React.FC = () => {
         setDebugLog(prev => [{ time, type, data }, ...prev].slice(0, 20));
     }, []);
 
-    const fetchConfig = useCallback(async () => {
-        setIsLoading(true);
-        setLoadError(null);
-        addDebugLog('req', { action: 'get_forecasting_config' });
-
-        try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'get_forecasting_config' })
-            });
-            const data = await response.json();
-            addDebugLog('res', data);
-
-            if (data.success && data.config) {
-                const mergedConfig = { ...DEFAULTS, ...data.config };
-                setConfig(mergedConfig);
-                setSavedConfig(mergedConfig);
-            } else {
-                setLoadError("Using defaults (backend data missing or error)");
-            }
-        } catch (err: any) {
-            addDebugLog('err', err.message);
-            setLoadError("Using defaults (connection error)");
-        } finally {
-            setIsLoading(false);
-        }
-    }, [addDebugLog]);
-
     useEffect(() => {
-        fetchConfig();
-    }, [fetchConfig]);
+        if (externalConfig) {
+            const mergedConfig = { ...DEFAULTS, ...externalConfig };
+            setConfig(mergedConfig);
+            setSavedConfig(mergedConfig);
+            setIsLoading(false);
+        } else if (!externalConfig && onRefreshExternal) {
+            // Only fetch if we don't have it yet
+            onRefreshExternal();
+        }
+    }, [externalConfig, onRefreshExternal]);
 
     // Update hasChanges when config or savedConfig changes
     useEffect(() => {
@@ -164,7 +147,7 @@ export const ForecastingConfig: React.FC = () => {
 
     const saveSection = async (section: SectionKey) => {
         setSectionStates(prev => ({ ...prev, [section]: { ...prev[section], isSaving: true } }));
-        
+
         const fields = SECTION_FIELDS[section];
         const sectionData: Partial<ForecastingConfigData> = {};
         fields.forEach(f => {
@@ -184,10 +167,12 @@ export const ForecastingConfig: React.FC = () => {
 
             if (data.success) {
                 setSavedConfig(prev => ({ ...prev, ...sectionData }));
-                setSectionStates(prev => ({ 
-                    ...prev, 
-                    [section]: { ...prev[section], isSaving: false, isSaved: true, hasChanges: false } 
+                setSectionStates(prev => ({
+                    ...prev,
+                    [section]: { ...prev[section], isSaving: false, isSaved: true, hasChanges: false }
                 }));
+                // Task 8: Refresh global config after successful save
+                if (onRefreshExternal) onRefreshExternal();
                 setTimeout(() => {
                     setSectionStates(prev => ({ ...prev, [section]: { ...prev[section], isSaved: false } }));
                 }, 3000);
@@ -231,6 +216,11 @@ export const ForecastingConfig: React.FC = () => {
                     <p className="text-xs text-slate-500 mt-1">
                         Settings are saved to the <span className="text-slate-300 font-mono">Forecasting_Config</span> sheet and take effect on the next forecast run.
                     </p>
+                    {lastLoaded && (
+                        <p className="text-[10px] text-slate-500 mt-1 italic">
+                            Last loaded: {lastLoaded.toLocaleTimeString()} ({Math.floor((new Date().getTime() - lastLoaded.getTime()) / 60000)} mins ago)
+                        </p>
+                    )}
                     {loadError && (
                         <div className="mt-2 flex items-center gap-2 text-yellow-400 text-[10px] font-bold uppercase tracking-wider">
                             <InformationCircleIcon className="w-3 h-3" />
@@ -239,20 +229,19 @@ export const ForecastingConfig: React.FC = () => {
                     )}
                 </div>
                 <div className="flex items-center gap-2">
-                    <button 
-                        onClick={fetchConfig}
+                    <button
+                        onClick={() => onRefreshExternal?.()}
                         className="p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-600 transition-colors"
                         title="Reload from backend"
                     >
                         <ArrowPathIcon className="w-4 h-4" />
                     </button>
-                    <button 
+                    <button
                         onClick={() => setShowDebug(!showDebug)}
-                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all border ${
-                            showDebug 
-                            ? 'bg-purple-600/20 text-purple-400 border-purple-500/30' 
-                            : 'bg-slate-800 text-slate-500 border-slate-700 hover:border-slate-600'
-                        }`}
+                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all border ${showDebug
+                                ? 'bg-purple-600/20 text-purple-400 border-purple-500/30'
+                                : 'bg-slate-800 text-slate-500 border-slate-700 hover:border-slate-600'
+                            }`}
                     >
                         🐛 Debug
                     </button>
@@ -265,7 +254,7 @@ export const ForecastingConfig: React.FC = () => {
                     <div className="flex items-center justify-between mb-3">
                         <h3 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">API Activity Log</h3>
                         <div className="flex gap-2">
-                            <button 
+                            <button
                                 onClick={() => {
                                     navigator.clipboard.writeText(JSON.stringify(debugLog, null, 2));
                                 }}
@@ -273,7 +262,7 @@ export const ForecastingConfig: React.FC = () => {
                             >
                                 Copy JSON
                             </button>
-                            <button 
+                            <button
                                 onClick={() => setDebugLog([])}
                                 className="text-[9px] text-slate-400 hover:text-white underline underline-offset-2"
                             >
@@ -288,11 +277,10 @@ export const ForecastingConfig: React.FC = () => {
                             debugLog.map((entry, i) => (
                                 <div key={i} className="flex gap-3 items-start border-b border-slate-800 pb-2 last:border-0">
                                     <span className="text-slate-500 flex-shrink-0">{entry.time}</span>
-                                    <span className={`px-1 rounded flex-shrink-0 font-bold ${
-                                        entry.type === 'req' ? 'bg-blue-500/10 text-blue-400' :
-                                        entry.type === 'res' ? 'bg-green-500/10 text-green-400' :
-                                        'bg-red-500/10 text-red-400'
-                                    }`}>
+                                    <span className={`px-1 rounded flex-shrink-0 font-bold ${entry.type === 'req' ? 'bg-blue-500/10 text-blue-400' :
+                                            entry.type === 'res' ? 'bg-green-500/10 text-green-400' :
+                                                'bg-red-500/10 text-red-400'
+                                        }`}>
                                         {entry.type.toUpperCase()}
                                     </span>
                                     <span className="text-slate-400 break-all">{JSON.stringify(entry.data)}</span>
@@ -305,29 +293,29 @@ export const ForecastingConfig: React.FC = () => {
 
             <div className="grid grid-cols-1 gap-6">
                 {/* Section 1: Transit & Lead Times */}
-                <SectionCard 
-                    title="Transit & Lead Times" 
+                <SectionCard
+                    title="Transit & Lead Times"
                     subtitle="Define logistics delays for each shipping mode"
                     icon={<ShipIcon className="w-5 h-5 text-blue-400" />}
                     state={sectionStates.transit}
                     onSave={() => saveSection('transit')}
                     onReset={() => resetSection('transit')}
                 >
-                    <SettingRow 
+                    <SettingRow
                         label="SEA Transit Days"
                         description="Days from supplier dispatch to India arrival via sea. Added on top of Lead_Time from EE Product Master."
                         unit="days"
                         value={config.SEA_TRANSIT_DAYS}
                         onChange={(v) => handleInputChange('SEA_TRANSIT_DAYS', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="AIR Transit Days"
                         description="Total lead time for AIR mode (production + air freight)."
                         unit="days"
                         value={config.AIR_TRANSIT_DAYS}
                         onChange={(v) => handleInputChange('AIR_TRANSIT_DAYS', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="B2B Protection Days (SEA)"
                         description="Multiplied with B2B safety stock for SEA."
                         unit="days"
@@ -335,7 +323,7 @@ export const ForecastingConfig: React.FC = () => {
                         value={config.PROTECTION_DAYS_B2B_SEA}
                         onChange={(v) => handleInputChange('PROTECTION_DAYS_B2B_SEA', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="B2B Protection Days (AIR)"
                         description="Multiplied with B2B safety stock for AIR. Reserved for future use."
                         unit="days"
@@ -346,43 +334,43 @@ export const ForecastingConfig: React.FC = () => {
                 </SectionCard>
 
                 {/* Section 2: Buffer Stock & Cover */}
-                <SectionCard 
-                    title="Buffer Stock & Cover" 
+                <SectionCard
+                    title="Buffer Stock & Cover"
                     subtitle="Safety margins to prevent stockouts"
                     icon={<CheckBadgeIcon className="w-5 h-5 text-emerald-400" />}
                     state={sectionStates.buffer}
                     onSave={() => saveSection('buffer')}
                     onReset={() => resetSection('buffer')}
                 >
-                    <SettingRow 
+                    <SettingRow
                         label="SEA Minimum Cover Buffer"
                         description="Minimum days of cover required when a SEA shipment arrives. Drives target stock upward."
                         unit="days"
                         value={config.BUFFER_SEA}
                         onChange={(v) => handleInputChange('BUFFER_SEA', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="AIR Minimum Cover Buffer"
                         description="Minimum days of cover required when an AIR shipment arrives."
                         unit="days"
                         value={config.BUFFER_AIR}
                         onChange={(v) => handleInputChange('BUFFER_AIR', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="Order Frequency — SEA"
                         description="How often SEA orders are placed. Extra inventory = ADS × this."
                         unit="days"
                         value={config.FREQUENCY_SEA}
                         onChange={(v) => handleInputChange('FREQUENCY_SEA', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="Order Frequency — AIR"
                         description="How often AIR orders are placed. Extra inventory = ADS × this."
                         unit="days"
                         value={config.FREQUENCY_AIR}
                         onChange={(v) => handleInputChange('FREQUENCY_AIR', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="Bulk Order Percentile"
                         description="Percentile of BULK channel order sizes used for safety stock buffer. 75 = covers 75% of typical BULK orders. Outliers (>mean+2σ) are automatically excluded."
                         unit="%"
@@ -395,22 +383,22 @@ export const ForecastingConfig: React.FC = () => {
                 </SectionCard>
 
                 {/* Section 3: Demand Calculation */}
-                <SectionCard 
-                    title="Demand Calculation" 
+                <SectionCard
+                    title="Demand Calculation"
                     subtitle="Fine-tune how Average Daily Sales (ADS) is computed"
                     icon={<PresentationChartLineIcon className="w-5 h-5 text-purple-400" />}
                     state={sectionStates.demand}
                     onSave={() => saveSection('demand')}
                     onReset={() => resetSection('demand')}
                 >
-                    <SettingRow 
+                    <SettingRow
                         label="Sales History Window"
                         description="How many days back to look in Sales Data when computing ADS."
                         unit="days"
                         value={config.SALES_HISTORY_DAYS}
                         onChange={(v) => handleInputChange('SALES_HISTORY_DAYS', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="Low Velocity Floor"
                         description="Any SKU with B2C ADS below this is bumped to this floor. 0.3 ≈ 9 units/month."
                         unit="units/day"
@@ -418,7 +406,7 @@ export const ForecastingConfig: React.FC = () => {
                         step={0.1}
                         onChange={(v) => handleInputChange('LOW_VELOCITY_FLOOR', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="B2B Demand Multiplier"
                         description="B2B ADS is multiplied by this. Compounds with safety stock — use carefully."
                         unit="×"
@@ -427,7 +415,7 @@ export const ForecastingConfig: React.FC = () => {
                         step={0.1}
                         onChange={(v) => handleInputChange('B2B_MULTIPLIER', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="Service Level (Z-Score)"
                         description={`Z-score for B2C safety stock. Current: ${config.SERVICE_LEVEL_Z === 1.65 ? '95%' : config.SERVICE_LEVEL_Z === 1.96 ? '97.5%' : config.SERVICE_LEVEL_Z === 2.33 ? '99%' : config.SERVICE_LEVEL_Z === 1.28 ? '90%' : 'Custom'}`}
                         unit="—"
@@ -441,34 +429,33 @@ export const ForecastingConfig: React.FC = () => {
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-2">
                                 <span className="text-sm font-medium text-slate-200">ADS Weights (B2C)</span>
-                                <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
-                                    isAdsValid ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'
-                                }`}>
+                                <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${isAdsValid ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'
+                                    }`}>
                                     Total = {adsTotal.toFixed(2)} {isAdsValid ? '✓' : '⚠ must equal 1.00'}
                                 </span>
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
-                            <WeightInput 
-                                label="Last 15 days" 
+                            <WeightInput
+                                label="Last 15 days"
                                 hint="Recent trend"
                                 value={config.ADS_WEIGHT_15D}
                                 onChange={(v) => handleInputChange('ADS_WEIGHT_15D', v)}
                             />
-                            <WeightInput 
-                                label="Last 30 days" 
+                            <WeightInput
+                                label="Last 30 days"
                                 hint="Monthly average"
                                 value={config.ADS_WEIGHT_30D}
                                 onChange={(v) => handleInputChange('ADS_WEIGHT_30D', v)}
                             />
-                            <WeightInput 
-                                label="30–60 days" 
+                            <WeightInput
+                                label="30–60 days"
                                 hint="Historical baseline"
                                 value={config.ADS_WEIGHT_60D}
                                 onChange={(v) => handleInputChange('ADS_WEIGHT_60D', v)}
                             />
-                            <WeightInput 
-                                label="60–90 days" 
+                            <WeightInput
+                                label="60–90 days"
                                 hint="Long-term trend"
                                 value={config.ADS_WEIGHT_90D}
                                 onChange={(v) => handleInputChange('ADS_WEIGHT_90D', v)}
@@ -478,22 +465,22 @@ export const ForecastingConfig: React.FC = () => {
                 </SectionCard>
 
                 {/* Section 4: SKU Routing */}
-                <SectionCard 
-                    title="SKU Routing" 
+                <SectionCard
+                    title="SKU Routing"
                     subtitle="Rules for auto-assigning Air vs Sea mode"
                     icon={<ArrowsUpDownIcon className="w-5 h-5 text-sky-400" />}
                     state={sectionStates.routing}
                     onSave={() => saveSection('routing')}
                     onReset={() => resetSection('routing')}
                 >
-                    <SettingRow 
+                    <SettingRow
                         label="Min Cost for AIR Eligibility"
                         description={`SKUs with Cost > ₹${config.MIN_COST_AIR} go to AIR mode.`}
                         unit="₹ / unit"
                         value={config.MIN_COST_AIR}
                         onChange={(v) => handleInputChange('MIN_COST_AIR', v)}
                     />
-                    <SettingRow 
+                    <SettingRow
                         label="Low MMA Threshold (AIR)"
                         description={`SKUs with Monthly Moving Average < ${config.LOW_MMA_AIR} go to AIR regardless of cost.`}
                         unit="units/month"
@@ -549,21 +536,20 @@ const SectionCard: React.FC<SectionCardProps> = ({ title, subtitle, icon, state,
             </div>
             <div className="flex items-center gap-4">
                 {state.hasChanges && (
-                    <button 
+                    <button
                         onClick={onReset}
                         className="text-[10px] font-bold text-slate-500 hover:text-slate-300 uppercase tracking-widest transition-colors"
                     >
                         Reset
                     </button>
                 )}
-                <Button 
+                <Button
                     onClick={onSave}
                     disabled={!state.hasChanges || state.isSaving}
-                    className={`h-8 px-4 text-[10px] font-bold uppercase tracking-widest transition-all ${
-                        state.isSaved ? 'bg-green-600/20 text-green-400 border border-green-600/30 hover:bg-green-600/20 cursor-default' :
-                        !state.hasChanges ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed border-transparent' :
-                        'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20'
-                    }`}
+                    className={`h-8 px-4 text-[10px] font-bold uppercase tracking-widest transition-all ${state.isSaved ? 'bg-green-600/20 text-green-400 border border-green-600/30 hover:bg-green-600/20 cursor-default' :
+                            !state.hasChanges ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed border-transparent' :
+                                'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20'
+                        }`}
                 >
                     {state.isSaving ? (
                         <div className="flex items-center gap-2">
@@ -611,7 +597,7 @@ const SettingRow: React.FC<SettingRowProps> = ({ label, description, unit, value
             <p className="text-xs text-slate-500 mt-1 leading-relaxed">{description}</p>
         </div>
         <div className="flex items-center gap-2">
-            <input 
+            <input
                 type="number"
                 value={value}
                 step={step}
@@ -639,7 +625,7 @@ const WeightInput: React.FC<WeightInputProps> = ({ label, hint, value, onChange 
             <p className="text-[9px] text-slate-600 mt-0.5">{hint}</p>
         </div>
         <div className="flex items-center gap-2">
-            <input 
+            <input
                 type="number"
                 value={value}
                 step={0.05}
