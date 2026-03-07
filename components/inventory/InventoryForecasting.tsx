@@ -86,6 +86,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
     const [debugLog, setDebugLog] = useState<DebugEntry[]>([]);
 
     const prevModeRef = useRef<'sea' | 'air' | null>(null);
+    const latestModeRef = useRef(activeMode);
 
     const addDebugLog = useCallback((type: 'req' | 'res' | 'err', data: any) => {
         const now = new Date();
@@ -128,7 +129,9 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
 
             // Update cache and state
             forecastingCache[activeMode] = data;
-            setSkus(data);
+            if (latestModeRef.current === activeMode) {
+                setSkus(data);
+            }
 
         } catch (e: any) {
             console.error("API Error:", e);
@@ -142,6 +145,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
 
     // Handle load and tab switching logic
     useEffect(() => {
+        latestModeRef.current = activeMode;
         const modeChanged = prevModeRef.current !== activeMode;
 
         // Only fetch if mode changed OR cache is completely missing
@@ -160,7 +164,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
 
     const filteredSkus = useMemo(() => {
         return skus
-            .filter(sku => sku.mode === 'Both' || sku.mode.toLowerCase() === activeMode)
             .filter(sku => {
                 if (statusFilter === 'All') return true;
                 if (statusFilter === 'Awaiting Inbound') return sku.inTransit > 0;
@@ -354,9 +357,23 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
                             <td className="px-3 py-3 whitespace-nowrap text-base font-semibold text-white text-center">{formatNumber(sku.inStock)}</td>
                             <td className="px-3 py-3 whitespace-nowrap text-sm text-center">
                                 {sku.inTransit > 0 ? (
-                                    <div>
-                                        <span className="px-1.5 py-0.5 rounded bg-blue-200 text-blue-800 dark:bg-blue-900/70 dark:text-blue-200 font-semibold">{formatNumber(sku.inTransit)} units</span>
-                                        {sku.inboundETA && <p className="text-xs text-gray-400 mt-1">ETA: {new Date(sku.inboundETA).toLocaleDateString('en-GB', { month: 'short', day: '2-digit' })}</p>}
+                                    <div className="flex flex-col items-center gap-1">
+                                        <div>
+                                            <span className="px-1.5 py-0.5 rounded bg-blue-200 text-blue-800 dark:bg-blue-900/70 dark:text-blue-200 font-semibold">{formatNumber(sku.inTransit)} units</span>
+                                            {sku.inboundETA && <p className="text-xs text-gray-400 mt-1">ETA: {new Date(sku.inboundETA).toLocaleDateString('en-GB', { month: 'short', day: '2-digit' })}</p>}
+                                        </div>
+                                        {sku.inProduction > 0 && (
+                                            <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-200 text-amber-800 dark:bg-amber-900/70 dark:text-amber-400">
+                                                🏭 {formatNumber(sku.inProduction)} in prod
+                                            </span>
+                                        )}
+                                    </div>
+                                ) : sku.inProduction > 0 ? (
+                                    <div className="flex flex-col items-center gap-1">
+                                        <span className="text-gray-400">-</span>
+                                        <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-200 text-amber-800 dark:bg-amber-900/70 dark:text-amber-400">
+                                            🏭 {formatNumber(sku.inProduction)} in prod
+                                        </span>
                                     </div>
                                 ) : (
                                     <span className="text-gray-400">-</span>
@@ -527,30 +544,10 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
                 </Card>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <KpiCard title={isSelectionActive ? "Selected SKUs" : "SKUs for Order"} value={formatNumber(summaryData.count)} />
                 <KpiCard title={isSelectionActive ? "Selected Qty" : "Total Qty"} value={`${formatNumber(summaryData.qty)} units`} />
                 <KpiCard title={isSelectionActive ? "Selected Value" : "Total Order Value"} value={formatLakhs(summaryData.value)} />
-                {/* Task 1: In-Transit + In-Production combined card */}
-                <Card className="p-3 sm:p-4">
-                    <div>
-                        <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Inbound</p>
-                        <div className="flex items-center justify-between">
-                            <span className="text-sm text-blue-300">🚢 In Transit</span>
-                            <span className="text-sm font-semibold text-blue-300">
-                                {skus.filter(s => s.inTransit > 0).length} SKUs · {formatNumber(skus.reduce((a, s) => a + (s.inTransit || 0), 0))} units
-                            </span>
-                        </div>
-                        {skus.some(s => (s.inProduction || 0) > 0) && (
-                            <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-slate-700">
-                                <span className="text-sm text-amber-400">🏭 In Production</span>
-                                <span className="text-sm font-semibold text-amber-400">
-                                    {skus.filter(s => (s.inProduction || 0) > 0).length} SKUs · {formatNumber(skus.reduce((a, s) => a + (s.inProduction || 0), 0))} units
-                                </span>
-                            </div>
-                        )}
-                    </div>
-                </Card>
                 <Button
                     className="w-full h-full text-lg font-bold"
                     disabled={summaryData.count === 0 || isLoading || isCreatingDraft}
