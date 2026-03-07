@@ -81,7 +81,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
     const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'daysOfCover', direction: 'asc' });
     const [selectedSku, setSelectedSku] = useState<ForecastingSku | null>(null);
     const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
-    const [originalReorderValues, setOriginalReorderValues] = useState<Record<string, number>>({});
+    const [editingQty, setEditingQty] = useState<Record<string, string>>({});
     const [showDebug, setShowDebug] = useState(false);
     const [debugLog, setDebugLog] = useState<DebugEntry[]>([]);
 
@@ -224,21 +224,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
                 ? { ...s, reorderQty: isNaN(newValue) || newValue < 0 ? 0 : newValue }
                 : s
         ));
-    };
-
-    const handleReorderQtyKeyDown = (e: KeyboardEvent<HTMLInputElement>, skuId: string) => {
-        if (e.key === 'Escape') {
-            const originalValue = originalReorderValues[skuId];
-            if (originalValue !== undefined) {
-                setSkus(prev => prev.map(s =>
-                    s.masterSKU === skuId ? { ...s, reorderQty: originalValue } : s
-                ));
-            }
-            e.currentTarget.blur();
-        }
-        if (e.key === 'Enter') {
-            e.currentTarget.blur();
-        }
     };
 
     const handleCreateDraft = async () => {
@@ -388,9 +373,14 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
                                     )}
                                 </div>
                                 {/* Task 4: Show effectiveDaysOfCover if it's larger than on-hand */}
-                                {sku.effectiveDaysOfCover !== undefined && sku.effectiveDaysOfCover > sku.daysOfCover && (
+                                {sku.effectiveDaysOfCover !== undefined && sku.effectiveDaysOfCover > sku.daysOfCover && sku.effectiveDaysOfCover < 999 && (
                                     <div className="text-xs text-slate-400 mt-0.5">
                                         ↑ {sku.effectiveDaysOfCover.toFixed(0)}d with inbound
+                                    </div>
+                                )}
+                                {sku.effectiveDaysOfCover !== undefined && sku.effectiveDaysOfCover > sku.daysOfCover && sku.effectiveDaysOfCover >= 999 && (
+                                    <div className="text-xs text-slate-400 mt-0.5">
+                                        ↑ 999d+ with inbound
                                     </div>
                                 )}
                                 {sku.outOfStock30Days > 0 && (
@@ -402,19 +392,28 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
                             <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
                                 <div className="relative group w-24 mx-auto">
                                     <input
-                                        type="number"
-                                        value={sku.reorderQty}
+                                        type="text"
+                                        inputMode="numeric"
+                                        pattern="[0-9]*"
+                                        value={editingQty[sku.masterSKU] !== undefined ? editingQty[sku.masterSKU] : sku.reorderQty}
                                         onFocus={(e) => {
-                                            // Task 7: Select all on focus so user can immediately type a new value
                                             e.target.select();
-                                            setOriginalReorderValues(prev => ({ ...prev, [sku.masterSKU]: Number(e.target.value) }));
+                                            setEditingQty(prev => ({ ...prev, [sku.masterSKU]: String(sku.reorderQty) }));
                                         }}
-                                        onChange={(e) => handleReorderQtyChange(sku.masterSKU, e.target.value)}
-                                        onKeyDown={(e) => handleReorderQtyKeyDown(e, sku.masterSKU)}
-                                        onBlur={() => {
-                                            const newOriginals = { ...originalReorderValues };
-                                            delete newOriginals[sku.masterSKU];
-                                            setOriginalReorderValues(newOriginals);
+                                        onChange={(e) => setEditingQty(prev => ({ ...prev, [sku.masterSKU]: e.target.value }))}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Escape') setEditingQty(prev => { const n = { ...prev }; delete n[sku.masterSKU]; return n; });
+                                            if (e.key === 'Enter') e.currentTarget.blur();
+                                        }}
+                                        onBlur={(e) => {
+                                            const val = e.target.value;
+                                            const num = val === '' ? 0 : parseInt(val, 10);
+                                            handleReorderQtyChange(sku.masterSKU, isNaN(num) || num < 0 ? '0' : String(num));
+                                            setEditingQty(prev => {
+                                                const newEds = { ...prev };
+                                                delete newEds[sku.masterSKU];
+                                                return newEds;
+                                            });
                                         }}
                                         className="w-full text-center text-base font-semibold text-primary-400 bg-slate-700 border border-slate-600 rounded-md p-1 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                                     />
@@ -528,9 +527,10 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
                 </Card>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
                 <KpiCard title={isSelectionActive ? "Selected SKUs" : "SKUs for Order"} value={formatNumber(summaryData.count)} />
                 <KpiCard title={isSelectionActive ? "Selected Qty" : "Total Qty"} value={`${formatNumber(summaryData.qty)} units`} />
+                <KpiCard title={isSelectionActive ? "Selected Value" : "Total Order Value"} value={formatLakhs(summaryData.value)} />
                 {/* Task 1: In-Transit + In-Production combined card */}
                 <Card className="p-3 sm:p-4">
                     <div>

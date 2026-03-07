@@ -124,10 +124,14 @@ const App: React.FC = () => {
 
     const fetchConfig = useCallback(async () => {
         try {
-            const response = await fetch(`${APPS_SCRIPT_URL}?request=get_forecasting_config`);
+            const response = await fetch(APPS_SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: 'get_forecasting_config' })
+            });
             const data = await response.json();
-            if (data && !data.error) {
-                setForecastingConfig(data);
+            if (data && data.success && data.config) {
+                setForecastingConfig(data.config);
                 setConfigLastLoaded(new Date());
             }
         } catch (e) {
