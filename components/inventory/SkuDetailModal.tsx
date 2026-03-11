@@ -328,15 +328,6 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                                                         <td className="px-4 py-2 text-right">{formatNumber(qty)}</td>
                                                     </tr>
                                                 ))}
-                                                {/* Kit Stock Row - Only if > 0 */}
-                                                {(sku.kitStockContribution || 0) > 0 && (
-                                                    <tr className="text-blue-400">
-                                                        <td className="px-4 py-2">
-                                                            🧩 Kit Stock <span className="text-xs text-gray-500 font-normal ml-1">(included above)</span>
-                                                        </td>
-                                                        <td className="px-4 py-2 text-right">{formatNumber(sku.kitStockContribution || 0)}</td>
-                                                    </tr>
-                                                )}
                                                 {/* Reserved Row - styling updated to muted */}
                                                 <tr className="text-gray-500 dark:text-gray-400">
                                                     <td className="px-4 py-2">
