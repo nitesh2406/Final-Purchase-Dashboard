@@ -47,7 +47,7 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
         // Safeguard: stockByLocation might be undefined from backend
         const stockLoc = (sku.stockByLocation || {}) as Record<string, number>;
         const totalStock = Object.values(stockLoc).reduce((a: number, b: number) => a + b, 0);
-        const availableToSell = totalStock - (sku.reservedQty || 0);
+        const availableToSell = totalStock;
 
         // Safeguard: channelSplit might be undefined
         const split = sku.channelSplit || {};
@@ -322,14 +322,35 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                                         <table className="min-w-full text-sm">
                                             <thead className="bg-slate-700"><tr><th className="px-4 py-2 text-left font-medium text-slate-300">Location</th><th className="px-4 py-2 text-right font-medium text-slate-300">Units</th></tr></thead>
                                             <tbody className="divide-y divide-slate-700">
-                                                {Object.entries((sku.stockByLocation || {}) as Record<string, number>).map(([loc, qty]) => <tr key={loc} className="even:bg-slate-700/30 text-slate-200">
-                                                    <td className="px-4 py-2">{loc}</td><td className="px-4 py-2 text-right">{formatNumber(qty)}</td>
-                                                </tr>)}
-                                                <tr className="text-slate-400"><td className="px-4 py-2">Reserved</td><td className="px-4 py-2 text-right">{formatNumber(sku.reservedQty || 0)}</td></tr>
+                                                {Object.entries((sku.stockByLocation || {}) as Record<string, number>).map(([loc, qty]) => (
+                                                    <tr key={loc} className="even:bg-slate-700/30 text-slate-200">
+                                                        <td className="px-4 py-2">{loc}</td>
+                                                        <td className="px-4 py-2 text-right">{formatNumber(qty)}</td>
+                                                    </tr>
+                                                ))}
+                                                {/* Kit Stock Row - Only if > 0 */}
+                                                {(sku.kitStockContribution || 0) > 0 && (
+                                                    <tr className="text-blue-400">
+                                                        <td className="px-4 py-2">
+                                                            🧩 Kit Stock <span className="text-xs text-gray-500 font-normal ml-1">(included above)</span>
+                                                        </td>
+                                                        <td className="px-4 py-2 text-right">{formatNumber(sku.kitStockContribution || 0)}</td>
+                                                    </tr>
+                                                )}
+                                                {/* Reserved Row - styling updated to muted */}
+                                                <tr className="text-gray-500 dark:text-gray-400">
+                                                    <td className="px-4 py-2">
+                                                        Reserved <span className="text-xs font-normal ml-1">(included above)</span>
+                                                    </td>
+                                                    <td className="px-4 py-2 text-right">{formatNumber(sku.reservedQty || 0)}</td>
+                                                </tr>
                                             </tbody>
                                             <tfoot className="bg-slate-700 font-semibold">
-                                                <tr><td className="px-4 py-2 text-green-400">Available</td><td className="px-4 py-2 text-right text-green-400">{formatNumber(availableToSell)}</td></tr>
-                                                <tr><td className="px-4 py-2 text-slate-200">TOTAL</td><td className="px-4 py-2 text-right text-slate-200">{formatNumber(totalStock)}</td></tr>
+                                                {/* Renamed Available to TOTAL and kept green styling */}
+                                                <tr>
+                                                    <td className="px-4 py-2 text-green-400">TOTAL</td>
+                                                    <td className="px-4 py-2 text-right text-green-400">{formatNumber(availableToSell)}</td>
+                                                </tr>
                                             </tfoot>
                                         </table>
                                     </div>

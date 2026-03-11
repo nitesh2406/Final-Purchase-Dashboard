@@ -451,6 +451,7 @@ export interface ForecastingSku {
   lastStockoutEnd: string | null;
   stockoutGapDays: number;
   SS_BULK: number;
+  kitStockContribution?: number;
 }
 
 // ==========================================
