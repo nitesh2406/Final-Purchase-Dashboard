@@ -90,6 +90,9 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     const [selectedSku, setSelectedSku] = useState<ForecastingSku | null>(null);
     const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
     const [editingQty, setEditingQty] = useState<Record<string, string>>({});
+    const [showNeedsOrderOnly, setShowNeedsOrderOnly] = useState(false);
+    const [showSummaryModal, setShowSummaryModal] = useState(false);
+    const [lastDraftPayload, setLastDraftPayload] = useState<any>(null);
     const [showDebug, setShowDebug] = useState(false);
     const [debugLog, setDebugLog] = useState<DebugEntry[]>([]);
 
@@ -181,11 +184,15 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                 if (statusFilter === 'Stockout Gap') return sku.stockoutGapDays > 0;
                 return true;
             })
+            .filter(sku => {
+                if (showNeedsOrderOnly) return sku.reorderQty > 0;
+                return true;
+            })
             .filter(sku =>
                 String(sku.masterSKU || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                 String(sku.productName || '').toLowerCase().includes(searchTerm.toLowerCase())
             );
-    }, [skus, statusFilter, searchTerm, activeMode]);
+    }, [skus, statusFilter, searchTerm, activeMode, showNeedsOrderOnly]);
 
     const sortedSkus = useMemo(() => {
         // Find skus based on stable IDs if we have them
@@ -260,22 +267,54 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         ));
     };
 
-    const handleCreateDraft = async () => {
-        if (summaryData.count === 0) return;
+    const handleCreateDraft = () => {
+        // IMPROVEMENT 5: Warning if no checkbox selected
+        if (selectedSkuIds.length === 0) {
+            setToast({
+                message: "No SKUs selected. Use the checkboxes to select SKUs, or use Select All to select all visible rows.",
+                type: 'error'
+            });
+            setTimeout(() => setToast(null), 5000);
+            return;
+        }
+
+        // IMPROVEMENT 4: Summary modal before draft creation
+        const selectedSkusWithQty = skus
+            .filter(s => selectedSkuIds.includes(s.masterSKU))
+            .filter(s => s.reorderQty > 0);
+
+        if (selectedSkusWithQty.length === 0) {
+            setToast({
+                message: "Selected SKUs have 0 reorder quantity. Please adjust quantities before creating a draft.",
+                type: 'error'
+            });
+            setTimeout(() => setToast(null), 5000);
+            return;
+        }
+
+        setShowSummaryModal(true);
+    };
+
+    const confirmCreateDraft = async () => {
         setIsCreatingDraft(true);
         setError(null);
+        setShowSummaryModal(false);
 
-        const selectedRows = skus.filter(s => selectedSkuIds.includes(s.masterSKU));
+        const selectedRows = skus
+            .filter(s => selectedSkuIds.includes(s.masterSKU))
+            .filter(s => s.reorderQty > 0);
+
         const payload = {
             action: API_ACTIONS.CREATE_DRAFT_FROM_FORECAST,
             forecastRunId: `RUN-${Date.now()}`,
             mode: activeMode.charAt(0).toUpperCase() + activeMode.slice(1),
             skus: selectedRows.map(s => ({
                 sku: s.masterSKU,
-                qty: s.reorderQty // Send reorderQty strictly as defined in forecast
+                qty: s.reorderQty
             }))
         };
 
+        setLastDraftPayload(payload);
         addDebugLog('req', { method: 'POST', payload });
 
         try {
@@ -292,12 +331,8 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
             const result = await response.json();
             addDebugLog('res', result);
             if (result.draftId) {
-                // U1 FIX: Replace alert() with inline toast + View Draft CTA
                 setToast({ message: `Draft ${result.draftId} created successfully.`, draftId: result.draftId, type: 'success' });
-
-                // ISSUE 3: Auto-refresh drafts list
                 refreshDrafts();
-
                 setTimeout(() => setToast(null), 6000);
                 setSelectedSkuIds([]);
             } else if (result.error) {
@@ -358,7 +393,14 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
             <table className="min-w-full divide-y-2 divide-transparent border-spacing-y-2">
                 <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10">
                     <tr>
-                        <th scope="col" className="px-3 py-3"><input type="checkbox" onChange={handleSelectAll} checked={sortedSkus.length > 0 && selectedSkuIds.length === sortedSkus.length} /></th>
+                        <th scope="col" className="px-3 py-3 font-bold text-slate-100">
+                            <input
+                                type="checkbox"
+                                tabIndex={-1}
+                                onChange={handleSelectAll}
+                                checked={sortedSkus.length > 0 && selectedSkuIds.length === sortedSkus.length}
+                            />
+                        </th>
                         <th scope="col" className="px-2 py-3"></th>
                         <SortableHeader label="SKU" sortKey="masterSKU" className="text-left" />
                         <SortableHeader label="Product Name" sortKey="productName" className="text-left" />
@@ -373,10 +415,18 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                         <SortableHeader label="Reorder Qty" sortKey="reorderQty" className="text-center" />
                     </tr>
                 </thead>
-                <tbody className="bg-white dark:bg-slate-900">
+                <tbody className="bg-white dark:bg-slate-900 border-spacing-y-2">
                     {sortedSkus.map(sku => (
-                        <tr key={sku.masterSKU} onClick={() => handleRowClick(sku)} className={`cursor-pointer group border-b border-slate-700/50 odd:bg-slate-900 even:bg-slate-800/50 ${selectedSkuIds.includes(sku.masterSKU) ? 'bg-primary-900/30' : 'hover:bg-slate-700/50'}`}>
-                            <td className="px-3 py-3"><input type="checkbox" checked={selectedSkuIds.includes(sku.masterSKU)} onChange={() => handleSelectRow(sku.masterSKU)} onClick={e => e.stopPropagation()} /></td>
+                        <tr key={sku.masterSKU} onClick={() => handleRowClick(sku)} className={`cursor-pointer group border-b border-slate-700/50 odd:bg-slate-900 even:bg-slate-800/50 ${selectedSkuIds.includes(sku.masterSKU) ? 'bg-primary-900/40' : 'hover:bg-slate-700/50'}`}>
+                            <td className="px-3 py-3">
+                                <input
+                                    type="checkbox"
+                                    tabIndex={-1}
+                                    checked={selectedSkuIds.includes(sku.masterSKU)}
+                                    onChange={() => handleSelectRow(sku.masterSKU)}
+                                    onClick={e => e.stopPropagation()}
+                                />
+                            </td>
                             <td className="px-2 py-3">
                                 <div className="flex items-center gap-2">
                                     <StatusIcon sku={sku} />
@@ -442,7 +492,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                 )}
                             </td>
                             <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
-                                <div className="relative group w-24 mx-auto">
+                                <div className="w-24 mx-auto">
                                     <input
                                         type="text"
                                         inputMode="numeric"
@@ -467,9 +517,8 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                                 return newEds;
                                             });
                                         }}
-                                        className="w-full text-center text-base font-semibold text-primary-400 bg-slate-700 border border-slate-600 rounded-md p-1 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                        className="w-full text-right font-mono text-base font-bold text-white bg-slate-800 border border-slate-600 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 transition-all"
                                     />
-                                    <PencilIcon className="w-3 h-3 text-gray-400 absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
                                 </div>
                             </td>
                         </tr>
@@ -482,6 +531,90 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     return (
         <div className="h-full flex flex-col space-y-4">
             <SkuDetailModal sku={selectedSku} onClose={() => setSelectedSku(null)} />
+
+            {/* IMPROVEMENT 4: Summary Modal */}
+            {showSummaryModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className="p-6 border-b border-slate-800 flex justify-between items-center">
+                            <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                <CheckBadgeIcon className="w-6 h-6 text-blue-400" />
+                                Review Draft Order
+                            </h2>
+                            <button onClick={() => setShowSummaryModal(false)} className="text-slate-400 hover:text-white transition-colors">
+                                <XMarkIcon className="w-6 h-6" />
+                            </button>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto flex-grow">
+                            <div className="grid grid-cols-2 gap-6 mb-6">
+                                <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                                    <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Total SKUs</p>
+                                    <p className="text-2xl font-black text-white">
+                                        {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && s.reorderQty > 0).length}
+                                    </p>
+                                </div>
+                                <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                                    <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Total Units</p>
+                                    <p className="text-2xl font-black text-blue-400">
+                                        {formatNumber(skus.filter(s => selectedSkuIds.includes(s.masterSKU) && s.reorderQty > 0).reduce((sum, s) => sum + s.reorderQty, 0))}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="border border-slate-800 rounded-xl overflow-hidden">
+                                <table className="w-full text-left text-sm border-collapse">
+                                    <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold tracking-wider">
+                                        <tr>
+                                            <th className="px-4 py-3 border-b border-slate-800">SKU</th>
+                                            <th className="px-4 py-3 border-b border-slate-800">Item Name</th>
+                                            <th className="px-4 py-3 border-b border-slate-800">Vendor</th>
+                                            <th className="px-4 py-3 border-b border-slate-800 text-center">Qty</th>
+                                            <th className="px-4 py-3 border-b border-slate-800 text-right">Unit Price</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-800 max-h-[400px]">
+                                        {skus
+                                            .filter(s => selectedSkuIds.includes(s.masterSKU) && s.reorderQty > 0)
+                                            .map(item => (
+                                                <tr key={item.masterSKU} className="hover:bg-slate-800/30 transition-colors">
+                                                    <td className="px-4 py-3 font-mono text-xs text-slate-300">{item.masterSKU}</td>
+                                                    <td className="px-4 py-3 text-slate-100 font-medium truncate max-w-[200px]">{item.productName}</td>
+                                                    <td className="px-4 py-3 text-xs text-slate-400">{item.businessRules?.supplier || 'N/A'}</td>
+                                                    <td className="px-4 py-3 text-center font-bold text-blue-400">{item.reorderQty}</td>
+                                                    <td className="px-4 py-3 text-right text-slate-300">₹{item.unitCost.toLocaleString()}</td>
+                                                </tr>
+                                            ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && s.reorderQty === 0).length > 0 && (
+                                <p className="mt-4 text-xs text-slate-500 italic">
+                                    * {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && s.reorderQty === 0).length} SKUs with 0 qty were excluded
+                                </p>
+                            )}
+                        </div>
+
+                        <div className="p-6 border-t border-slate-800 flex justify-between gap-4 bg-slate-900/50">
+                            <Button
+                                variant="secondary"
+                                onClick={() => setShowSummaryModal(false)}
+                                className="px-8 border-slate-700 text-slate-300 hover:bg-slate-800"
+                            >
+                                Back
+                            </Button>
+                            <Button
+                                onClick={confirmCreateDraft}
+                                disabled={isCreatingDraft}
+                                className="px-8 bg-blue-600 hover:bg-blue-500 font-bold"
+                            >
+                                {isCreatingDraft ? 'Creating...' : 'Confirm & Create Draft'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* U1 FIX: Inline Toast notification */}
             {toast && (
@@ -543,42 +676,60 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
             {/* Debug Panel */}
             {showDebug && (
                 <Card className="bg-slate-900 border-purple-500/30 p-4 animate-in fade-in slide-in-from-top-2 duration-200">
-                    <div className="flex items-center justify-between mb-3">
-                        <h3 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">API Activity Log</h3>
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => {
-                                    navigator.clipboard.writeText(JSON.stringify(debugLog, null, 2));
-                                }}
-                                className="text-[9px] text-slate-400 hover:text-white underline underline-offset-2"
-                            >
-                                Copy JSON
-                            </button>
-                            <button
-                                onClick={() => setDebugLog([])}
-                                className="text-[9px] text-slate-400 hover:text-white underline underline-offset-2"
-                            >
-                                Clear
-                            </button>
-                        </div>
-                    </div>
-                    <div className="space-y-2 max-h-60 overflow-y-auto font-mono text-[10px]">
-                        {debugLog.length === 0 ? (
-                            <p className="text-slate-600 italic py-4 text-center">No API calls yet.</p>
-                        ) : (
-                            debugLog.map((entry, i) => (
-                                <div key={i} className="flex gap-3 items-start border-b border-slate-800 pb-2 last:border-0">
-                                    <span className="text-slate-500 flex-shrink-0">{entry.time}</span>
-                                    <span className={`px-1 rounded flex-shrink-0 font-bold ${entry.type === 'req' ? 'bg-blue-500/10 text-blue-400' :
-                                        entry.type === 'res' ? 'bg-green-500/10 text-green-400' :
-                                            'bg-red-500/10 text-red-400'
-                                        }`}>
-                                        {entry.type.toUpperCase()}
-                                    </span>
-                                    <span className="text-slate-400 break-all">{JSON.stringify(entry.data)}</span>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                        <div className="space-y-3">
+                            <h3 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-2">Live Metrics</h3>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">Selected Count</p>
+                                    <p className="text-sm font-mono text-white">{selectedSkuIds.length}</p>
                                 </div>
-                            ))
-                        )}
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">Needs Order (&gt;0)</p>
+                                    <p className="text-sm font-mono text-green-400">{skus.filter(s => s.reorderQty > 0).length}</p>
+                                </div>
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">Filtered Out (=0)</p>
+                                    <p className="text-sm font-mono text-slate-400">{skus.filter(s => s.reorderQty === 0).length}</p>
+                                </div>
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">Needs Order Filter</p>
+                                    <p className="text-sm font-mono text-blue-400">{showNeedsOrderOnly ? 'TRUE' : 'FALSE'}</p>
+                                </div>
+                            </div>
+
+                            {lastDraftPayload && (
+                                <div className="mt-4">
+                                    <h3 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">Last Draft Payload</h3>
+                                    <div className="bg-slate-950 p-2 rounded border border-slate-800 max-h-40 overflow-y-auto">
+                                        <pre className="text-[9px] text-slate-400 font-mono">{JSON.stringify(lastDraftPayload, null, 2)}</pre>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">API Activity Log</h3>
+                                <div className="flex gap-2">
+                                    <button onClick={() => navigator.clipboard.writeText(JSON.stringify(debugLog, null, 2))} className="text-[9px] text-slate-400 hover:text-white underline">Copy JSON</button>
+                                    <button onClick={() => setDebugLog([])} className="text-[9px] text-slate-400 hover:text-white underline">Clear</button>
+                                </div>
+                            </div>
+                            <div className="space-y-1 max-h-60 overflow-y-auto font-mono text-[10px]">
+                                {debugLog.length === 0 ? (
+                                    <p className="text-slate-600 italic py-4 text-center">No API calls yet.</p>
+                                ) : (
+                                    debugLog.map((entry, i) => (
+                                        <div key={i} className="flex gap-2 items-start border-b border-slate-800 pb-1 last:border-0">
+                                            <span className="text-slate-500">{entry.time}</span>
+                                            <span className={`px-1 rounded font-bold ${entry.type === 'req' ? 'bg-blue-500/10 text-blue-400' : entry.type === 'res' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>{entry.type.toUpperCase()}</span>
+                                            <span className="text-slate-400 break-all">{JSON.stringify(entry.data).substring(0, 100)}...</span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </Card>
             )}
@@ -616,6 +767,16 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                 {s}
                             </Button>
                         ))}
+                        <div className="w-px h-6 bg-slate-700 mx-1 hidden sm:block"></div>
+                        <button
+                            onClick={() => setShowNeedsOrderOnly(!showNeedsOrderOnly)}
+                            className={`text-xs py-1 px-3 rounded-md font-bold transition-all border ${showNeedsOrderOnly
+                                ? 'bg-blue-600 border-blue-500 text-white shadow-lg shadow-blue-900/40'
+                                : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'
+                                }`}
+                        >
+                            {showNeedsOrderOnly ? '✓ Needs Order' : 'Reorder Only'}
+                        </button>
                     </div>
                 </div>
 
