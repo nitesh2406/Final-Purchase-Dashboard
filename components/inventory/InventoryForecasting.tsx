@@ -67,9 +67,16 @@ interface ToastState {
 interface InventoryForecastingProps {
     isSidebarCollapsed: boolean;
     onNavigate?: (view: ViewType) => void;
+    setHighlightDraftId: (id: string | null) => void;
+    refreshDrafts: () => void;
 }
 
-export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarCollapsed, onNavigate }) => {
+export const InventoryForecasting: FC<InventoryForecastingProps> = ({
+    isSidebarCollapsed,
+    onNavigate,
+    setHighlightDraftId,
+    refreshDrafts
+}) => {
     const [skus, setSkus] = useState<ForecastingSku[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isCreatingDraft, setIsCreatingDraft] = useState(false);
@@ -79,6 +86,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('All');
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'daysOfCover', direction: 'asc' });
+    const [stableSortedIds, setStableSortedIds] = useState<string[]>([]);
     const [selectedSku, setSelectedSku] = useState<ForecastingSku | null>(null);
     const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
     const [editingQty, setEditingQty] = useState<Record<string, string>>({});
@@ -180,6 +188,17 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
     }, [skus, statusFilter, searchTerm, activeMode]);
 
     const sortedSkus = useMemo(() => {
+        // Find skus based on stable IDs if we have them
+        if (stableSortedIds.length > 0) {
+            const skuMap = new Map(skus.map(s => [s.masterSKU, s]));
+            return stableSortedIds
+                .map(id => skuMap.get(id))
+                .filter((s): s is ForecastingSku => s !== undefined)
+                // Also include any new SKUs not in stableSortedIds (e.g. if skus state changed from API)
+                .concat(skus.filter(s => !stableSortedIds.includes(s.masterSKU)));
+        }
+
+        // Initial / Fallback sort
         return [...filteredSkus].sort((a, b) => {
             const aVal = a[sortConfig.key];
             const bVal = b[sortConfig.key];
@@ -187,7 +206,19 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
             if (typeof aVal === 'number' && typeof bVal === 'number') return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
             return 0;
         });
-    }, [filteredSkus, sortConfig]);
+    }, [skus, filteredSkus, stableSortedIds, sortConfig]);
+
+    // Recompute stable IDs ONLY when filter or sort config changes (not when SKU values change)
+    useEffect(() => {
+        const sorted = [...filteredSkus].sort((a, b) => {
+            const aVal = a[sortConfig.key];
+            const bVal = b[sortConfig.key];
+            if (typeof aVal === 'string' && typeof bVal === 'string') return sortConfig.direction === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+            if (typeof aVal === 'number' && typeof bVal === 'number') return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+            return 0;
+        });
+        setStableSortedIds(sorted.map(s => s.masterSKU));
+    }, [filteredSkus.length, sortConfig, statusFilter, searchTerm, activeMode]);
 
     const selectionData = useMemo(() => {
         const selected = skus.filter(s => selectedSkuIds.includes(s.masterSKU));
@@ -263,6 +294,10 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
             if (result.draftId) {
                 // U1 FIX: Replace alert() with inline toast + View Draft CTA
                 setToast({ message: `Draft ${result.draftId} created successfully.`, draftId: result.draftId, type: 'success' });
+
+                // ISSUE 3: Auto-refresh drafts list
+                refreshDrafts();
+
                 setTimeout(() => setToast(null), 6000);
                 setSelectedSkuIds([]);
             } else if (result.error) {
@@ -456,7 +491,11 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({ isSidebarC
                     <span>{toast.message}</span>
                     {toast.draftId && onNavigate && (
                         <button
-                            onClick={() => { onNavigate('Draft Orders'); setToast(null); }}
+                            onClick={() => {
+                                setHighlightDraftId(toast.draftId || null);
+                                onNavigate('Draft Orders');
+                                setToast(null);
+                            }}
                             className="ml-2 underline underline-offset-2 font-bold whitespace-nowrap"
                         >
                             View Draft →

@@ -500,7 +500,7 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white"><GiftIcon className="w-5 h-5 text-purple-400" /> Combo Usage</h3>
                                 {comboUsage.length > 0 ? (
                                     <div className="space-y-3">
-                                        <p className="text-sm text-gray-500">This item is part of <span className="font-bold text-purple-600">{comboUsage.length}</span> combo(s), driving <span className="font-bold">{sku.comboImpactPercent}%</span> of sales.</p>
+                                        <p className="text-sm text-gray-500">This item is part of <span className="font-bold text-purple-600">{comboUsage.length}</span> combo(s), driving <span className="font-bold">{(sku.comboImpactPercent || 0).toFixed(1)}%</span> of sales.</p>
                                         <div className="border border-slate-600 rounded-lg overflow-hidden">
                                             <table className="min-w-full text-sm">
                                                 {/* Task 6: Added 90D Sales column */}

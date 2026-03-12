@@ -71,6 +71,10 @@ const App: React.FC = () => {
     const [currentView, setCurrentView] = useState<ViewType>('Dashboard');
     const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
     const [selectedFinanceBatchId, setSelectedFinanceBatchId] = useState<string | null>(null);
+    const [highlightDraftId, setHighlightDraftId] = useState<string | null>(null);
+    const [lastApiLog, setLastApiLog] = useState<{ action: string; status: number | string; timestamp: string } | null>(null);
+    const [showGlobalDebug, setShowGlobalDebug] = useState(false);
+    const [lastRefreshTime, setLastRefreshTime] = useState<string>(new Date().toLocaleTimeString());
 
     const [skus, setSkus] = useState<Sku[]>([]);
     const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
@@ -102,6 +106,9 @@ const App: React.FC = () => {
 
             const [draftsResponse, ...otherResponses] = await Promise.all([draftsPromise, ...otherPromises]);
             const [skusData, posData, shpData, invData, venData, notifData, venMastersData] = otherResponses;
+
+            setLastApiLog({ action: 'GET_ALL_DATA', status: 200, timestamp: new Date().toLocaleTimeString() });
+            setLastRefreshTime(new Date().toLocaleTimeString());
 
             if (draftsResponse && draftsResponse.drafts) {
                 setDrafts(draftsResponse.drafts);
@@ -204,7 +211,12 @@ const App: React.FC = () => {
             case 'Dashboard':
                 return <Dashboard />;
             case 'Inventory Forecasting':
-                return <InventoryForecasting isSidebarCollapsed={isSidebarCollapsed} onNavigate={(v: ViewType) => setCurrentView(v)} />;
+                return <InventoryForecasting
+                    isSidebarCollapsed={isSidebarCollapsed}
+                    onNavigate={(v: ViewType) => setCurrentView(v)}
+                    setHighlightDraftId={setHighlightDraftId}
+                    refreshDrafts={() => fetchAllData(true)}
+                />;
             case 'Draft Orders':
                 return <DraftOrdersTable
                     purchaseOrders={purchaseOrders}
@@ -217,6 +229,9 @@ const App: React.FC = () => {
                     vendorMasters={vendorMasters}
                     onNavigate={(v: ViewType) => setCurrentView(v)}
                     onRefreshPOs={() => fetchAllData(true)}
+                    highlightDraftId={highlightDraftId}
+                    setHighlightDraftId={setHighlightDraftId}
+                    onRefreshDrafts={() => fetchAllData(true)}
                 />;
             case 'Purchase Orders':
                 return <PurchaseOrders onNavigate={(v: ViewType) => setCurrentView(v)} />;
@@ -301,6 +316,57 @@ const App: React.FC = () => {
                 <main className="flex-1 p-0 overflow-y-auto">
                     {renderContent()}
                 </main>
+
+                {/* Global Debug Panel */}
+                <div className="fixed bottom-4 right-4 z-[200]">
+                    <button
+                        onClick={() => setShowGlobalDebug(!showGlobalDebug)}
+                        className="bg-slate-800 border border-slate-700 p-2 rounded-full shadow-lg hover:bg-slate-700 transition-all text-slate-400 hover:text-white"
+                        title="Toggle Debug Mode"
+                    >
+                        🐛
+                    </button>
+
+                    {showGlobalDebug && (
+                        <div className="absolute bottom-12 right-0 w-80 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-4 overflow-hidden animate-in slide-in-from-bottom-2">
+                            <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-3 border-b border-slate-800 pb-2">Internal Debug Panel</h3>
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-slate-500 font-medium">Active Tab:</span>
+                                    <span className="text-white bg-blue-500/20 px-2 py-0.5 rounded font-mono">{currentView}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-slate-500 font-medium">Highlight Draft ID:</span>
+                                    <span className="text-white bg-amber-500/20 px-2 py-0.5 rounded font-mono">{highlightDraftId || 'null'}</span>
+                                </div>
+                                <div className="border-t border-slate-800 pt-2">
+                                    <p className="text-[10px] font-bold text-slate-600 uppercase mb-1">Last API Call</p>
+                                    <div className="bg-slate-950 p-2 rounded border border-slate-800 font-mono text-[10px] text-slate-400">
+                                        {lastApiLog ? (
+                                            <>
+                                                <div className="flex justify-between">
+                                                    <span className="text-green-400">{lastApiLog.action}</span>
+                                                    <span className="text-blue-400">HTTP {lastApiLog.status}</span>
+                                                </div>
+                                                <div className="mt-1 text-slate-500 text-[9px]">{lastApiLog.timestamp}</div>
+                                            </>
+                                        ) : 'No calls recorded'}
+                                    </div>
+                                </div>
+                                <div className="flex justify-between items-center text-[10px]">
+                                    <span className="text-slate-500 uppercase font-bold">Drafts Refreshed:</span>
+                                    <span className="text-slate-400">{lastRefreshTime}</span>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setShowGlobalDebug(false)}
+                                className="w-full mt-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-white transition-colors border-t border-slate-800"
+                            >
+                                Close Debug
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

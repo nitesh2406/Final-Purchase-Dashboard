@@ -1,9 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { 
-    PencilIcon, TrashIcon, MagnifyingGlassIcon, PlusIcon, 
-    EyeIcon, ChevronDownIcon, ChevronUpIcon, LockClosedIcon, 
+import {
+    PencilIcon, TrashIcon, MagnifyingGlassIcon, PlusIcon,
+    EyeIcon, ChevronDownIcon, ChevronUpIcon, LockClosedIcon,
     ClipboardDocumentIcon, BoxIcon, ExclamationTriangleIcon, XMarkIcon,
     DocumentDuplicateIcon, ArrowLeftIcon, ArrowPathIcon, CheckBadgeIcon,
     AirplaneIcon, ShipIcon, ClipboardDocumentCheckIcon
@@ -23,7 +23,7 @@ interface LineItem {
     vendor_name?: string; // Display name for UI
     item_name: string; // Bind to backend item_name
     qty: number;
-    unit_price: number; 
+    unit_price: number;
     logo: 'Yes' | 'No';
     packaging: 'Yes' | 'No';
     manual: 'Yes' | 'No';
@@ -46,7 +46,7 @@ interface DraftOrderEditProps {
     vendorMasters: VendorMaster[];
 }
 
-const formatCurrency = (amount: number) => 
+const formatCurrency = (amount: number) =>
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
 
 const ModeBadge: React.FC<{ mode?: string }> = ({ mode }) => {
@@ -55,11 +55,10 @@ const ModeBadge: React.FC<{ mode?: string }> = ({ mode }) => {
     const isAir = normalized === 'AIR';
     const isSea = normalized === 'SEA';
     return (
-        <div className={`inline-flex items-center gap-1.5 px-3 h-[38px] text-sm font-semibold rounded border transition-colors ${
-            isAir 
-                ? 'bg-sky-600/20 text-sky-400 border-sky-600/30' 
+        <div className={`inline-flex items-center gap-1.5 px-3 h-[38px] text-sm font-semibold rounded border transition-colors ${isAir
+                ? 'bg-sky-600/20 text-sky-400 border-sky-600/30'
                 : isSea ? 'bg-blue-600/20 text-blue-400 border-blue-600/30' : 'bg-slate-800 text-slate-400'
-        }`}>
+            }`}>
             {isAir && <AirplaneIcon className="w-4 h-4" />}
             {isSea && <ShipIcon className="w-4 h-4" />}
             {mode}
@@ -74,7 +73,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
     const [poDate, setPoDate] = useState(draft?.draft_date || draft?.created_at || new Date().toISOString().split('T')[0]);
     const [expectedDelivery, setExpectedDelivery] = useState(draft?.expected_delivery || '');
     const [shippingMode, setShippingMode] = useState<'SEA' | 'AIR' | ''>(draft?.mode || draft?.planned_mode || '' as any);
-    
+
     const [items, setItems] = useState<LineItem[]>(() => {
         if (!draft?.items) return [];
         return draft.items.map((item: any) => ({
@@ -96,13 +95,13 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
-    
+
     const [catalogResults, setCatalogResults] = useState<any[]>([]);
     const [isSearchingCatalog, setIsSearchingCatalog] = useState(false);
 
     const [errorToast, setErrorToast] = useState<string | null>(null);
     const [successToast, setSuccessToast] = useState<string | null>(null);
-    
+
     const [customizationItem, setCustomizationItem] = useState<LineItem | null>(null);
     const [isSubmitModalOpen, setSubmitModalOpen] = useState(false);
     const [isAddNewSkuModalOpen, setIsAddNewSkuModalOpen] = useState(false);
@@ -132,7 +131,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                     })
                 });
                 const result = await response.json();
-                
+
                 const rawItems = result.items || result.skus || result.data || [];
                 const normalized = rawItems.map((item: any) => ({
                     sku: item.sku || item.master_sku || item.masterSKU,
@@ -141,11 +140,11 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                     vendor_code: item.vendor_code || item.vendor || item.supplier || '',
                     vendor_name: item.vendor_name || item.vendor || item.supplier || '',
                     unit_price: Number(item.unit_price || item.cost || 0),
-                    qty: Number(item.qty !== undefined ? item.qty : (item.reorderQty !== undefined ? item.reorderQty : 0)), 
+                    qty: Number(item.qty !== undefined ? item.qty : (item.reorderQty !== undefined ? item.reorderQty : 0)),
                     category: item.category || '',
                     brand: item.brand || ''
                 }));
-                
+
                 setCatalogResults(normalized);
             } catch (err) {
                 console.error("Search failed:", err);
@@ -163,9 +162,9 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
         items.forEach(item => {
             const vKey = item.vendor_code || item.vendor || 'Unknown Vendor';
             if (!groups[vKey]) {
-                groups[vKey] = { 
-                    items: [], 
-                    total: 0, 
+                groups[vKey] = {
+                    items: [],
+                    total: 0,
                     isSubmitted: !!draft?.submittedVendors?.[vKey] || isViewOnly,
                     poId: draft?.submittedVendors?.[vKey]
                 };
@@ -201,7 +200,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             vendor: itemVendorCode,
             vendor_code: itemVendorCode,
             vendor_name: itemVendorName,
-            qty: Number(catalogItem.qty || catalogItem.reorderQty || 0), 
+            qty: Number(catalogItem.qty || catalogItem.reorderQty || 0),
             unit_price: Number(catalogItem.unit_price || 0),
             logo: 'No',
             packaging: 'No',
@@ -218,35 +217,35 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
     const handleSaveDraft = async () => {
         // Validation
         if (!shippingMode) {
-          alert('Please select shipping mode');
-          return;
+            alert('Please select shipping mode');
+            return;
         }
-        
+
         if (items.length === 0) {
-          alert('Please add at least one item');
-          return;
+            alert('Please add at least one item');
+            return;
         }
-        
+
         // Check all items have vendor
         const itemsWithoutVendor = items.filter(item => !item.vendor && !item.vendor_code);
         if (itemsWithoutVendor.length > 0) {
-          alert('Please select vendor for all items');
-          return;
+            alert('Please select vendor for all items');
+            return;
         }
-        
+
         // Check all items have qty > 0
         const itemsWithoutQty = items.filter(item => !item.qty || Number(item.qty) <= 0);
         if (itemsWithoutQty.length > 0) {
-          alert('Please enter quantity for all items');
-          return;
+            alert('Please enter quantity for all items');
+            return;
         }
-        
+
         setIsSaving(true);
         setIsProcessing(true);
         setErrorToast(null);
         setSuccessToast(null);
         setLastError(null);
-        
+
         try {
             // Transform items to match backend expected format
             const lines = items.map(item => ({
@@ -256,13 +255,13 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                 qty: Number(item.qty),
                 vendor_code: item.vendor || item.vendor_code,
                 unit_price: Number(item.unit_price || 0),
-                
+
                 // Map UI customization fields to backend format
                 custom_logo: item.logo === 'Yes' || (item as any).custom_logo === true,
                 custom_packaging: item.packaging === 'Yes' || (item as any).custom_packaging === true,
                 solving_manual: item.manual === 'Yes' || (item as any).solving_manual === true,
                 opp_wrap: item.wrap === 'Yes' || (item as any).opp_wrap === true,
-                
+
                 custom_remarks: item.remarks || (item as any).custom_remarks || '',
                 customization_files: item.customization_files || ''
             }));
@@ -270,7 +269,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             console.log('Lines payload:', lines);
             console.log('Lines with line_id:', lines.filter(l => l.line_id).length);
             console.log('Lines without line_id (will be created new):', lines.filter(l => !l.line_id).length);
-            
+
             const payload = {
                 action: isCreateMode ? 'create_manual_draft' : API_ACTIONS.SAVE_DRAFT,
                 mode: shippingMode,
@@ -280,7 +279,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                 lines: lines,
                 ...(draft?.id ? { draftId: draft.id } : {})
             };
-            
+
             const timestamp = new Date().toISOString();
             setLastTimestamp(timestamp);
             setLastRequest(payload);
@@ -292,7 +291,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             });
             const result = await response.json();
             setLastResponse(result);
-            
+
             if (result.status === 'success' || result.draftId) {
                 if (isCreateMode) {
                     alert(`Draft Order ${result.draftId} created successfully!`);
@@ -301,7 +300,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                     setSuccessToast('Draft saved successfully');
                     setTimeout(() => setSuccessToast(null), 3000);
                 }
-                
+
                 if (result.lines) {
                     const normalizedLinesFromBackend = result.lines.map((line: any) => ({
                         id: String(line.line_id),
@@ -353,11 +352,11 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
 
     const handleSubmitDraft = async (selectedVendors: string[]) => {
         if (!draft) return;
-        
-        const payload = { 
-            action: API_ACTIONS.SUBMIT_DRAFT, 
-            draftId: draft.id, 
-            vendors: selectedVendors 
+
+        const payload = {
+            action: API_ACTIONS.SUBMIT_DRAFT,
+            draftId: draft.id,
+            vendors: selectedVendors
         };
 
         setIsSubmitting(true);
@@ -375,7 +374,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             });
             const result = await response.json();
             setLastResponse(result);
-            
+
             if (!result || result.success !== true) {
                 throw new Error(result?.message || result?.error || "Submit failed");
             }
@@ -384,19 +383,19 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             const poCount = result.newPOs?.length || 0;
             const successMsg = `${poCount} Purchase Order(s) created successfully`;
             setSuccessToast(successMsg);
-            
+
             // Close modal
             setSubmitModalOpen(false);
 
             if (onOrdersSubmitted) {
                 onOrdersSubmitted(result.updatedDraft, result.newPOs, successMsg);
             }
-            
+
             // Trigger PO refresh via custom event
             const createdPOs = result.newPOs || [];
             if (createdPOs.length > 0) {
-                window.dispatchEvent(new CustomEvent("po:refresh", { 
-                    detail: { po_id: createdPOs[0] } 
+                window.dispatchEvent(new CustomEvent("po:refresh", {
+                    detail: { po_id: createdPOs[0] }
                 }));
             } else {
                 window.dispatchEvent(new CustomEvent("po:refresh"));
@@ -417,9 +416,9 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
     const displayOnlyClasses = `bg-slate-900/50 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-400 w-full cursor-default`;
 
     const Tooltip: React.FC<{ label: string; text: string }> = ({ label, text }) => (
-        <th className="group relative px-1 py-3 font-medium text-center w-[5%] cursor-help border-r border-slate-700/30">
+        <th className="group relative px-1 py-3 font-bold text-center w-[5%] cursor-help border-r border-slate-700 max-w-[50px]">
             {label}
-            <span className="invisible group-hover:visible absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[10px] px-2 py-1.5 rounded whitespace-nowrap z-50 shadow-xl border border-slate-700 pointer-events-none">
+            <span className="invisible group-hover:visible absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[11px] px-2 py-1.5 rounded whitespace-nowrap z-50 shadow-xl border border-slate-700 pointer-events-none font-medium">
                 {text}
                 <span className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-slate-900" />
             </span>
@@ -428,7 +427,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
 
     return (
         <div className="flex flex-col min-h-screen space-y-4 text-white pb-32 relative bg-[#0f172a] p-6">
-            
+
             {errorToast && (
                 <div className="fixed top-24 right-8 z-[110] animate-in slide-in-from-right-8 duration-300">
                     <div className="bg-red-600 text-white px-4 py-3 rounded-lg shadow-2xl flex items-center gap-3">
@@ -450,18 +449,18 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             )}
 
             {isSubmitting && (
-                 <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center">
+                <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center">
                     <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-2xl flex flex-col items-center gap-4">
                         <ArrowPathIcon className="w-10 h-10 animate-spin text-blue-500" />
                         <p className="text-white font-bold animate-pulse">Processing Order Submission...</p>
                     </div>
-                 </div>
+                </div>
             )}
 
-            <CustomizationModal 
+            <CustomizationModal
                 isOpen={!!customizationItem}
                 onClose={() => setCustomizationItem(null)}
-                onSave={isViewOnly ? () => {} : (data) => setItems(prev => prev.map(i => i.id === customizationItem?.id ? { ...i, ...data } : i))}
+                onSave={isViewOnly ? () => { } : (data) => setItems(prev => prev.map(i => i.id === customizationItem?.id ? { ...i, ...data } : i))}
                 skuData={customizationItem ? {
                     sku: customizationItem.sku,
                     itemName: customizationItem.item_name,
@@ -476,7 +475,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             />
 
             {isSubmitModalOpen && (
-                <SelectiveSubmitModal 
+                <SelectiveSubmitModal
                     isOpen={true}
                     onClose={() => setSubmitModalOpen(false)}
                     onConfirm={handleSubmitDraft}
@@ -503,8 +502,8 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                     <Button variant="secondary" onClick={onBack} className="h-10 px-4 border-slate-700" icon={<ArrowLeftIcon className="w-4 h-4" />}>Back</Button>
                     {!isViewOnly && (
                         <>
-                            <Button 
-                                onClick={handleSaveDraft} 
+                            <Button
+                                onClick={handleSaveDraft}
                                 disabled={isSaving || !shippingMode || items.length === 0}
                                 className="h-10 px-6 bg-blue-600 hover:bg-blue-700 font-semibold shadow-lg shadow-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
@@ -556,13 +555,13 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
 
                 <div className="mb-2">
                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Internal Notes</label>
-                    <textarea 
+                    <textarea
                         rows={2}
-                        placeholder="Notes..." 
-                        value={notes} 
-                        onChange={e => setNotes(e.target.value)} 
-                        disabled={isViewOnly} 
-                        className={`${inputClasses} resize-none`} 
+                        placeholder="Notes..."
+                        value={notes}
+                        onChange={e => setNotes(e.target.value)}
+                        disabled={isViewOnly}
+                        className={`${inputClasses} resize-none`}
                     />
                 </div>
             </div>
@@ -578,10 +577,10 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                 <div className="flex flex-col space-y-3 mt-2">
                     <div className="relative group">
                         <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                        <input 
-                            type="text" 
-                            placeholder="Search SKU or Item Name in Catalog..." 
-                            value={searchQuery} 
+                        <input
+                            type="text"
+                            placeholder="Search SKU or Item Name in Catalog..."
+                            value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="w-full pl-11 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-600 text-sm shadow-inner"
                         />
@@ -643,27 +642,27 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-sm border-collapse table-fixed">
                                     <thead>
-                                        <tr className="bg-slate-900/30 text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-700/50">
-                                            <th className="px-4 py-3 font-medium w-[10%]">SKU</th>
-                                            <th className="px-4 py-3 font-medium w-[15%]">Vendor</th>
-                                            <th className="px-4 py-3 font-medium w-[20%]">Item Name</th>
-                                            <th className="px-6 py-3 font-medium text-center w-[8%]">Qty</th>
-                                            <th className="px-4 py-3 font-medium text-right w-[10%]">Price</th>
-                                            <th className="px-4 py-3 font-medium text-right w-[10%] border-r border-slate-700/30">Total</th>
+                                        <tr className="bg-slate-900 text-slate-100 text-[11px] font-bold uppercase tracking-wider border-b-2 border-slate-700">
+                                            <th className="px-4 py-3 w-[10%]">SKU</th>
+                                            <th className="px-4 py-3 w-[15%]">Vendor</th>
+                                            <th className="px-4 py-3 w-[20%]">Item Name</th>
+                                            <th className="px-4 py-3 text-center w-[10%] border-x border-slate-700">Qty</th>
+                                            <th className="px-4 py-3 text-right w-[10%]">Price</th>
+                                            <th className="px-4 py-3 text-right w-[10%] border-r border-slate-700">Total</th>
                                             <Tooltip label="LOGO" text="Custom Logo" />
                                             <Tooltip label="PKG" text="Custom Packaging" />
                                             <Tooltip label="MAN" text="Manual" />
                                             <Tooltip label="WRAP" text="OPP Wrap" />
-                                            <th className="px-4 py-3 font-medium text-right w-[12%]">Actions</th>
+                                            <th className="px-4 py-3 text-right w-[12%]">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-700/40">
                                         {data.items.map((item: any) => (
                                             <tr key={item.id} className={`transition-colors duration-150 ${data.isSubmitted ? 'opacity-60 bg-slate-800/30' : 'hover:bg-slate-700/20'}`}>
-                                                <td className="px-4 py-3 font-mono text-[11px] text-slate-500 truncate">{item.sku}</td>
+                                                <td className="px-4 py-3 font-mono text-xs text-slate-400 font-bold truncate">{item.sku}</td>
                                                 <td className="px-4 py-3">
                                                     {data.isSubmitted ? (
-                                                        <span className="text-[11px] text-white">
+                                                        <span className="text-xs text-white font-medium">
                                                             {vendorMasters.find(vm => vm.vendor_code === (item.vendor_code || item.vendor))?.vendor_name || (item.vendor_name || item.vendor)}
                                                         </span>
                                                     ) : (
@@ -673,24 +672,24 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                                                                 const newVendorCode = e.target.value;
                                                                 const vm = vendorMasters.find(m => m.vendor_code === newVendorCode);
                                                                 const newVendorName = vm?.vendor_name || newVendorCode;
-                                                                
+
                                                                 const targetVendorGroup = vendorGroups[newVendorCode];
-                                                                
+
                                                                 if (targetVendorGroup?.isSubmitted) {
                                                                     setErrorToast(`Cannot assign to ${newVendorName} - already submitted to ${targetVendorGroup.poId}`);
                                                                     return;
                                                                 }
-                                                                
-                                                                setItems(prev => prev.map(i => 
-                                                                    i.id === item.id ? { 
-                                                                        ...i, 
-                                                                        vendor: newVendorCode, 
-                                                                        vendor_code: newVendorCode, 
-                                                                        vendor_name: newVendorName 
+
+                                                                setItems(prev => prev.map(i =>
+                                                                    i.id === item.id ? {
+                                                                        ...i,
+                                                                        vendor: newVendorCode,
+                                                                        vendor_code: newVendorCode,
+                                                                        vendor_name: newVendorName
                                                                     } : i
                                                                 ));
                                                             }}
-                                                            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                                                            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-[11px] text-white focus:ring-1 focus:ring-blue-500 focus:outline-none font-medium"
                                                         >
                                                             {item.vendor && !vendorMasters.find(vm => vm.vendor_code === (item.vendor_code || item.vendor)) && (
                                                                 <option value={item.vendor_code || item.vendor}>{item.vendor_name || item.vendor}</option>
@@ -698,10 +697,10 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                                                             {vendorMasters.map(vm => {
                                                                 const vendorGroup = vendorGroups[vm.vendor_code];
                                                                 const isSubmitted = vendorGroup?.isSubmitted;
-                                                                
+
                                                                 return (
-                                                                    <option 
-                                                                        key={vm.vendor_code} 
+                                                                    <option
+                                                                        key={vm.vendor_code}
                                                                         value={vm.vendor_code}
                                                                         disabled={isSubmitted}
                                                                         className={isSubmitted ? 'opacity-50' : ''}
@@ -713,40 +712,40 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                                                         </select>
                                                     )}
                                                 </td>
-                                                <td className="px-4 py-3 font-medium text-white truncate text-xs" title={item.item_name}>
+                                                <td className="px-4 py-3 font-bold text-white truncate text-xs" title={item.item_name}>
                                                     {item.item_name}
                                                 </td>
-                                                <td className="px-4 py-3 text-center">
-                                                    <input 
-                                                        type="number" 
+                                                <td className="px-4 py-3 text-center border-x border-slate-700 bg-slate-900/40">
+                                                    <input
+                                                        type="number"
                                                         disabled={data.isSubmitted}
-                                                        value={item.qty} 
-                                                        onChange={(e) => setItems(prev => prev.map(i => i.id === item.id ? { ...i, qty: Number(e.target.value) } : i))} 
-                                                        className="w-full bg-slate-900/50 border border-slate-700 rounded p-1 text-center font-bold text-blue-400 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none" 
+                                                        value={item.qty}
+                                                        onChange={(e) => setItems(prev => prev.map(i => i.id === item.id ? { ...i, qty: Number(e.target.value) } : i))}
+                                                        className="w-full bg-transparent border-0 p-1 text-center font-black text-blue-400 text-sm focus:ring-0 focus:outline-none"
                                                     />
                                                 </td>
                                                 <td className="px-4 py-3 text-right">
-                                                    <input 
-                                                        type="number" 
+                                                    <input
+                                                        type="number"
                                                         disabled={data.isSubmitted}
-                                                        value={Number(item.unit_price || 0)} 
-                                                        onChange={(e) => setItems(prev => prev.map(i => i.id === item.id ? { ...i, unit_price: Number(e.target.value) || 0 } : i))} 
-                                                        className="w-full bg-slate-900/50 border border-slate-700 rounded p-1 text-right text-slate-300 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none" 
+                                                        value={Number(item.unit_price || 0)}
+                                                        onChange={(e) => setItems(prev => prev.map(i => i.id === item.id ? { ...i, unit_price: Number(e.target.value) || 0 } : i))}
+                                                        className="w-full bg-slate-900/50 border border-slate-700 rounded p-1 text-right text-slate-100 text-xs font-bold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                                                     />
                                                 </td>
-                                                <td className="px-4 py-3 text-right font-bold text-white border-r border-slate-700/30 text-xs truncate">₹{(Number(item.qty) * Number(item.unit_price || 0)).toLocaleString()}</td>
-                                                
-                                                <td className="px-1 py-3 text-center">
-                                                    <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${item.logo === 'Yes' ? 'bg-green-600/20 text-green-400' : 'bg-slate-700 text-slate-500'}`}>{item.logo}</span>
+                                                <td className="px-4 py-3 text-right font-black text-white border-r border-slate-700 text-xs truncate">₹{(Number(item.qty) * Number(item.unit_price || 0)).toLocaleString()}</td>
+
+                                                <td className="px-1 py-3 text-center border-r border-slate-700/50">
+                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-black ${item.logo === 'Yes' ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-500'}`}>{item.logo}</span>
                                                 </td>
-                                                <td className="px-1 py-3 text-center">
-                                                    <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${item.packaging === 'Yes' ? 'bg-green-600/20 text-green-400' : 'bg-slate-700 text-slate-500'}`}>{item.packaging}</span>
+                                                <td className="px-1 py-3 text-center border-r border-slate-700/50">
+                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-black ${item.packaging === 'Yes' ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-500'}`}>{item.packaging}</span>
                                                 </td>
-                                                <td className="px-1 py-3 text-center">
-                                                    <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${item.manual === 'Yes' ? 'bg-green-600/20 text-green-400' : 'bg-slate-700 text-slate-500'}`}>{item.manual}</span>
+                                                <td className="px-1 py-3 text-center border-r border-slate-700/50">
+                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-black ${item.manual === 'Yes' ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-500'}`}>{item.manual}</span>
                                                 </td>
-                                                <td className="px-1 py-3 text-center">
-                                                    <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${item.wrap === 'Yes' ? 'bg-green-600/20 text-green-400' : 'bg-slate-700 text-slate-500'}`}>{item.wrap}</span>
+                                                <td className="px-1 py-3 text-center border-r border-slate-700/50">
+                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-black ${item.wrap === 'Yes' ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-500'}`}>{item.wrap}</span>
                                                 </td>
 
                                                 <td className="px-4 py-3 text-right">
@@ -785,15 +784,15 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                         </div>
                     </div>
                     <div className="flex items-center gap-4">
-                        <button 
+                        <button
                             onClick={() => setShowDebug(!showDebug)}
                             className="text-[10px] uppercase tracking-widest font-bold text-slate-500 hover:text-blue-400 transition-colors"
                         >
                             {showDebug ? 'Hide Debug Info' : '🐛 Show Debug Info'}
                         </button>
                         <div className="text-right">
-                             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Session Value</p>
-                             <p className="text-3xl font-bold text-green-400">{formatCurrency(stats.grandTotal)}</p>
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Session Value</p>
+                            <p className="text-3xl font-bold text-green-400">{formatCurrency(stats.grandTotal)}</p>
                         </div>
                     </div>
                 </div>
@@ -846,10 +845,10 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             )}
 
             {isAddNewSkuModalOpen && (
-                <AddNewSKUModal 
-                    isOpen={true} 
-                    onClose={() => setIsAddNewSkuModalOpen(false)} 
-                    vendors={vendorMasters.map(vm => vm.vendor_name)} 
+                <AddNewSKUModal
+                    isOpen={true}
+                    onClose={() => setIsAddNewSkuModalOpen(false)}
+                    vendors={vendorMasters.map(vm => vm.vendor_name)}
                     onSave={(data) => {
                         const newSku = addSkuToCatalog({
                             name: data.itemName,
