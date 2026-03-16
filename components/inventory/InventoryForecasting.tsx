@@ -310,7 +310,8 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
             mode: activeMode.charAt(0).toUpperCase() + activeMode.slice(1),
             skus: selectedRows.map(s => ({
                 sku: s.masterSKU,
-                qty: s.reorderQty
+                qty: s.reorderQty,
+                vendor: s.businessRules?.supplier || ''
             }))
         };
 
