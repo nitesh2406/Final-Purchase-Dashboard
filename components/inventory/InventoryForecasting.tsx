@@ -83,14 +83,81 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     const [error, setError] = useState<string | null>(null);
     const [toast, setToast] = useState<ToastState | null>(null);
     const [activeMode, setActiveMode] = useState<'sea' | 'air'>('sea');
-    const [statusFilter, setStatusFilter] = useState<StatusFilter>('All');
-    const [searchTerm, setSearchTerm] = useState('');
-    const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'daysOfCover', direction: 'asc' });
+
+    // Per-tab state — keyed by mode so switching tabs restores previous work
+    type TabState = {
+        statusFilter: StatusFilter;
+        searchTerm: string;
+        sortConfig: { key: SortKey; direction: 'asc' | 'desc' };
+        selectedSkuIds: string[];
+        showNeedsOrderOnly: boolean;
+        editingQty: Record<string, string>;
+        modalChartPeriod: '30' | '90';
+    };
+    const defaultTabState = (): TabState => ({
+        statusFilter: 'All',
+        searchTerm: '',
+        sortConfig: { key: 'daysOfCover', direction: 'asc' },
+        selectedSkuIds: [],
+        showNeedsOrderOnly: false,
+        editingQty: {},
+        modalChartPeriod: '30',
+    });
+    const [tabStates, setTabStates] = useState<Record<string, TabState>>({
+        sea: defaultTabState(),
+        air: defaultTabState(),
+    });
+
+    // Active tab-driven state (derive from tabStates for current mode)
+    const [statusFilter, setStatusFilterRaw] = useState<StatusFilter>('All');
+    const [searchTerm, setSearchTermRaw] = useState('');
+    const [sortConfig, setSortConfigRaw] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'daysOfCover', direction: 'asc' });
+    const [selectedSkuIds, setSelectedSkuIdsRaw] = useState<string[]>([]);
+    const [showNeedsOrderOnly, setShowNeedsOrderOnlyRaw] = useState(false);
+    const [editingQty, setEditingQtyRaw] = useState<Record<string, string>>({});
+    const [modalChartPeriod, setModalChartPeriodRaw] = useState<'30' | '90'>('30');
+
+    // Wrapper setters that also persist to tabState
+    const setStatusFilter = (val: StatusFilter) => {
+        setStatusFilterRaw(val);
+        setTabStates(prev => ({ ...prev, [activeMode]: { ...prev[activeMode], statusFilter: val } }));
+    };
+    const setSearchTerm = (val: string) => {
+        setSearchTermRaw(val);
+        setTabStates(prev => ({ ...prev, [activeMode]: { ...prev[activeMode], searchTerm: val } }));
+    };
+    const setSortConfig = (updater: ((prev: { key: SortKey; direction: 'asc' | 'desc' }) => { key: SortKey; direction: 'asc' | 'desc' })) => {
+        setSortConfigRaw(prev => {
+            const next = updater(prev);
+            setTabStates(ts => ({ ...ts, [activeMode]: { ...ts[activeMode], sortConfig: next } }));
+            return next;
+        });
+    };
+    const setSelectedSkuIds = (updater: string[] | ((prev: string[]) => string[])) => {
+        setSelectedSkuIdsRaw(prev => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            setTabStates(ts => ({ ...ts, [activeMode]: { ...ts[activeMode], selectedSkuIds: next } }));
+            return next;
+        });
+    };
+    const setShowNeedsOrderOnly = (val: boolean) => {
+        setShowNeedsOrderOnlyRaw(val);
+        setTabStates(prev => ({ ...prev, [activeMode]: { ...prev[activeMode], showNeedsOrderOnly: val } }));
+    };
+    const setEditingQty = (updater: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)) => {
+        setEditingQtyRaw(prev => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            setTabStates(ts => ({ ...ts, [activeMode]: { ...ts[activeMode], editingQty: next } }));
+            return next;
+        });
+    };
+    const setModalChartPeriod = (val: '30' | '90') => {
+        setModalChartPeriodRaw(val);
+        setTabStates(prev => ({ ...prev, [activeMode]: { ...prev[activeMode], modalChartPeriod: val } }));
+    };
+
     const [stableSortedIds, setStableSortedIds] = useState<string[]>([]);
     const [selectedSku, setSelectedSku] = useState<ForecastingSku | null>(null);
-    const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
-    const [editingQty, setEditingQty] = useState<Record<string, string>>({});
-    const [showNeedsOrderOnly, setShowNeedsOrderOnly] = useState(false);
     const [showSummaryModal, setShowSummaryModal] = useState(false);
     const [lastDraftPayload, setLastDraftPayload] = useState<any>(null);
     const [showDebug, setShowDebug] = useState(false);
@@ -153,6 +220,25 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
             setIsLoading(false);
         }
     }, [activeMode]);
+
+    // Switch tab: restore persisted state for the newly selected tab
+    const handleModeSwitch = (mode: 'sea' | 'air') => {
+        if (mode === activeMode) return;
+        // Save current state before switching
+        const currentState: TabState = { statusFilter, searchTerm, sortConfig, selectedSkuIds, showNeedsOrderOnly, editingQty, modalChartPeriod };
+        setTabStates(prev => ({ ...prev, [activeMode]: currentState }));
+        // Restore new tab state
+        const next = tabStates[mode];
+        setStatusFilterRaw(next.statusFilter);
+        setSearchTermRaw(next.searchTerm);
+        setSortConfigRaw(next.sortConfig);
+        setSelectedSkuIdsRaw(next.selectedSkuIds);
+        setShowNeedsOrderOnlyRaw(next.showNeedsOrderOnly);
+        setEditingQtyRaw(next.editingQty);
+        setModalChartPeriodRaw(next.modalChartPeriod || '30');
+        setStableSortedIds([]);
+        setActiveMode(mode);
+    };
 
     // Handle load and tab switching logic
     useEffect(() => {
@@ -531,7 +617,12 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
 
     return (
         <div className="h-full flex flex-col space-y-4">
-            <SkuDetailModal sku={selectedSku} onClose={() => setSelectedSku(null)} />
+            <SkuDetailModal
+                sku={selectedSku}
+                onClose={() => setSelectedSku(null)}
+                chartPeriod={modalChartPeriod}
+                onChartPeriodChange={setModalChartPeriod}
+            />
 
             {/* IMPROVEMENT 4: Summary Modal */}
             {showSummaryModal && (
@@ -665,10 +756,10 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                     </button>
                 </div>
                 <div className="flex items-center p-1 bg-gray-200 dark:bg-gray-700 rounded-lg flex-shrink-0">
-                    <button onClick={() => setActiveMode('sea')} className={`py-1 px-3 rounded-md text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 ${activeMode === 'sea' ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 dark:text-gray-300'}`}>
+                    <button onClick={() => handleModeSwitch('sea')} className={`py-1 px-3 rounded-md text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 ${activeMode === 'sea' ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 dark:text-gray-300'}`}>
                         <ShipIcon className="w-4 h-4" /> SEA
                     </button>
-                    <button onClick={() => setActiveMode('air')} className={`py-1 px-3 rounded-md text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 ${activeMode === 'air' ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 dark:text-gray-300'}`}>
+                    <button onClick={() => handleModeSwitch('air')} className={`py-1 px-3 rounded-md text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 ${activeMode === 'air' ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 dark:text-gray-300'}`}>
                         <AirplaneIcon className="w-4 h-4" /> AIR
                     </button>
                 </div>
@@ -695,7 +786,28 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                 </div>
                                 <div className="bg-slate-800 p-2 rounded">
                                     <p className="text-[9px] text-slate-500 uppercase font-bold">Needs Order Filter</p>
-                                    <p className="text-sm font-mono text-blue-400">{showNeedsOrderOnly ? 'TRUE' : 'FALSE'}</p>
+                                    <p className="text-sm font-mono text-blue-400">{showNeedsOrderOnly ? 'ON' : 'OFF'}</p>
+                                </div>
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">Active Mode</p>
+                                    <p className="text-sm font-mono text-orange-400">{activeMode.toUpperCase()}</p>
+                                </div>
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">Qty Overrides</p>
+                                    <p className="text-sm font-mono text-purple-400">{Object.keys(editingQty).length}</p>
+                                </div>
+                            </div>
+
+                            <div className="mt-4">
+                                <h3 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">State Isolation (Current Tab)</h3>
+                                <div className="bg-slate-950 p-2 rounded border border-slate-800">
+                                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] font-mono">
+                                        <span className="text-slate-500">Filter:</span> <span className="text-slate-300">{statusFilter}</span>
+                                        <span className="text-slate-500">Search:</span> <span className="text-slate-300">{searchTerm || 'none'}</span>
+                                        <span className="text-slate-500">Sort:</span> <span className="text-slate-300">{sortConfig.key} ({sortConfig.direction})</span>
+                                        <span className="text-slate-500">Selected:</span> <span className="text-slate-300">{selectedSkuIds.length}</span>
+                                        <span className="text-slate-500">Period:</span> <span className="text-slate-300">{modalChartPeriod}d</span>
+                                    </div>
                                 </div>
                             </div>
 

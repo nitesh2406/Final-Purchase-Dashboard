@@ -32,6 +32,7 @@ export const API_ACTIONS = {
     SUBMIT_DRAFT: 'submit_draft',
     CANCEL_DRAFT: 'cancel_draft',
     DUPLICATE_DRAFT: 'duplicate_draft',
+    SAVE_CUSTOMIZATION: 'save_customization',
 
     // Purchase Order Operations
     GET_PURCHASE_ORDERS: 'get_pos',

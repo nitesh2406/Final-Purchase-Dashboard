@@ -4,11 +4,13 @@ import { ForecastingSku } from '../../types';
 import { Button } from '../ui/Button';
 import { XMarkIcon, ChartBarIcon, TruckIcon, GiftIcon, CheckBadgeIcon, ExclamationTriangleIcon, BeakerIcon } from '../icons/Icons';
 import { Card } from '../ui/Card';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 interface SkuDetailModalProps {
     sku: ForecastingSku | null;
     onClose: () => void;
+    chartPeriod: '30' | '90';
+    onChartPeriodChange: (period: '30' | '90') => void;
 }
 
 const formatCurrency = (amount: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
@@ -35,9 +37,8 @@ const EmptyState: FC<{ message: string }> = ({ message }) => (
     </div>
 );
 
-export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
+export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPeriod, onChartPeriodChange }) => {
     const [showDebug, setShowDebug] = useState(false);
-    const [chartPeriod, setChartPeriod] = useState<'30' | '90'>('30');
 
     const { totalStock, availableToSell, channelData, avgLeadTime, avgAirLeadTime, avgSeaLeadTime } = useMemo(() => {
         if (!sku) {
@@ -180,13 +181,13 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                                         <h4 className="font-semibold text-sm text-slate-200">Sales Trend</h4>
                                         <div className="flex bg-slate-700 rounded-lg p-0.5">
                                             <button
-                                                onClick={() => setChartPeriod('30')}
+                                                onClick={() => onChartPeriodChange('30')}
                                                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${chartPeriod === '30' ? 'bg-slate-500 shadow text-white' : 'text-slate-400 hover:text-slate-200'}`}
                                             >
                                                 30 Days
                                             </button>
                                             <button
-                                                onClick={() => setChartPeriod('90')}
+                                                onClick={() => onChartPeriodChange('90')}
                                                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${chartPeriod === '90' ? 'bg-slate-500 shadow text-white' : 'text-slate-400 hover:text-slate-200'}`}
                                             >
                                                 90 Days
@@ -194,62 +195,67 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose }) => {
                                         </div>
                                     </div>
                                     {chartData.length > 0 ? (
-                                        <ResponsiveContainer width="100%" height={220}>
-                                            <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
-                                                <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} vertical={false} />
-                                                <XAxis
-                                                    dataKey="timestamp"
-                                                    type="number"
-                                                    domain={['dataMin', 'dataMax']}
-                                                    tickFormatter={(unixTime) => new Date(unixTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                                    tick={{ fontSize: 10, fill: '#9ca3af' }}
-                                                    axisLine={false}
-                                                    tickLine={false}
-                                                    minTickGap={30}
-                                                />
-                                                <YAxis
-                                                    tick={{ fontSize: 10, fill: '#9ca3af' }}
-                                                    axisLine={false}
-                                                    tickLine={false}
-                                                    width={45}
-                                                    domain={[0, 'auto']}
-                                                />
-                                                <Tooltip
-                                                    contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}
-                                                    labelStyle={{ color: '#94a3b8', fontWeight: 'bold', marginBottom: '0.25rem' }}
-                                                    itemStyle={{ color: '#60a5fa' }}
-                                                    formatter={(value: number) => [value, 'Units Sold']}
-                                                    labelFormatter={(unixTime) => new Date(unixTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-                                                />
-                                                {/* Task 5: Two lines — Total (blue) + B2C Only (green dashed) */}
-                                                <Legend
-                                                    verticalAlign="top"
-                                                    height={24}
-                                                    formatter={(value: string) => <span style={{ color: '#94a3b8', fontSize: 11 }}>{value}</span>}
-                                                />
-                                                <Line
-                                                    type="monotone"
-                                                    dataKey="units"
-                                                    name="Total"
-                                                    stroke="#3b82f6"
-                                                    strokeWidth={3}
-                                                    dot={false}
-                                                    activeDot={{ r: 6 }}
-                                                />
-                                                {(sku.salesHistory90B2C || []).length > 0 && (
-                                                    <Line
-                                                        type="monotone"
-                                                        dataKey="unitsB2C"
-                                                        name="B2C Only"
-                                                        stroke="#10b981"
-                                                        strokeWidth={2}
-                                                        dot={false}
-                                                        activeDot={{ r: 5 }}
-                                                        strokeDasharray="4 2"
-                                                    />
-                                                )}
-                                            </LineChart>
-                                        </ResponsiveContainer>
+                                        <div className="space-y-5">
+                                            {/* Graph 1: Total Sales */}
+                                            <div>
+                                                <p className="text-xs font-semibold text-slate-400 mb-1 pl-1">Total Sales <span className="text-slate-600">(B2C + B2B)</span></p>
+                                                <ResponsiveContainer width="100%" height={160}>
+                                                    <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                                                        <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} vertical={false} />
+                                                        <XAxis
+                                                            dataKey="timestamp"
+                                                            type="number"
+                                                            domain={['dataMin', 'dataMax']}
+                                                            tickFormatter={(unixTime) => new Date(unixTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                                            tick={{ fontSize: 10, fill: '#9ca3af' }}
+                                                            axisLine={false}
+                                                            tickLine={false}
+                                                            minTickGap={30}
+                                                        />
+                                                        <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={35} domain={[0, 'auto']} />
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
+                                                            labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+                                                            itemStyle={{ color: '#3b82f6' }}
+                                                            formatter={(value: number) => [value, 'Total Units']}
+                                                            labelFormatter={(unixTime) => new Date(unixTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                                                        />
+                                                        <Line type="monotone" dataKey="units" stroke="#3b82f6" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#3b82f6' }} />
+                                                    </LineChart>
+                                                </ResponsiveContainer>
+                                            </div>
+
+                                            {/* Graph 2: B2C Only Sales (only if data exists) */}
+                                            {(sku.salesHistory90B2C || []).length > 0 && (
+                                                <div>
+                                                    <p className="text-xs font-semibold text-slate-400 mb-1 pl-1">B2C Sales <span className="text-slate-600">(Direct / Online only)</span></p>
+                                                    <ResponsiveContainer width="100%" height={160}>
+                                                        <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                                                            <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} vertical={false} />
+                                                            <XAxis
+                                                                dataKey="timestamp"
+                                                                type="number"
+                                                                domain={['dataMin', 'dataMax']}
+                                                                tickFormatter={(unixTime) => new Date(unixTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                                                tick={{ fontSize: 10, fill: '#9ca3af' }}
+                                                                axisLine={false}
+                                                                tickLine={false}
+                                                                minTickGap={30}
+                                                            />
+                                                            <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={35} domain={[0, 'auto']} />
+                                                            <Tooltip
+                                                                contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
+                                                                labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+                                                                itemStyle={{ color: '#10b981' }}
+                                                                formatter={(value: number) => [value, 'B2C Units']}
+                                                                labelFormatter={(unixTime) => new Date(unixTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                                                            />
+                                                            <Line type="monotone" dataKey="unitsB2C" stroke="#10b981" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#10b981' }} />
+                                                        </LineChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                            )}
+                                        </div>
                                     ) : <EmptyState message={`No ${chartPeriod}-day sales history data available`} />}
                                 </div>
                             </div>
