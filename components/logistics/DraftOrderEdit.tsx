@@ -6,7 +6,7 @@ import {
     EyeIcon, ChevronDownIcon, ChevronUpIcon, LockClosedIcon,
     ClipboardDocumentIcon, BoxIcon, ExclamationTriangleIcon, XMarkIcon,
     DocumentDuplicateIcon, ArrowLeftIcon, ArrowPathIcon, CheckBadgeIcon,
-    AirplaneIcon, ShipIcon, ClipboardDocumentCheckIcon, ClockIcon, TruckIcon, FolderOpenIcon
+    AirplaneIcon, ShipIcon, ClipboardDocumentCheckIcon, ClockIcon, FolderOpenIcon
 } from '../icons/Icons';
 import { DraftOrder, Sku, PurchaseOrder, VendorMaster } from '../../types';
 import { CustomizationModal } from './CustomizationModal';
@@ -68,11 +68,17 @@ const ModeBadge: React.FC<{ mode?: string }> = ({ mode }) => {
 
 export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, setDrafts, onSave, onOrdersSubmitted, onRefreshPOs, existingPoCount = 0, skus, addSkuToCatalog, vendorMasters }) => {
     const isViewOnly = draft?.status === 'Order Placed' || draft?.status === 'Cancelled';
+    // ISSUE 3: Full read-only for submitted/order_placed drafts
+    const isSubmittedReadOnly = draft?.status === 'SUBMITTED' || draft?.status === 'ORDER_PLACED' || draft?.status === 'Submitted' || draft?.status === 'Order Placed';
     const isCreateMode = !draft;
 
-    const [poDate, setPoDate] = useState(draft?.draft_date || draft?.created_at || new Date().toISOString().split('T')[0]);
-    const [expectedDelivery, setExpectedDelivery] = useState(draft?.expected_delivery || '');
-    const [shippingMode, setShippingMode] = useState<'SEA' | 'AIR' | ''>(draft?.mode || draft?.planned_mode || '' as any);
+    // ISSUE 8: Auto-populate PO Date with today if empty
+    const todayStr = new Date().toISOString().split('T')[0];
+    const [poDate, setPoDate] = useState(draft?.draft_date || draft?.created_at || todayStr);
+    // Removed: expectedDelivery state (ISSUE 8 — field removed)
+    // ISSUE 8: shippingMode is now read-only, derived from draft.planned_mode
+    const shippingMode = (draft?.mode || draft?.planned_mode || '') as 'SEA' | 'AIR' | '';
+    const displayMode = String(draft?.planned_mode || draft?.mode || shippingMode || '').toUpperCase() as 'SEA' | 'AIR' | '';
 
     const [items, setItems] = useState<LineItem[]>(() => {
         if (!draft?.items) return [];
@@ -89,7 +95,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
         }));
     });
 
-    const [notes, setNotes] = useState(draft?.notes || '');
+    const notes = draft?.notes || '';
     const [searchQuery, setSearchQuery] = useState('');
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -227,8 +233,11 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
     };
 
     const handleSaveDraft = async () => {
+        // ISSUE 3: Block save for read-only submitted drafts
+        if (isSubmittedReadOnly) return;
+
         // Validation
-        if (!shippingMode) {
+        if (!shippingMode && !displayMode) {
             alert('Please select shipping mode');
             return;
         }
@@ -284,9 +293,8 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
 
             const payload = {
                 action: isCreateMode ? 'create_manual_draft' : API_ACTIONS.SAVE_DRAFT,
-                mode: shippingMode,
+                mode: displayMode || shippingMode,
                 draft_date: poDate,
-                expected_delivery: expectedDelivery,
                 notes: notes,
                 lines: lines,
                 ...(draft?.id ? { draftId: draft.id } : {})
@@ -463,8 +471,14 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
         }
     };
 
-    const inputClasses = `bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all ${isViewOnly ? 'cursor-not-allowed opacity-80' : ''}`;
+    const inputClasses = `bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all ${(isViewOnly || isSubmittedReadOnly) ? 'cursor-not-allowed opacity-80' : ''}`;
     const displayOnlyClasses = `bg-slate-900/50 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-400 w-full cursor-default`;
+
+    // ISSUE 6: Helper — determine NA vs Yes/No for customization badges
+    const getCustomVal = (val: 'Yes' | 'No' | null | undefined | string): 'Yes' | 'No' | 'NA' => {
+        if (val === null || val === undefined || val === 'NA' || val === '') return 'NA';
+        return val as 'Yes' | 'No';
+    };
 
     const Tooltip: React.FC<{ label: string; text: string }> = ({ label, text }) => (
         <th className="group relative px-1 py-3 font-bold text-center w-[5%] cursor-help border-r border-slate-700 max-w-[50px]">
@@ -478,6 +492,14 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
 
     return (
         <div className="flex flex-col min-h-screen space-y-4 text-white pb-32 relative bg-[#0f172a] p-6">
+
+            {/* ISSUE 3: Read-only banner for SUBMITTED/ORDER_PLACED */}
+            {isSubmittedReadOnly && (
+                <div className="flex items-center gap-3 bg-amber-900/30 border border-amber-700 rounded-xl px-4 py-3 text-amber-300 text-sm font-medium mb-2 animate-in fade-in duration-300">
+                    <LockClosedIcon className="w-4 h-4 flex-shrink-0" />
+                    <span>This draft has been submitted and cannot be edited.</span>
+                </div>
+            )}
 
             {errorToast && (
                 <div className="fixed top-24 right-8 z-[110] animate-in slide-in-from-right-8 duration-300">
@@ -562,11 +584,12 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                 </div>
                 <div className="flex items-center gap-3">
                     <Button variant="secondary" onClick={onBack} className="h-10 px-4 border-slate-700 bg-slate-800/50 hover:bg-slate-800" icon={<ArrowLeftIcon className="w-4 h-4" />}>Back</Button>
-                    {!isViewOnly && (
+                    {/* ISSUE 3: Hide Save/Submit for submitted-read-only drafts */}
+                    {!isViewOnly && !isSubmittedReadOnly && (
                         <>
                             <Button
                                 onClick={handleSaveDraft}
-                                disabled={isSaving || !shippingMode || items.length === 0}
+                                disabled={isSaving || (!displayMode && !shippingMode) || items.length === 0}
                                 className="h-10 px-6 bg-blue-600 hover:bg-blue-700 font-bold shadow-lg shadow-blue-900/40 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
                             >
                                 {isSaving ? 'Saving...' : 'Save Draft'}
@@ -585,75 +608,40 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                 </div>
             </div>
 
-            {/* Compact Header Block */}
-            <div className={`bg-slate-800/40 rounded-xl p-4 mb-2 shadow-xl border border-slate-700/50 backdrop-blur-md ${isViewOnly ? 'opacity-80' : ''}`}>
-                <div className="flex flex-wrap items-start gap-6">
-                    <div className="flex-1 min-w-[200px] grid grid-cols-2 md:grid-cols-3 gap-4">
-                        <div className="space-y-1.5">
-                            <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-0.5">
-                                <ClockIcon className="w-3 h-3" /> PO Date
-                            </label>
-                            <input
-                                type="date"
-                                value={poDate}
-                                onChange={(e) => setPoDate(e.target.value)}
-                                disabled={isViewOnly}
-                                className="bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all outline-none"
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-0.5">
-                                <TruckIcon className="w-3 h-3" /> Expected Delivery
-                            </label>
-                            <input
-                                type="date"
-                                value={expectedDelivery}
-                                onChange={(e) => setExpectedDelivery(e.target.value)}
-                                disabled={isViewOnly}
-                                className="bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all outline-none"
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-0.5">
-                                <ShipIcon className="w-3 h-3" /> Shipping Mode
-                            </label>
-                            <select
-                                value={shippingMode}
-                                onChange={(e) => setShippingMode(e.target.value as 'SEA' | 'AIR')}
-                                disabled={isViewOnly}
-                                className="bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all outline-none appearance-none"
-                            >
-                                <option value="">Select...</option>
-                                <option value="SEA">🚢 Sea Freight</option>
-                                <option value="AIR">✈️ Air Freight</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div className="flex-1 min-w-[300px] space-y-1.5">
+            {/* ISSUE 8: Compact Header Block — max-w-[280px], left-aligned, no Expected Delivery, no Internal Notes, Shipping Mode as read-only badge */}
+            <div className={`bg-slate-800/40 rounded-xl p-4 mb-2 shadow-xl border border-slate-700/50 backdrop-blur-md w-full max-w-[320px] ${(isViewOnly || isSubmittedReadOnly) ? 'opacity-80' : ''}`}>
+                <div className="flex flex-col gap-4">
+                    <div className="space-y-1.5">
                         <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-0.5">
-                            <PencilIcon className="w-3 h-3" /> Internal Notes
+                            <ClockIcon className="w-3 h-3" /> PO Date
                         </label>
-                        <textarea
-                            rows={1}
-                            placeholder="Operational notes or internal instructions..."
-                            value={notes}
-                            onChange={e => setNotes(e.target.value)}
-                            disabled={isViewOnly}
-                            className="bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all outline-none resize-none min-h-[42px]"
+                        <input
+                            type="date"
+                            value={poDate}
+                            onChange={(e) => !isSubmittedReadOnly && setPoDate(e.target.value)}
+                            disabled={isViewOnly || isSubmittedReadOnly}
+                            className="bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all outline-none"
                         />
+                    </div>
+                    <div className="space-y-1.5">
+                        <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-0.5">
+                            <ShipIcon className="w-3 h-3" /> Shipping Mode
+                        </label>
+                        {/* ISSUE 8: Read-only badge instead of dropdown */}
+                        <ModeBadge mode={displayMode || shippingMode} />
                     </div>
                 </div>
             </div>
 
-            {!shippingMode && items.length > 0 && !isViewOnly && (
+            {!displayMode && !shippingMode && items.length > 0 && !isViewOnly && !isSubmittedReadOnly && (
                 <div className="flex items-center gap-2 text-yellow-400 text-xs mb-4 px-1 animate-pulse">
                     <ExclamationTriangleIcon className="w-4 h-4" />
-                    <span>Please select shipping mode before saving</span>
+                    <span>No shipping mode set for this draft</span>
                 </div>
             )}
 
-            {!isViewOnly && (
+            {/* ISSUE 3: Hide search bar for submitted-read-only drafts */}
+            {!isViewOnly && !isSubmittedReadOnly && (
                 <div className="flex flex-col space-y-3 mt-2">
                     <div className="relative group">
                         <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -742,7 +730,8 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                                             <tr key={item.id} className={`transition-colors duration-150 ${data.isSubmitted ? 'opacity-60 bg-slate-800/30' : 'hover:bg-slate-700/20'}`}>
                                                 <td className="px-4 py-3 font-mono text-xs text-slate-400 font-bold truncate">{item.sku}</td>
                                                 <td className="px-4 py-3">
-                                                    {data.isSubmitted ? (
+                                                    {/* ISSUE 3: Show plain text vendor for submitted-read-only; ISSUE 6: vendor as text when submitted */}
+                                                    {(data.isSubmitted || isSubmittedReadOnly) ? (
                                                         <span className="text-xs text-white font-medium">
                                                             {vendorMasters.find(vm => vm.vendor_code === (item.vendor_code || item.vendor))?.vendor_name || (item.vendor_name || item.vendor)}
                                                         </span>
@@ -796,13 +785,18 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                                                     {item.item_name}
                                                 </td>
                                                 <td className="px-4 py-3 text-center border-x border-slate-700 bg-slate-900/40">
-                                                    <input
-                                                        type="number"
-                                                        disabled={data.isSubmitted}
-                                                        value={item.qty}
-                                                        onChange={(e) => setItems(prev => prev.map(i => i.id === item.id ? { ...i, qty: Number(e.target.value) } : i))}
-                                                        className="w-full bg-transparent border-0 p-1 text-center font-black text-blue-400 text-sm focus:ring-0 focus:outline-none"
-                                                    />
+                                                    {/* ISSUE 3: Show plain text for submitted-read-only drafts */}
+                                                    {isSubmittedReadOnly ? (
+                                                        <span className="font-black text-blue-400 text-sm">{item.qty}</span>
+                                                    ) : (
+                                                        <input
+                                                            type="number"
+                                                            disabled={data.isSubmitted}
+                                                            value={item.qty}
+                                                            onChange={(e) => setItems(prev => prev.map(i => i.id === item.id ? { ...i, qty: Number(e.target.value) } : i))}
+                                                            className="w-full bg-transparent border-0 p-1 text-center font-black text-blue-400 text-sm focus:ring-0 focus:outline-none"
+                                                        />
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3 text-right">
                                                     <div className="text-right text-slate-400 text-xs font-mono font-medium">
@@ -811,43 +805,28 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                                                 </td>
                                                 <td className="px-4 py-3 text-right font-black text-white border-r border-slate-700 text-xs truncate">₹{(Number(item.qty) * Number(item.unit_price || 0)).toLocaleString()}</td>
 
-                                                {/* Inline Customization Toggles */}
-                                                <td className="px-1 py-3 text-center border-r border-slate-700/50">
-                                                    <button
-                                                        disabled={data.isSubmitted || isViewOnly}
-                                                        onClick={() => setItems(prev => prev.map(i => i.id === item.id ? { ...i, logo: i.logo === 'Yes' ? 'No' : 'Yes' } : i))}
-                                                        className={`text-[9px] px-1.5 py-0.5 rounded font-black transition-all ${item.logo === 'Yes' ? 'bg-green-600 text-white shadow-sm shadow-green-900/20' : 'bg-slate-700/50 text-slate-500 hover:bg-slate-700'}`}
-                                                    >
-                                                        {item.logo}
-                                                    </button>
-                                                </td>
-                                                <td className="px-1 py-3 text-center border-r border-slate-700/50">
-                                                    <button
-                                                        disabled={data.isSubmitted || isViewOnly}
-                                                        onClick={() => setItems(prev => prev.map(i => i.id === item.id ? { ...i, packaging: i.packaging === 'Yes' ? 'No' : 'Yes' } : i))}
-                                                        className={`text-[9px] px-1.5 py-0.5 rounded font-black transition-all ${item.packaging === 'Yes' ? 'bg-green-600 text-white shadow-sm shadow-green-900/20' : 'bg-slate-700/50 text-slate-500 hover:bg-slate-700'}`}
-                                                    >
-                                                        {item.packaging}
-                                                    </button>
-                                                </td>
-                                                <td className="px-1 py-3 text-center border-r border-slate-700/50">
-                                                    <button
-                                                        disabled={data.isSubmitted || isViewOnly}
-                                                        onClick={() => setItems(prev => prev.map(i => i.id === item.id ? { ...i, manual: i.manual === 'Yes' ? 'No' : 'Yes' } : i))}
-                                                        className={`text-[9px] px-1.5 py-0.5 rounded font-black transition-all ${item.manual === 'Yes' ? 'bg-green-600 text-white shadow-sm shadow-green-900/20' : 'bg-slate-700/50 text-slate-500 hover:bg-slate-700'}`}
-                                                    >
-                                                        {item.manual}
-                                                    </button>
-                                                </td>
-                                                <td className="px-1 py-3 text-center border-r border-slate-700/50">
-                                                    <button
-                                                        disabled={data.isSubmitted || isViewOnly}
-                                                        onClick={() => setItems(prev => prev.map(i => i.id === item.id ? { ...i, wrap: i.wrap === 'Yes' ? 'No' : 'Yes' } : i))}
-                                                        className={`text-[9px] px-1.5 py-0.5 rounded font-black transition-all ${item.wrap === 'Yes' ? 'bg-green-600 text-white shadow-sm shadow-green-900/20' : 'bg-slate-700/50 text-slate-500 hover:bg-slate-700'}`}
-                                                    >
-                                                        {item.wrap}
-                                                    </button>
-                                                </td>
+                                                {/* ISSUE 6: Inline Customization Toggles — NA state shows dash, not clickable */}
+                                                {(['logo', 'packaging', 'manual', 'wrap'] as const).map(field => {
+                                                    const rawVal = (item as any)[field];
+                                                    const val = getCustomVal(rawVal);
+                                                    const isNA = val === 'NA';
+                                                    const isDisabled = isNA || data.isSubmitted || isViewOnly || isSubmittedReadOnly;
+                                                    return (
+                                                        <td key={field} className="px-1 py-3 text-center border-r border-slate-700/50">
+                                                            {isNA ? (
+                                                                <span className="text-slate-500 text-sm font-medium">—</span>
+                                                            ) : (
+                                                                <button
+                                                                    disabled={isDisabled}
+                                                                    onClick={() => !isDisabled && setItems(prev => prev.map(i => i.id === item.id ? { ...i, [field]: i[field] === 'Yes' ? 'No' : 'Yes' } : i))}
+                                                                    className={`text-[9px] px-1.5 py-0.5 rounded font-black transition-all ${val === 'Yes' ? 'bg-green-600 text-white shadow-sm shadow-green-900/20' : 'bg-slate-700/50 text-slate-500 hover:bg-slate-700'} ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                                                                >
+                                                                    {val}
+                                                                </button>
+                                                            )}
+                                                        </td>
+                                                    );
+                                                })}
 
                                                 {/* Files Column */}
                                                 <td className="px-1 py-3 text-center border-r border-slate-700/50">
@@ -868,10 +847,14 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
 
                                                 <td className="px-4 py-3 text-right">
                                                     <div className="flex justify-end gap-1.5">
-                                                        <button onClick={() => setCustomizationItem(item)} className="p-1 hover:bg-slate-600 rounded text-slate-500 hover:text-blue-400 transition-all">
-                                                            {isViewOnly ? <EyeIcon className="w-3.5 h-3.5" /> : <PencilIcon className="w-3.5 h-3.5" />}
-                                                        </button>
-                                                        {!data.isSubmitted && !isViewOnly && (
+                                                        {/* ISSUE 3: Hide pencil edit in submitted-read-only; show eye only */}
+                                                        {!isSubmittedReadOnly && (
+                                                            <button onClick={() => setCustomizationItem(item)} className="p-1 hover:bg-slate-600 rounded text-slate-500 hover:text-blue-400 transition-all">
+                                                                {isViewOnly ? <EyeIcon className="w-3.5 h-3.5" /> : <PencilIcon className="w-3.5 h-3.5" />}
+                                                            </button>
+                                                        )}
+                                                        {/* ISSUE 3: Hide delete button for submitted-read-only */}
+                                                        {!data.isSubmitted && !isViewOnly && !isSubmittedReadOnly && (
                                                             <button onClick={() => setItems(prev => prev.filter(i => i.id !== item.id))} className="p-1 hover:bg-red-500/20 rounded text-slate-500 hover:text-red-500 transition-all">
                                                                 <TrashIcon className="w-3.5 h-3.5" />
                                                             </button>
@@ -925,8 +908,21 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                             <div className="bg-slate-900 border border-slate-800 p-3 rounded-lg">
                                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Current Mode</p>
                                 <p className="text-sm font-mono text-white flex items-center gap-2">
-                                    {shippingMode === 'AIR' ? <AirplaneIcon className="w-4 h-4 text-sky-400" /> : <ShipIcon className="w-4 h-4 text-blue-400" />}
-                                    {shippingMode || 'NOT SELECTED'}
+                                    {(displayMode || shippingMode) === 'AIR' ? <AirplaneIcon className="w-4 h-4 text-sky-400" /> : <ShipIcon className="w-4 h-4 text-blue-400" />}
+                                    {displayMode || shippingMode || 'NOT SELECTED'}
+                                </p>
+                            </div>
+                            {/* DEBUG: Draft status (ISSUE debug additions) */}
+                            <div className="bg-slate-900 border border-slate-800 p-3 rounded-lg">
+                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Draft Status</p>
+                                <p className="text-sm font-mono text-amber-400">
+                                    {draft?.status || 'DRAFT'}
+                                </p>
+                            </div>
+                            <div className="bg-slate-900 border border-slate-800 p-3 rounded-lg">
+                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Read-Only Mode</p>
+                                <p className="text-sm font-mono text-orange-400">
+                                    {isSubmittedReadOnly ? '🔒 SUBMITTED LOCK' : isViewOnly ? 'VIEW ONLY' : '✏️ EDITABLE'}
                                 </p>
                             </div>
                             <div className="bg-slate-900 border border-slate-800 p-3 rounded-lg">

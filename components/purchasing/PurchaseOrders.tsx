@@ -241,7 +241,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
 
     if (selectedPo || loadingDetails || detailsError) {
         return (
-            <div className="flex flex-col h-full space-y-6 text-white p-6 bg-[#0f172a] min-h-screen animate-in fade-in duration-300">
+        <div className="flex flex-col h-full overflow-y-auto space-y-6 text-white p-6 bg-[#0f172a] animate-in fade-in duration-300">
                 <div className="flex justify-between items-center">
                     <div className="flex items-center gap-4">
                         <button 
@@ -339,7 +339,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                 <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest">Order Line Items</h3>
                                 <span className="text-xs text-slate-500 font-medium">{selectedPo.lines.length} SKUs Ordered</span>
                             </div>
-                            <div className="overflow-x-auto min-w-[1000px]">
+                        <div className="overflow-x-auto overflow-y-auto max-h-[60vh]">
                                 <table className="w-full text-left text-sm border-collapse">
                                     <thead>
                                         <tr className="bg-slate-900/30 text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-700/50">

@@ -84,6 +84,16 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     const [toast, setToast] = useState<ToastState | null>(null);
     const [activeMode, setActiveMode] = useState<'sea' | 'air'>('sea');
 
+    // Per-mode reorderQty overrides (ISSUE 1 fix)
+    // Stored separately from skus so switching modes doesn't lose edits
+    const [qtyOverrides, setQtyOverrides] = useState<{
+        sea: Record<string, number>;
+        air: Record<string, number>;
+    }>({ sea: {}, air: {} });
+
+    // Per-mode last manual refresh timestamp (ISSUE 9 debug)
+    const [lastManualRefresh, setLastManualRefresh] = useState<Record<string, string>>({ sea: '', air: '' });
+
     // Per-tab state — keyed by mode so switching tabs restores previous work
     type TabState = {
         statusFilter: StatusFilter;
@@ -271,7 +281,10 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                 return true;
             })
             .filter(sku => {
-                if (showNeedsOrderOnly) return sku.reorderQty > 0;
+                if (showNeedsOrderOnly) {
+                    const effectiveQty = qtyOverrides[activeMode][sku.masterSKU] ?? sku.reorderQty;
+                    return effectiveQty > 0;
+                }
                 return true;
             })
             .filter(sku =>
@@ -314,17 +327,28 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     }, [filteredSkus.length, sortConfig, statusFilter, searchTerm, activeMode]);
 
     const selectionData = useMemo(() => {
+        const modeOverrides = qtyOverrides[activeMode];
         const selected = skus.filter(s => selectedSkuIds.includes(s.masterSKU));
-        const totalQty = selected.reduce((sum, s) => sum + s.reorderQty, 0);
-        const totalValue = selected.reduce((sum, s) => sum + (s.reorderQty * s.unitCost), 0);
+        const totalQty = selected.reduce((sum, s) => sum + (modeOverrides[s.masterSKU] ?? s.reorderQty), 0);
+        const totalValue = selected.reduce((sum, s) => {
+            const qty = modeOverrides[s.masterSKU] ?? s.reorderQty;
+            return sum + (qty * s.unitCost);
+        }, 0);
         return { count: selected.length, totalQty, totalValue };
-    }, [selectedSkuIds, skus]);
+    }, [selectedSkuIds, skus, qtyOverrides, activeMode]);
 
-    const kpiData = useMemo(() => ({
-        skusForOrder: sortedSkus.filter(s => s.reorderQty > 0).length,
-        totalReorderQty: sortedSkus.reduce((sum, s) => sum + s.reorderQty, 0),
-        totalOrderValue: sortedSkus.filter(s => s.reorderQty > 0).reduce((sum, s) => sum + (s.reorderQty * s.unitCost), 0),
-    }), [sortedSkus]);
+    const kpiData = useMemo(() => {
+        const modeOverrides = qtyOverrides[activeMode];
+        const skusWithQty = sortedSkus.filter(s => (modeOverrides[s.masterSKU] ?? s.reorderQty) > 0);
+        return {
+            skusForOrder: skusWithQty.length,
+            totalReorderQty: sortedSkus.reduce((sum, s) => sum + (modeOverrides[s.masterSKU] ?? s.reorderQty), 0),
+            totalOrderValue: skusWithQty.reduce((sum, s) => {
+                const qty = modeOverrides[s.masterSKU] ?? s.reorderQty;
+                return sum + (qty * s.unitCost);
+            }, 0),
+        };
+    }, [sortedSkus, qtyOverrides, activeMode]);
 
     const isSelectionActive = selectionData.count > 0;
     const summaryData = {
@@ -346,11 +370,12 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
 
     const handleReorderQtyChange = (skuId: string, value: string) => {
         const newValue = parseInt(value, 10);
-        setSkus(prev => prev.map(s =>
-            s.masterSKU === skuId
-                ? { ...s, reorderQty: isNaN(newValue) || newValue < 0 ? 0 : newValue }
-                : s
-        ));
+        const finalQty = isNaN(newValue) || newValue < 0 ? 0 : newValue;
+        // ISSUE 1: Store in per-mode override map instead of mutating skus
+        setQtyOverrides(prev => ({
+            ...prev,
+            [activeMode]: { ...prev[activeMode], [skuId]: finalQty }
+        }));
     };
 
     const handleCreateDraft = () => {
@@ -364,10 +389,11 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
             return;
         }
 
-        // IMPROVEMENT 4: Summary modal before draft creation
+        // IMPROVEMENT 4: Summary modal before draft creation — use effective qty from overrides
+        const modeOverrides = qtyOverrides[activeMode];
         const selectedSkusWithQty = skus
             .filter(s => selectedSkuIds.includes(s.masterSKU))
-            .filter(s => s.reorderQty > 0);
+            .filter(s => (modeOverrides[s.masterSKU] ?? s.reorderQty) > 0);
 
         if (selectedSkusWithQty.length === 0) {
             setToast({
@@ -386,8 +412,11 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         setError(null);
         setShowSummaryModal(false);
 
+        // ISSUE 1: Apply qtyOverrides for current mode when building selectedRows
+        const modeOverrides = qtyOverrides[activeMode];
         const selectedRows = skus
             .filter(s => selectedSkuIds.includes(s.masterSKU))
+            .map(s => ({ ...s, reorderQty: modeOverrides[s.masterSKU] ?? s.reorderQty }))
             .filter(s => s.reorderQty > 0);
 
         const payload = {
@@ -584,10 +613,10 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                         type="text"
                                         inputMode="numeric"
                                         pattern="[0-9]*"
-                                        value={editingQty[sku.masterSKU] !== undefined ? editingQty[sku.masterSKU] : sku.reorderQty}
+                                        value={editingQty[sku.masterSKU] !== undefined ? editingQty[sku.masterSKU] : (qtyOverrides[activeMode][sku.masterSKU] ?? sku.reorderQty)}
                                         onFocus={(e) => {
                                             e.target.select();
-                                            setEditingQty(prev => ({ ...prev, [sku.masterSKU]: String(sku.reorderQty) }));
+                                            setEditingQty(prev => ({ ...prev, [sku.masterSKU]: String(qtyOverrides[activeMode][sku.masterSKU] ?? sku.reorderQty) }));
                                         }}
                                         onChange={(e) => setEditingQty(prev => ({ ...prev, [sku.masterSKU]: e.target.value }))}
                                         onKeyDown={(e) => {
@@ -649,7 +678,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                 <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
                                     <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Total Units</p>
                                     <p className="text-2xl font-black text-blue-400">
-                                        {formatNumber(skus.filter(s => selectedSkuIds.includes(s.masterSKU) && s.reorderQty > 0).reduce((sum, s) => sum + s.reorderQty, 0))}
+                                        {formatNumber(skus.filter(s => selectedSkuIds.includes(s.masterSKU) && (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty) > 0).reduce((sum, s) => sum + (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty), 0))}
                                     </p>
                                 </div>
                             </div>
@@ -667,25 +696,28 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                     </thead>
                                     <tbody className="divide-y divide-slate-800 max-h-[400px]">
                                         {skus
-                                            .filter(s => selectedSkuIds.includes(s.masterSKU) && s.reorderQty > 0)
-                                            .map(item => (
+                                            .filter(s => selectedSkuIds.includes(s.masterSKU) && (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty) > 0)
+                                            .map(item => {
+                                                const effectiveQty = qtyOverrides[activeMode][item.masterSKU] ?? item.reorderQty;
+                                                return (
                                                 <tr key={item.masterSKU} className="hover:bg-slate-800/30 transition-colors">
                                                     <td className="px-4 py-3 font-mono text-xs text-slate-300">{item.masterSKU}</td>
                                                     <td className="px-4 py-3 text-slate-100 font-medium truncate max-w-[200px]">{item.productName}</td>
                                                     <td className="px-4 py-3 text-xs text-slate-400">{item.businessRules?.supplier || 'N/A'}</td>
-                                                    <td className="px-4 py-3 text-center font-bold text-blue-400">{item.reorderQty}</td>
+                                                    <td className="px-4 py-3 text-center font-bold text-blue-400">{effectiveQty}</td>
                                                     <td className="px-4 py-3 text-right text-slate-300">₹{item.unitCost.toLocaleString()}</td>
                                                 </tr>
-                                            ))}
+                                                );
+                                            })}
+
+                            {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty) === 0).length > 0 && (
+                                                <tr><td colSpan={5} className="px-4 py-2 text-xs text-slate-500 italic">
+                                                    * {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty) === 0).length} SKUs with 0 qty excluded
+                                                </td></tr>
+                                            )}
                                     </tbody>
                                 </table>
                             </div>
-
-                            {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && s.reorderQty === 0).length > 0 && (
-                                <p className="mt-4 text-xs text-slate-500 italic">
-                                    * {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && s.reorderQty === 0).length} SKUs with 0 qty were excluded
-                                </p>
-                            )}
                         </div>
 
                         <div className="p-6 border-t border-slate-800 flex justify-between gap-4 bg-slate-900/50">
@@ -737,7 +769,11 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                     <input type="text" placeholder="Search SKU or Product Name..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full p-2 border rounded-md dark:bg-gray-900 dark:border-gray-700 focus:ring-primary-500 focus:border-primary-500" />
                     {/* Manual Sync Button */}
                     <button
-                        onClick={() => fetchForecastingData(true)}
+                        onClick={() => {
+                            // ISSUE 9: Only manual refresh — record timestamp
+                            setLastManualRefresh(prev => ({ ...prev, [activeMode]: new Date().toLocaleTimeString() }));
+                            fetchForecastingData(true);
+                        }}
                         disabled={isLoading}
                         title="Force refresh data from server"
                         className="p-2 rounded-md border border-slate-600 bg-slate-800 text-slate-400 hover:text-white hover:border-slate-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
@@ -794,7 +830,25 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                 </div>
                                 <div className="bg-slate-800 p-2 rounded">
                                     <p className="text-[9px] text-slate-500 uppercase font-bold">Qty Overrides</p>
-                                    <p className="text-sm font-mono text-purple-400">{Object.keys(editingQty).length}</p>
+                                    <p className="text-sm font-mono text-purple-400">{Object.keys(editingQty).length} editing</p>
+                                </div>
+                                {/* ISSUE 1 + DEBUG: Per-mode qty override counts */}
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">SEA Edits</p>
+                                    <p className="text-sm font-mono text-teal-400">{Object.keys(qtyOverrides.sea).length}</p>
+                                </div>
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">AIR Edits</p>
+                                    <p className="text-sm font-mono text-sky-400">{Object.keys(qtyOverrides.air).length}</p>
+                                </div>
+                                {/* ISSUE 9 + DEBUG: Auto-refresh status and last manual refresh */}
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">Auto-Refresh</p>
+                                    <p className="text-sm font-mono text-red-400">DISABLED</p>
+                                </div>
+                                <div className="bg-slate-800 p-2 rounded col-span-2">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">Last Manual Refresh ({activeMode.toUpperCase()})</p>
+                                    <p className="text-sm font-mono text-slate-300">{lastManualRefresh[activeMode] || 'Never'}</p>
                                 </div>
                             </div>
 
