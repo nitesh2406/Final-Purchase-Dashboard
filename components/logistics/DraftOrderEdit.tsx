@@ -270,7 +270,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
         try {
             // Transform items to match backend expected format
             const lines = items.map(item => ({
-                line_id: item.line_id || item.id,  // ← CRITICAL: Include line_id for updates
+                line_id: (item.line_id && !item.line_id.startsWith('ITEM-')) ? item.line_id : null,  // null = new row (backend creates), real ID = update existing
                 sku: item.sku,
                 sku_name: item.item_name || (item as any).sku_name,
                 qty: Number(item.qty),
@@ -288,8 +288,8 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             }));
 
             console.log('Lines payload:', lines);
-            console.log('Lines with line_id:', lines.filter(l => l.line_id).length);
-            console.log('Lines without line_id (will be created new):', lines.filter(l => !l.line_id).length);
+            console.log('Lines with real line_id (UPDATE):', lines.filter(l => l.line_id !== null).length);
+            console.log('Lines with null line_id (CREATE NEW):', lines.filter(l => l.line_id === null).length);
 
             const payload = {
                 action: isCreateMode ? 'create_manual_draft' : API_ACTIONS.SAVE_DRAFT,
