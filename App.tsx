@@ -12,13 +12,14 @@ import { Finance } from './components/finance/Finance.tsx';
 import { InventoryAnalytics } from './components/inventory/InventoryAnalytics.tsx';
 import { InventoryForecasting } from './components/inventory/InventoryForecasting.tsx';
 import { Settings } from './components/settings/Settings.tsx';
+import { AmazonForecasting } from './pages/AmazonForecasting.tsx';
 import { ShipmentFinance } from './components/finance/ShipmentFinance.tsx';
 import { ShipmentFinanceDetail } from './components/finance/ShipmentFinanceDetail.tsx';
 import { PaymentLedger } from './components/finance/PaymentLedger.tsx';
 import { AccountsView } from './components/finance/AccountsView.tsx';
 import { Sku, PurchaseOrder, Shipment, Invoice, Vendor, Notification, DraftOrder, VendorMaster } from './types.ts';
 
-export type ViewType = 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders' | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance' | 'Inventory Analytics' | 'Settings' | 'Shipment Finance' | 'Shipment Finance Detail' | 'Payment Ledger' | 'Accounts View';
+export type ViewType = 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders' | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance' | 'Inventory Analytics' | 'Settings' | 'Shipment Finance' | 'Shipment Finance Detail' | 'Payment Ledger' | 'Accounts View' | 'Amazon Forecasting';
 
 export const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycby2w_vPzSmxd1gFxlhbqdQevKuA-_bThNZG1s7AK-gIONmBCDmUg3-rBmC6S4HvZVDd/exec';
 
@@ -65,6 +66,11 @@ export const API_ACTIONS = {
     GET_AGENT_INVOICES: 'get_agent_invoices',
     LOG_AGENT_INVOICE: 'log_agent_invoice',
     MAP_INVOICE_SHIPMENTS: 'map_invoice_shipments',
+    // Amazon Operations
+    GET_AMAZON_FORECAST:          'get_amazon_forecast',
+    CONFIRM_AMAZON_SHIPMENT_PLAN: 'confirm_amazon_shipment_plan',
+    GET_AMAZON_CONFIG:            'get_amazon_config',
+    SAVE_AMAZON_CONFIG:           'save_amazon_config',
 };
 
 const App: React.FC = () => {
@@ -88,6 +94,8 @@ const App: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [forecastingConfig, setForecastingConfig] = useState<any>(null);
     const [configLastLoaded, setConfigLastLoaded] = useState<Date | null>(null);
+    const [amazonConfig, setAmazonConfig] = useState<any>(null);
+    const [amazonConfigLastLoaded, setAmazonConfigLastLoaded] = useState<Date | null>(null);
 
     const fetchAllData = useCallback(async (silent = false) => {
         if (!silent) setIsLoading(true);
@@ -147,10 +155,28 @@ const App: React.FC = () => {
         }
     }, []);
 
+    const fetchAmazonConfig = useCallback(async () => {
+        try {
+            const response = await fetch(APPS_SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: 'get_amazon_config' })
+            });
+            const data = await response.json();
+            if (data && data.status === 'success' && data.config) {
+                setAmazonConfig(data.config);
+                setAmazonConfigLastLoaded(new Date());
+            }
+        } catch (e) {
+            console.error('Amazon config fetch error:', e);
+        }
+    }, []);
+
     useEffect(() => {
         fetchAllData();
         fetchConfig();
-    }, [fetchAllData, fetchConfig]);
+        fetchAmazonConfig();
+    }, [fetchAllData, fetchConfig, fetchAmazonConfig]);
 
     const addSku = (newSkuData: Omit<Sku, 'id'>) => {
         const newSku: Sku = {
@@ -293,8 +319,20 @@ const App: React.FC = () => {
                 }} />;
             case 'Inventory Analytics':
                 return <InventoryAnalytics />;
+            case 'Amazon Forecasting':
+                return <AmazonForecasting
+                    amazonConfig={amazonConfig}
+                    onConfigUpdate={fetchAmazonConfig}
+                />;
             case 'Settings':
-                return <Settings config={forecastingConfig} onRefreshConfig={fetchConfig} lastLoaded={configLastLoaded} />;
+                return <Settings
+                    config={forecastingConfig}
+                    onRefreshConfig={fetchConfig}
+                    lastLoaded={configLastLoaded}
+                    amazonConfig={amazonConfig}
+                    onRefreshAmazonConfig={fetchAmazonConfig}
+                    amazonConfigLastLoaded={amazonConfigLastLoaded}
+                />;
             default:
                 return <Dashboard />;
         }

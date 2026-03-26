@@ -531,9 +531,9 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                         <SortableHeader label="Reorder Qty" sortKey="reorderQty" className="text-center" />
                     </tr>
                 </thead>
-                <tbody className="bg-white dark:bg-slate-900 border-spacing-y-2">
+                <tbody className="bg-white dark:bg-slate-900 divide-y divide-gray-100 dark:divide-slate-700/50 border-spacing-y-2">
                     {sortedSkus.map(sku => (
-                        <tr key={sku.masterSKU} onClick={() => handleRowClick(sku)} className={`cursor-pointer group border-b border-slate-700/50 odd:bg-slate-900 even:bg-slate-800/50 ${selectedSkuIds.includes(sku.masterSKU) ? 'bg-primary-900/40' : 'hover:bg-slate-700/50'}`}>
+                        <tr key={sku.masterSKU} onClick={() => handleRowClick(sku)} className={`cursor-pointer group border-b border-gray-100 dark:border-slate-700/50 odd:bg-white dark:odd:bg-slate-900 even:bg-gray-50 dark:even:bg-slate-800/50 ${selectedSkuIds.includes(sku.masterSKU) ? 'bg-primary-100 dark:bg-primary-900/30' : 'hover:bg-gray-100 dark:hover:bg-slate-700/50'}`}>
                             <td className="px-3 py-3">
                                 <input
                                     type="checkbox"
@@ -548,14 +548,14 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                     <StatusIcon sku={sku} />
                                 </div>
                             </td>
-                            <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-left">{sku.masterSKU}</td>
-                            <td className="px-3 py-3 text-sm text-left max-w-[300px] overflow-x-auto whitespace-nowrap">{sku.productName}</td>
-                            <td className="px-3 py-3 whitespace-nowrap text-base text-white text-center">{formatNumber(sku.sale15Days)}</td>
-                            <td className="px-3 py-3 whitespace-nowrap text-base text-white text-center">{formatNumber(sku.sale30Days)}</td>
-                            <td className="px-3 py-3 whitespace-nowrap text-base text-white text-center">{formatNumber(sku.sale90Days)}</td>
+                            <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-left text-gray-800 dark:text-white">{sku.masterSKU}</td>
+                            <td className="px-3 py-3 text-sm text-left max-w-[300px] overflow-x-auto whitespace-nowrap text-gray-700 dark:text-gray-200">{sku.productName}</td>
+                            <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{formatNumber(sku.sale15Days)}</td>
+                            <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{formatNumber(sku.sale30Days)}</td>
+                            <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{formatNumber(sku.sale90Days)}</td>
                             {/* U3 FIX: Math.round() instead of .toFixed(1) */}
-                            <td className="px-3 py-3 whitespace-nowrap text-base text-white text-center">{Math.round(sku.monthlyMovingAvg)}</td>
-                            <td className="px-3 py-3 whitespace-nowrap text-base font-semibold text-white text-center">{formatNumber(sku.inStock)}</td>
+                            <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{Math.round(sku.monthlyMovingAvg)}</td>
+                            <td className="px-3 py-3 whitespace-nowrap text-base font-semibold text-gray-800 dark:text-white text-center">{formatNumber(sku.inStock)}</td>
                             <td className="px-3 py-3 whitespace-nowrap text-sm text-center">
                                 {sku.inTransit > 0 ? (
                                     <div className="flex flex-col items-center gap-1">
@@ -633,7 +633,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                                 return newEds;
                                             });
                                         }}
-                                        className="w-full text-right font-mono text-base font-bold text-white bg-slate-800 border border-slate-600 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 transition-all"
+                                        className="w-full text-right font-mono text-base font-bold text-gray-800 dark:text-white bg-gray-100 dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 transition-all"
                                     />
                                 </div>
                             </td>
@@ -766,7 +766,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
 
             <div className="flex flex-wrap justify-between items-center gap-4">
                 <div className="flex items-center gap-4 flex-grow md:flex-grow-0 md:w-1/3">
-                    <input type="text" placeholder="Search SKU or Product Name..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full p-2 border rounded-md dark:bg-gray-900 dark:border-gray-700 focus:ring-primary-500 focus:border-primary-500" />
+                    <input type="text" placeholder="Search SKU or Product Name..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full p-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-primary-500 focus:border-primary-500" />
                     {/* Manual Sync Button */}
                     <button
                         onClick={() => {

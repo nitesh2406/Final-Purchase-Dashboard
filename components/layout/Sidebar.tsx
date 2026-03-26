@@ -28,11 +28,12 @@ const navItems: { name: ViewType; icon: React.ReactNode; wip?: boolean; group?: 
   { name: 'Shipment Finance', icon: <BriefcaseIcon className="w-6 h-6" />, group: 'Finance' },
   { name: 'Payment Ledger', icon: <CreditCardIcon className="w-6 h-6" />, group: 'Finance', wip: true },
   { name: 'Accounts View', icon: <DocumentTextIcon className="w-6 h-6" />, group: 'Finance', wip: true },
+  { name: 'Amazon Forecasting', icon: <ShoppingCartIcon className="w-6 h-6" />, group: 'Amazon' },
   { name: 'Settings', icon: <Cog6ToothIcon className="w-6 h-6" />, group: 'Other' },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollapsed, setIsCollapsed }) => {
-  const groups = ['Main', 'Procurement', 'Logistics', 'Finance', 'Other'];
+  const groups = ['Main', 'Procurement', 'Logistics', 'Finance', 'Amazon', 'Other'];
 
   return (
     <aside className={`fixed top-0 left-0 h-full bg-white dark:bg-gray-800 border-r dark:border-gray-700 flex flex-col transition-all duration-300 z-50 ${isCollapsed ? 'w-20' : 'w-64'}`}>
@@ -59,7 +60,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollap
                     onClick={() => setView(item.name)}
                     className={`w-full flex items-center p-2.5 text-sm font-medium rounded-lg transition-colors ${isCollapsed ? 'justify-center' : ''}
                       ${currentView === item.name
-                        ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/50 dark:text-white'
+                        ? item.group === 'Amazon'
+                          ? 'bg-orange-500/10 text-orange-500 dark:text-orange-400 border-r-2 border-orange-500'
+                          : 'bg-primary-100 text-primary-700 dark:bg-primary-900/50 dark:text-white'
                         : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
                       }`}
                   >

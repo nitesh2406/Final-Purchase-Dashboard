@@ -5,16 +5,18 @@ import { ApprovalWorkflows } from './ApprovalWorkflows';
 import { TaxConfiguration } from './TaxConfiguration';
 import { FreightCosting } from './FreightCosting';
 import { PaymentTerms } from './PaymentTerms';
+import { AmazonConfig } from './AmazonConfig';
 import {
     Cog6ToothIcon,
     CheckBadgeIcon,
     BanknotesIcon,
     TruckIcon,
     BuildingLibraryIcon,
-    ChartBarIcon
+    ChartBarIcon,
+    ShoppingCartIcon
 } from '../icons/Icons';
 
-type SettingsView = 'Forecasting Config' | 'System Preferences' | 'Approval Workflows' | 'Tax Configuration' | 'Freight Costing' | 'Payment Terms';
+type SettingsView = 'Forecasting Config' | 'System Preferences' | 'Approval Workflows' | 'Tax Configuration' | 'Freight Costing' | 'Payment Terms' | 'Amazon Config';
 
 interface NavItem {
     name: SettingsView;
@@ -55,13 +57,22 @@ const settingsNav: NavItem[] = [
         icon: <BuildingLibraryIcon className="w-5 h-5" />,
         description: 'Vendor credit periods and methods'
     },
+    {
+        name: 'Amazon Config',
+        icon: <ShoppingCartIcon className="w-5 h-5" />,
+        description: 'FBA coverage targets, MMA settings, velocity bands',
+        isLive: true
+    },
 ];
 
 export const Settings: React.FC<{
     config?: any;
     onRefreshConfig?: () => void;
     lastLoaded?: Date | null;
-}> = ({ config, onRefreshConfig, lastLoaded }) => {
+    amazonConfig?: any;
+    onRefreshAmazonConfig?: () => void;
+    amazonConfigLastLoaded?: Date | null;
+}> = ({ config, onRefreshConfig, lastLoaded, amazonConfig, onRefreshAmazonConfig, amazonConfigLastLoaded }) => {
     const [activeView, setActiveView] = useState<SettingsView>('Forecasting Config');
 
     const renderView = () => {
@@ -78,6 +89,12 @@ export const Settings: React.FC<{
                 return <FreightCosting />;
             case 'Payment Terms':
                 return <PaymentTerms />;
+            case 'Amazon Config':
+                return <AmazonConfig
+                    externalConfig={amazonConfig}
+                    onRefreshExternal={onRefreshAmazonConfig}
+                    lastLoaded={amazonConfigLastLoaded}
+                />;
             default:
                 return <ForecastingConfig />;
         }
