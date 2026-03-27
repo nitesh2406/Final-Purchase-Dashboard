@@ -1086,12 +1086,12 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     }
 
     return (
-        <div className="flex flex-col h-full space-y-6 text-white p-6 bg-[#0f172a] min-h-screen relative">
+        <div className="flex flex-col h-full space-y-6 text-gray-900 dark:text-white p-6 bg-gray-50 dark:bg-[#0f172a] min-h-screen relative">
             {/* Header */}
             <div className="flex justify-between items-start">
                 <div className="relative">
-                    <h2 className="text-2xl font-bold text-white">Vendor Shipment Entry</h2>
-                    <p className="text-sm text-slate-400 mt-1">Ingest vendor documents and reconcile matches</p>
+                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Vendor Shipment Entry</h2>
+                    <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Ingest vendor documents and reconcile matches</p>
                     
                     <div className="flex items-center gap-3 mt-2 h-6">
                         {validationRows.length > 0 && activeTab !== 'Setup' && (
@@ -1116,7 +1116,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             </div>
 
             {/* Tab Navigation */}
-            <div className="flex gap-8 border-b border-slate-800 px-1">
+            <div className="flex gap-8 border-b border-gray-200 dark:border-slate-800 px-1">
                 {(['Setup', 'Validation', 'Allocation', 'Review', 'Creation'] as ShipmentTab[]).map(tab => {
                     const isDisabled = (tab === 'Validation' && validationRows.length === 0 && !backendError) || (tab === 'Allocation' && allocationData.length === 0) || (tab === 'Review' && !reviewData && activeTab !== 'Review');
                     return (
@@ -1149,21 +1149,21 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Vendor *</label>
-                            <select value={vendorCode} onChange={(e) => setVendorCode(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white">
+                            <select value={vendorCode} onChange={(e) => setVendorCode(e.target.value)} className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-white">
                                 <option value="" disabled>Choose Vendor</option>
                                 {vendorMasters.map(v => <option key={v.vendor_code} value={v.vendor_code}>{v.vendor_name}</option>)}
                             </select>
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Shipment Date *</label>
-                            <input type="date" value={shipmentDate} onChange={(e) => setShipmentDate(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3" />
+                            <input type="date" value={shipmentDate} onChange={(e) => setShipmentDate(e.target.value)} className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-slate-200" />
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Shipping Mode *</label>
                             <select
                                 value={shippingMode}
                                 onChange={(e) => setShippingMode(e.target.value as 'SEA' | 'AIR')}
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                             >
                                 <option value="">Select mode...</option>
                                 <option value="SEA">Sea Freight</option>
@@ -1187,7 +1187,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     {uploadedFiles.length > 0 && (
                         <div className="space-y-2">
                             {uploadedFiles.map(f => (
-                                <div key={f.id} className="flex items-center justify-between bg-slate-900/50 p-3 rounded-lg border border-slate-700">
+                                <div key={f.id} className="flex items-center justify-between bg-gray-50 dark:bg-slate-900/50 p-3 rounded-lg border border-gray-200 dark:border-slate-700">
                                     <div className="flex items-center gap-3 flex-1">
                                         <DocumentTextIcon className="w-4 h-4 text-slate-500" />
                                         <span className="text-xs font-medium truncate">{f.file?.name || 'Unknown File'}</span>
@@ -1320,7 +1320,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     <Card className="p-0 border-slate-700 bg-slate-800/20 shadow-xl overflow-hidden">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse table-fixed min-w-[1400px]">
-                                <thead className="bg-slate-900 sticky top-0 z-10 border-b border-slate-700">
+                                <thead className="bg-gray-50 dark:bg-slate-900 sticky top-0 z-10 border-b border-gray-200 dark:border-slate-700">
                                     <tr className="text-slate-400 text-[10px] uppercase tracking-wider font-bold">
                                         <th className="px-4 py-3 w-[10%]">STATUS</th>
                                         <th className="px-4 py-3 w-[12%]">FACTORY CODES</th>
@@ -1692,7 +1692,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     <Card className="p-0 border-slate-700 bg-slate-800/20 overflow-hidden">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse">
-                                <thead className="bg-slate-900 sticky top-0 z-10 border-b border-slate-700">
+                                <thead className="bg-gray-50 dark:bg-slate-900 sticky top-0 z-10 border-b border-gray-200 dark:border-slate-700">
                                     <tr className="text-slate-400 text-[10px] uppercase tracking-wider font-bold">
                                         <th className="px-4 py-3 w-[5%]"></th>
                                         <th className="px-4 py-3 w-[12%]">SKU</th>
@@ -2341,7 +2341,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             {/* Create PO Modal */}
             {showCreatePOModal && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <Card className="bg-slate-900 border-slate-700 p-6 max-w-2xl w-full">
+                <Card className="bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-700 p-6 max-w-2xl w-full">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-bold text-white">Create Draft PO for Unallocated Items</h3>
                     <button onClick={() => { setShowCreatePOModal(false); setBackendError(null); }}>
@@ -2429,7 +2429,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             {/* Draft Success Modal */}
             {showDraftSuccessModal && createdDraftId && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <Card className="bg-slate-900 border-slate-700 p-6 max-w-md w-full">
+                <Card className="bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-700 p-6 max-w-md w-full">
                   <div className="text-center">
                     <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
                       <CheckIcon className="w-8 h-8 text-emerald-400" />

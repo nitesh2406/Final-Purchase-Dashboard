@@ -347,7 +347,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     }
 
     return (
-        <div className="flex flex-col h-full space-y-4 text-white relative p-6 bg-[#0f172a] min-h-screen">
+        <div className="flex flex-col h-full space-y-4 text-gray-900 dark:text-white relative p-6 bg-gray-50 dark:bg-[#0f172a] min-h-screen">
             {(toast || isMutating || isFetchingDetails) && (
                 <div className="fixed top-24 right-8 z-[150] flex flex-col gap-2">
                     {(isMutating || isFetchingDetails) && (
@@ -374,7 +374,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                         placeholder="Search by Draft PO number, vendor, or item..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 bg-slate-800/50 border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-slate-500 text-sm"
+                        className="w-full pl-9 pr-4 py-2 bg-white dark:bg-slate-800/50 border border-gray-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-slate-500 text-sm text-gray-900 dark:text-white"
                     />
                 </div>
 
@@ -383,7 +383,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                 <button
                     onClick={handleRefresh}
                     disabled={isRefreshing}
-                    className="p-2.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-400 hover:text-white transition-all shadow-lg"
+                    className="p-2.5 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-white transition-all shadow-lg"
                     title="Refresh Drafts"
                 >
                     <ArrowPathIcon className={`w-5 h-5 ${isRefreshing ? 'animate-spin text-blue-400' : ''}`} />
@@ -410,12 +410,12 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                         </div>
                     </div>
 
-                    <Card className="bg-slate-800/30 border-slate-700 p-0 overflow-hidden flex flex-col flex-grow shadow-xl">
+                    <Card className="bg-white dark:bg-slate-800/30 border-gray-200 dark:border-slate-700 p-0 overflow-hidden flex flex-col flex-grow shadow-xl">
                         <div className="overflow-x-auto min-w-[1000px]">
                             {paginatedDrafts.length > 0 ? (
                                 <table className="w-full text-left text-sm border-collapse">
                                     <thead>
-                                        <tr className="bg-slate-900/50 text-slate-400 text-[11px] uppercase tracking-wider border-b border-slate-700">
+                                        <tr className="bg-gray-50 dark:bg-slate-900/50 text-gray-500 dark:text-slate-400 text-[11px] uppercase tracking-wider border-b border-gray-200 dark:border-slate-700">
                                             <th className="px-4 py-3 w-10">
                                                 <input
                                                     type="checkbox"
@@ -424,14 +424,14 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                                     className="rounded border-slate-600 bg-slate-800"
                                                 />
                                             </th>
-                                            <th className="px-4 py-3 font-semibold cursor-pointer hover:text-white text-sm text-slate-300" onClick={() => handleSort('id')}>Draft PO Number <SortIcon column="id" /></th>
-                                            <th className="px-4 py-3 font-semibold text-sm text-slate-300">Vendor(s)</th>
-                                            <th className="px-4 py-3 font-semibold text-xs text-slate-400 uppercase">Mode</th>
-                                            <th className="px-4 py-3 font-semibold cursor-pointer hover:text-white text-sm text-slate-300" onClick={() => handleSort('draft_date')}>PO Date <SortIcon column="draft_date" /></th>
-                                            <th className="px-4 py-3 font-semibold text-center cursor-pointer hover:text-white text-sm text-slate-300" onClick={() => handleSort('total_skus')}>Total SKUs <SortIcon column="total_skus" /></th>
-                                            <th className="px-4 py-3 font-semibold text-center cursor-pointer hover:text-white text-sm text-slate-300" onClick={() => handleSort('total_items')}>Total Items <SortIcon column="total_items" /></th>
-                                            <th className="px-4 py-3 font-semibold cursor-pointer hover:text-white text-sm text-slate-300" onClick={() => handleSort('status')}>Status <SortIcon column="status" /></th>
-                                            <th className="px-4 py-3 font-semibold text-right text-sm text-slate-300">Actions</th>
+                                            <th className="px-4 py-3 font-semibold cursor-pointer hover:text-gray-900 dark:hover:text-white text-sm text-gray-600 dark:text-slate-300" onClick={() => handleSort('id')}>Draft PO Number <SortIcon column="id" /></th>
+                                            <th className="px-4 py-3 font-semibold text-sm text-gray-600 dark:text-slate-300">Vendor(s)</th>
+                                            <th className="px-4 py-3 font-semibold text-xs text-gray-500 dark:text-slate-400 uppercase">Mode</th>
+                                            <th className="px-4 py-3 font-semibold cursor-pointer hover:text-gray-900 dark:hover:text-white text-sm text-gray-600 dark:text-slate-300" onClick={() => handleSort('draft_date')}>PO Date <SortIcon column="draft_date" /></th>
+                                            <th className="px-4 py-3 font-semibold text-center cursor-pointer hover:text-gray-900 dark:hover:text-white text-sm text-gray-600 dark:text-slate-300" onClick={() => handleSort('total_skus')}>Total SKUs <SortIcon column="total_skus" /></th>
+                                            <th className="px-4 py-3 font-semibold text-center cursor-pointer hover:text-gray-900 dark:hover:text-white text-sm text-gray-600 dark:text-slate-300" onClick={() => handleSort('total_items')}>Total Items <SortIcon column="total_items" /></th>
+                                            <th className="px-4 py-3 font-semibold cursor-pointer hover:text-gray-900 dark:hover:text-white text-sm text-gray-600 dark:text-slate-300" onClick={() => handleSort('status')}>Status <SortIcon column="status" /></th>
+                                            <th className="px-4 py-3 font-semibold text-right text-sm text-gray-600 dark:text-slate-300">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-700/50">
@@ -440,7 +440,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                                 key={draft.id}
                                                 id={`draft-row-${draft.id}`}
                                                 onClick={() => handleEdit(draft.id)}
-                                                className={`group hover:bg-slate-700/40 transition-all duration-300 cursor-pointer ${draft.status === 'Cancelled' ? 'opacity-50' : ''} ${highlightedId === draft.id ? 'ring-4 ring-blue-500/50 bg-blue-900/20 z-10' : ''}`}
+                                                className={`group hover:bg-gray-50 dark:hover:bg-slate-700/40 transition-all duration-300 cursor-pointer ${draft.status === 'Cancelled' ? 'opacity-50' : ''} ${highlightedId === draft.id ? 'ring-4 ring-blue-500/50 bg-blue-900/20 z-10' : ''}`}
                                             >
                                                 <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                                     <input
@@ -451,7 +451,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                                     />
                                                 </td>
                                                 <td className="px-4 py-3 font-bold text-blue-400 text-base">{draft.id}</td>
-                                                <td className="px-4 py-3 text-slate-100 text-base">
+                                                <td className="px-4 py-3 text-gray-800 dark:text-slate-100 text-base">
                                                     <div className="flex flex-col leading-tight">
                                                         {draft.vendors && draft.vendors.slice(0, 2).map((v, i) => <span key={i}>{v}</span>)}
                                                         {draft.vendors && draft.vendors.length > 2 && <span className="text-xs text-slate-400 mt-1">+ {draft.vendors.length - 2} more</span>}
@@ -460,22 +460,22 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                                 <td className="px-4 py-3">
                                                     <ModeBadge mode={draft.mode || draft.planned_mode} />
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-400 text-sm">
+                                                <td className="px-4 py-3 text-gray-500 dark:text-slate-400 text-sm">
                                                     {formatDateString(draft.draft_date || draft.created_at)}
                                                 </td>
-                                                <td className="px-4 py-3 text-center text-slate-100 text-base">{draft.total_skus || draft.totalSkus || 0}</td>
-                                                <td className="px-4 py-3 text-center text-white font-bold text-base">{draft.total_items || draft.totalItems || 0}</td>
+                                                <td className="px-4 py-3 text-center text-gray-800 dark:text-slate-100 text-base">{draft.total_skus || draft.totalSkus || 0}</td>
+                                                <td className="px-4 py-3 text-center text-gray-900 dark:text-white font-bold text-base">{draft.total_items || draft.totalItems || 0}</td>
                                                 <td className="px-4 py-3"><StatusBadge status={draft.status} /></td>
                                                 <td className="px-4 py-3 text-right">
                                                     <div className="flex justify-end gap-1.5" onClick={e => e.stopPropagation()}>
-                                                        <button onClick={() => handleEdit(draft.id)} className="p-1.5 hover:bg-slate-600 rounded text-slate-400 hover:text-blue-400 transition-colors duration-150" title="Edit">
+                                                        <button onClick={() => handleEdit(draft.id)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-600 rounded text-gray-400 dark:text-slate-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors duration-150" title="Edit">
                                                             {['Draft', 'Partially Submitted'].includes(draft.status) ? <PencilIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
                                                         </button>
-                                                        <button onClick={() => handleDuplicate(draft)} className="p-1.5 hover:bg-slate-600 rounded text-slate-400 hover:text-white transition-colors duration-150" title="Duplicate">
+                                                        <button onClick={() => handleDuplicate(draft)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-600 rounded text-gray-400 dark:text-slate-400 hover:text-gray-800 dark:hover:text-white transition-colors duration-150" title="Duplicate">
                                                             <DocumentDuplicateIcon className="w-4 h-4" />
                                                         </button>
                                                         {['Draft', 'Partially Submitted'].includes(draft.status) && (
-                                                            <button onClick={() => setCancelModalDraft(draft)} className="p-1.5 hover:bg-red-500/20 rounded text-slate-400 hover:text-red-500 transition-colors duration-150" title="Cancel">
+                                                            <button onClick={() => setCancelModalDraft(draft)} className="p-1.5 hover:bg-red-500/20 rounded text-gray-400 dark:text-slate-400 hover:text-red-500 transition-colors duration-150" title="Cancel">
                                                                 <TrashIcon className="w-4 h-4" />
                                                             </button>
                                                         )}
@@ -495,15 +495,15 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                         </div>
 
                         {totalPages > 1 && (
-                            <div className="p-4 border-t border-slate-700 bg-slate-900/30 flex items-center justify-between">
-                                <span className="text-xs text-slate-500">
+                            <div className="p-4 border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/30 flex items-center justify-between">
+                                <span className="text-xs text-gray-500 dark:text-slate-500">
                                     Showing {(currentPage - 1) * rowsPerPage + 1}-{Math.min(currentPage * rowsPerPage, sortedDrafts.length)} of {sortedDrafts.length} drafts
                                 </span>
                                 <div className="flex gap-1">
                                     <button
                                         disabled={currentPage === 1}
                                         onClick={() => setCurrentPage(prev => prev - 1)}
-                                        className="p-2 rounded hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                        className="p-2 rounded hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                                     >
                                         <ChevronLeftIcon className="w-4 h-4" />
                                     </button>
@@ -511,7 +511,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                         <button
                                             key={i}
                                             onClick={() => setCurrentPage(i + 1)}
-                                            className={`w-8 h-8 rounded text-xs font-medium transition-all ${currentPage === i + 1 ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`}
+                                            className={`w-8 h-8 rounded text-xs font-medium transition-all ${currentPage === i + 1 ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 hover:text-gray-900 dark:hover:text-white'}`}
                                         >
                                             {i + 1}
                                         </button>
@@ -519,7 +519,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                     <button
                                         disabled={currentPage === totalPages}
                                         onClick={() => setCurrentPage(prev => prev + 1)}
-                                        className="p-2 rounded hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                        className="p-2 rounded hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                                     >
                                         <ChevronRightIcon className="w-4 h-4" />
                                     </button>

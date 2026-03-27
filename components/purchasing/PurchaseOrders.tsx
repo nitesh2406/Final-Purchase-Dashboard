@@ -241,7 +241,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
 
     if (selectedPo || loadingDetails || detailsError) {
         return (
-        <div className="flex flex-col h-full overflow-y-auto space-y-6 text-white p-6 bg-[#0f172a] animate-in fade-in duration-300">
+        <div className="flex flex-col h-full overflow-y-auto space-y-6 text-gray-900 dark:text-white p-6 bg-gray-50 dark:bg-[#0f172a] animate-in fade-in duration-300">
                 <div className="flex justify-between items-center">
                     <div className="flex items-center gap-4">
                         <button 
@@ -251,11 +251,11 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                             <ArrowLeftIcon className="w-6 h-6" />
                         </button>
                         <div>
-                            <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                            <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
                                 {loadingDetails ? 'Loading details...' : selectedPo ? <>Purchase Order: <span className="font-mono text-blue-400">{selectedPo.po_id}</span></> : 'Error'}
                                 {selectedPo && <StatusBadge status={selectedPo.po_status} />}
                             </h2>
-                            <p className="text-sm text-slate-400 mt-1">Full details and line item fulfillment status</p>
+                            <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Full details and line item fulfillment status</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -297,29 +297,29 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                     <>
                         {/* Header Info Cards */}
                         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                            <Card className="bg-slate-800/40 p-4 border-slate-700">
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Vendor Code</p>
-                                <p className="text-base font-bold text-white">{selectedPo.vendor_code}</p>
+                            <Card className="bg-white dark:bg-slate-800/40 p-4 border-gray-200 dark:border-slate-700">
+                                <p className="text-[10px] font-bold text-gray-500 dark:text-slate-500 uppercase tracking-widest mb-1">Vendor Code</p>
+                                <p className="text-base font-bold text-gray-900 dark:text-white">{selectedPo.vendor_code}</p>
                             </Card>
-                            <Card className="bg-slate-800/40 p-4 border-slate-700">
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Draft Reference</p>
+                            <Card className="bg-white dark:bg-slate-800/40 p-4 border-gray-200 dark:border-slate-700">
+                                <p className="text-[10px] font-bold text-gray-500 dark:text-slate-500 uppercase tracking-widest mb-1">Draft Reference</p>
                                 <p className="text-base text-blue-400 font-mono font-medium">{selectedPo.draft_id}</p>
                             </Card>
-                            <Card className="bg-slate-800/40 p-4 border-slate-700">
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">PO Date</p>
-                                <p className="text-base text-white">{selectedPo.po_date}</p>
+                            <Card className="bg-white dark:bg-slate-800/40 p-4 border-gray-200 dark:border-slate-700">
+                                <p className="text-[10px] font-bold text-gray-500 dark:text-slate-500 uppercase tracking-widest mb-1">PO Date</p>
+                                <p className="text-base text-gray-900 dark:text-white">{selectedPo.po_date}</p>
                             </Card>
-                            <Card className="bg-slate-800/40 p-4 border-slate-700">
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Shipping Mode</p>
+                            <Card className="bg-white dark:bg-slate-800/40 p-4 border-gray-200 dark:border-slate-700">
+                                <p className="text-[10px] font-bold text-gray-500 dark:text-slate-500 uppercase tracking-widest mb-1">Shipping Mode</p>
                                 <div className="mt-1"><ModeBadge mode={selectedPo.planned_mode} /></div>
                             </Card>
-                            <Card className="bg-slate-800/40 p-4 border-slate-700">
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Total Value</p>
+                            <Card className="bg-white dark:bg-slate-800/40 p-4 border-gray-200 dark:border-slate-700">
+                                <p className="text-[10px] font-bold text-gray-500 dark:text-slate-500 uppercase tracking-widest mb-1">Total Value</p>
                                 <p className="text-lg font-bold text-green-400">{formatCurrency(selectedPo.total_value)}</p>
                             </Card>
-                            <Card className="bg-slate-800/40 p-4 border-slate-700 flex flex-col justify-between">
+                            <Card className="bg-white dark:bg-slate-800/40 p-4 border-gray-200 dark:border-slate-700 flex flex-col justify-between">
                                 <div>
-                                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-1.5">
+                                    <p className="text-[10px] font-bold text-gray-500 dark:text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-1.5">
                                         <EnvelopeIcon className="w-3 h-3"/> Email Information
                                     </p>
                                     <p className="text-[11px] text-slate-300 truncate" title={selectedPo.vendor_email}>{selectedPo.vendor_email || 'No email provided'}</p>
@@ -334,15 +334,15 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                         </div>
 
                         {/* Line Items Table */}
-                        <Card className="flex-grow p-0 border-slate-700 bg-slate-800/20 overflow-hidden shadow-xl">
-                            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-900/40">
-                                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest">Order Line Items</h3>
-                                <span className="text-xs text-slate-500 font-medium">{selectedPo.lines.length} SKUs Ordered</span>
+                        <Card className="flex-grow p-0 border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/20 overflow-hidden shadow-xl">
+                            <div className="p-4 border-b border-gray-200 dark:border-slate-700 flex justify-between items-center bg-gray-50 dark:bg-slate-900/40">
+                                <h3 className="text-sm font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">Order Line Items</h3>
+                                <span className="text-xs text-gray-500 dark:text-slate-500 font-medium">{selectedPo.lines.length} SKUs Ordered</span>
                             </div>
                         <div className="overflow-x-auto overflow-y-auto max-h-[60vh]">
                                 <table className="w-full text-left text-sm border-collapse">
                                     <thead>
-                                        <tr className="bg-slate-900/30 text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-700/50">
+                                        <tr className="bg-gray-50 dark:bg-slate-900/30 text-gray-500 dark:text-slate-400 text-[10px] uppercase tracking-wider border-b border-gray-200 dark:border-slate-700/50">
                                             <th className="px-6 py-3 font-medium w-[12%]">SKU</th>
                                             <th className="px-6 py-3 font-medium w-[20%]">Item Name</th>
                                             <th className="px-6 py-3 font-medium text-center">Ordered</th>
@@ -355,11 +355,11 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                     </thead>
                                     <tbody className="divide-y divide-slate-700/30">
                                         {selectedPo.lines.map((line, idx) => (
-                                            <tr key={idx} className="hover:bg-slate-700/20 transition-colors">
+                                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-slate-700/20 transition-colors">
                                                 <td className="px-6 py-4 font-mono text-xs text-blue-300">{line.sku}</td>
-                                                <td className="px-6 py-4 font-medium text-white truncate text-xs">{line.name}</td>
+                                                <td className="px-6 py-4 font-medium text-gray-900 dark:text-white truncate text-xs">{line.name}</td>
                                                 <td className="px-6 py-4 text-center font-bold">{line.ordered_qty}</td>
-                                                <td className="px-6 py-4 text-right text-slate-400 font-mono text-xs">₹{line.unit_price.toLocaleString()}</td>
+                                                <td className="px-6 py-4 text-right text-gray-500 dark:text-slate-400 font-mono text-xs">₹{line.unit_price.toLocaleString()}</td>
                                                 <td className="px-6 py-4">
                                                     <div className="flex justify-center gap-1">
                                                         <span className={`px-1 py-0.5 rounded text-[8px] font-bold ${line.logo ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-800 text-slate-600'}`}>LOGO</span>
@@ -442,12 +442,12 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
     }
 
     return (
-        <div className="flex flex-col h-full space-y-4 text-white p-6 bg-[#0f172a] min-h-screen relative">
+        <div className="flex flex-col h-full space-y-4 text-gray-900 dark:text-white p-6 bg-gray-50 dark:bg-[#0f172a] min-h-screen relative">
             {/* Header & Global Search */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <h2 className="text-xl font-semibold">Purchase Orders</h2>
-                    <p className="text-sm text-slate-400 mt-1">Review finalized purchase agreements and track line-item fulfillment</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Review finalized purchase agreements and track line-item fulfillment</p>
                 </div>
                 <div className="flex items-center gap-3 w-full md:w-auto">
                     <div className="relative w-full md:w-96">
@@ -457,7 +457,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                             placeholder="Search by PO ID or Vendor Code..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full pl-9 pr-4 py-2.5 bg-slate-800/50 border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-slate-500 text-sm shadow-sm"
+                            className="w-full pl-9 pr-4 py-2.5 bg-white dark:bg-slate-800/50 border border-gray-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-slate-500 text-sm shadow-sm text-gray-900 dark:text-white"
                         />
                     </div>
                     <Button 
@@ -501,7 +501,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
             </div>
 
             {/* List View */}
-            <Card className="flex-grow overflow-hidden p-0 flex flex-col bg-slate-800/30 border-slate-700 shadow-xl min-h-[400px]">
+            <Card className="flex-grow overflow-hidden p-0 flex flex-col bg-white dark:bg-slate-800/30 border-gray-200 dark:border-slate-700 shadow-xl min-h-[400px]">
                 {loading && purchaseOrders.length === 0 ? (
                     <div className="flex-grow flex items-center justify-center">
                         <div className="flex flex-col items-center gap-3">
@@ -522,7 +522,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                     <div className="overflow-x-auto min-w-[1100px]">
                         <table className="w-full text-left text-sm border-collapse">
                             <thead>
-                                <tr className="bg-slate-900/50 text-slate-400 text-[11px] uppercase tracking-wider border-b border-slate-700">
+                                <tr className="bg-gray-50 dark:bg-slate-900/50 text-gray-500 dark:text-slate-400 text-[11px] uppercase tracking-wider border-b border-gray-200 dark:border-slate-700">
                                     <th className="px-6 py-3 font-medium">PO ID</th>
                                     <th className="px-6 py-3 font-medium">Vendor Code</th>
                                     <th className="px-6 py-3 font-medium">PO Date</th>
@@ -539,7 +539,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                     <tr 
                                         key={po.po_id} 
                                         onClick={() => fetchPurchaseOrderDetails(po.po_id)}
-                                        className="group hover:bg-slate-700/40 transition-colors duration-150 cursor-pointer"
+                                        className="group hover:bg-gray-50 dark:hover:bg-slate-700/40 transition-colors duration-150 cursor-pointer"
                                     >
                                         <td className="px-6 py-4 font-mono font-bold text-blue-400">{po.po_id}</td>
                                         <td className="px-6 py-4 text-slate-200 font-medium">{po.vendor_code}</td>

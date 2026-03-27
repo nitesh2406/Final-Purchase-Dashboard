@@ -17,7 +17,7 @@ export const CancelDraftModal: React.FC<CancelDraftModalProps> = ({ isOpen, onCl
 
     return (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-in fade-in duration-200">
-            <div className="bg-[#1e293b] border border-slate-700 rounded-xl shadow-2xl w-full max-w-md p-8 overflow-hidden animate-in zoom-in-95 duration-200 relative">
+            <div className="bg-white dark:bg-[#1e293b] border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-md p-8 overflow-hidden animate-in zoom-in-95 duration-200 relative">
                 <button onClick={onClose} className="absolute top-5 right-5 text-slate-400 hover:text-white transition-colors">
                     <XMarkIcon className="w-6 h-6" />
                 </button>
@@ -29,8 +29,8 @@ export const CancelDraftModal: React.FC<CancelDraftModalProps> = ({ isOpen, onCl
                 </div>
 
                 <div className="text-center">
-                    <h3 className="text-2xl font-bold text-white tracking-tight">Cancel Draft Order?</h3>
-                    <p className="text-slate-400 mt-2 font-medium">Draft PO: <span className="text-slate-200 font-bold">{draftId}</span></p>
+                    <h3 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">Cancel Draft Order?</h3>
+                    <p className="text-gray-500 dark:text-slate-400 mt-2 font-medium">Draft PO: <span className="text-gray-800 dark:text-slate-200 font-bold">{draftId}</span></p>
                 </div>
 
                 <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mt-8 flex gap-3">
@@ -42,8 +42,8 @@ export const CancelDraftModal: React.FC<CancelDraftModalProps> = ({ isOpen, onCl
 
                 {isPartial && (
                     <div className="mt-4 px-2">
-                        <p className="text-[11px] text-slate-500 text-center leading-relaxed italic">
-                            <span className="font-bold text-slate-400 uppercase mr-1">Note:</span> 
+                        <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center leading-relaxed italic">
+                            <span className="font-bold text-gray-500 dark:text-slate-400 uppercase mr-1">Note:</span> 
                             Already submitted Purchase Orders (PO-xxx) associated with this draft will remain active in your PO history.
                         </p>
                     </div>
@@ -53,7 +53,7 @@ export const CancelDraftModal: React.FC<CancelDraftModalProps> = ({ isOpen, onCl
                     <Button 
                         variant="secondary" 
                         onClick={onClose} 
-                        className="flex-1 bg-transparent border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white h-11 text-sm font-bold"
+                        className="flex-1 bg-transparent border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 hover:text-gray-900 dark:hover:text-white h-11 text-sm font-bold"
                     >
                         Keep Draft
                     </Button>

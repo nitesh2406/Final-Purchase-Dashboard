@@ -471,8 +471,8 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
         }
     };
 
-    const inputClasses = `bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all ${(isViewOnly || isSubmittedReadOnly) ? 'cursor-not-allowed opacity-80' : ''}`;
-    const displayOnlyClasses = `bg-slate-900/50 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-400 w-full cursor-default`;
+    const inputClasses = `bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all ${(isViewOnly || isSubmittedReadOnly) ? 'cursor-not-allowed opacity-80' : ''}`;
+    const displayOnlyClasses = `bg-gray-50 dark:bg-slate-900/50 border border-gray-200 dark:border-slate-700/50 rounded-lg px-3 py-2 text-sm text-gray-500 dark:text-slate-400 w-full cursor-default`;
 
     // ISSUE 6: Helper — determine NA vs Yes/No for customization badges
     const getCustomVal = (val: 'Yes' | 'No' | null | undefined | string): 'Yes' | 'No' | 'NA' => {
@@ -491,7 +491,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
     );
 
     return (
-        <div className="flex flex-col min-h-screen space-y-4 text-white pb-32 relative bg-[#0f172a] p-6">
+        <div className="flex flex-col min-h-screen space-y-4 text-gray-900 dark:text-white pb-32 relative bg-gray-50 dark:bg-[#0f172a] p-6">
 
             {/* ISSUE 3: Read-only banner for SUBMITTED/ORDER_PLACED */}
             {isSubmittedReadOnly && (
@@ -609,7 +609,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             </div>
 
             {/* ISSUE 8: Compact Header Block — max-w-[280px], left-aligned, no Expected Delivery, no Internal Notes, Shipping Mode as read-only badge */}
-            <div className={`bg-slate-800/40 rounded-xl p-4 mb-2 shadow-xl border border-slate-700/50 backdrop-blur-md w-full max-w-[320px] ${(isViewOnly || isSubmittedReadOnly) ? 'opacity-80' : ''}`}>
+            <div className={`bg-white dark:bg-slate-800/40 rounded-xl p-4 mb-2 shadow-xl border border-gray-200 dark:border-slate-700/50 backdrop-blur-md w-full max-w-[320px] ${(isViewOnly || isSubmittedReadOnly) ? 'opacity-80' : ''}`}>
                 <div className="flex flex-col gap-4">
                     <div className="space-y-1.5">
                         <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-0.5">
@@ -620,7 +620,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                             value={poDate}
                             onChange={(e) => !isSubmittedReadOnly && setPoDate(e.target.value)}
                             disabled={isViewOnly || isSubmittedReadOnly}
-                            className="bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all outline-none"
+                            className="bg-gray-50 dark:bg-slate-900/50 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all outline-none"
                         />
                     </div>
                     <div className="space-y-1.5">
@@ -650,10 +650,10 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                             placeholder="Search SKU or Item Name in Catalog..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-11 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-600 text-sm shadow-inner"
+                            className="w-full pl-11 pr-4 py-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-slate-600 text-sm shadow-inner text-gray-900 dark:text-white"
                         />
                         {searchQuery.length >= 2 && (
-                            <div className="absolute top-full left-0 right-0 z-[60] bg-slate-800 border border-slate-700 rounded-b-lg shadow-2xl mt-1 overflow-hidden animate-in slide-in-from-top-1 duration-150">
+                            <div className="absolute top-full left-0 right-0 z-[60] bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-b-lg shadow-2xl mt-1 overflow-hidden animate-in slide-in-from-top-1 duration-150">
                                 {catalogResults.length > 0 ? catalogResults.map(res => {
                                     const poId = res.vendor_code ? draft?.submittedVendors?.[res.vendor_code] : null;
                                     return (
@@ -686,8 +686,8 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                         <h3 className="text-lg font-medium text-slate-500">No items in this draft yet</h3>
                     </div>
                 ) : (Object.entries(vendorGroups) as any[]).map(([v, data]) => (
-                    <Card key={v} className={`bg-slate-800/20 border-slate-700 p-0 overflow-hidden shadow-lg transition-all ${data.isSubmitted ? 'opacity-90 ring-1 ring-blue-500/20' : ''}`}>
-                        <div onClick={() => setCollapsedGroups(prev => ({ ...prev, [v]: !prev[v] }))} className={`px-4 py-3 flex justify-between items-center border-b border-slate-700/50 cursor-pointer hover:bg-slate-700/20 transition-colors ${data.isSubmitted ? 'bg-slate-900/40' : 'bg-slate-900/60'}`}>
+                    <Card key={v} className={`bg-white dark:bg-slate-800/20 border-gray-200 dark:border-slate-700 p-0 overflow-hidden shadow-lg transition-all ${data.isSubmitted ? 'opacity-90 ring-1 ring-blue-500/20' : ''}`}>
+                        <div onClick={() => setCollapsedGroups(prev => ({ ...prev, [v]: !prev[v] }))} className={`px-4 py-3 flex justify-between items-center border-b border-gray-100 dark:border-slate-700/50 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-700/20 transition-colors ${data.isSubmitted ? 'bg-gray-50 dark:bg-slate-900/40' : 'bg-gray-100/50 dark:bg-slate-900/60'}`}>
                             <div className="flex items-center gap-3">
                                 {collapsedGroups[v] ? <ChevronDownIcon className="w-4 h-4 text-slate-500" /> : <ChevronUpIcon className="w-4 h-4 text-slate-500" />}
                                 <div className="flex items-center gap-2">
@@ -710,7 +710,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-sm border-collapse table-fixed">
                                     <thead>
-                                        <tr className="bg-slate-900 text-slate-100 text-[11px] font-bold uppercase tracking-wider border-b-2 border-slate-700">
+                                        <tr className="bg-gray-50 dark:bg-slate-900 text-gray-600 dark:text-slate-100 text-[11px] font-bold uppercase tracking-wider border-b-2 border-gray-200 dark:border-slate-700">
                                             <th className="px-4 py-3 w-[10%]">SKU</th>
                                             <th className="px-4 py-3 w-[15%]">Vendor</th>
                                             <th className="px-4 py-3 w-[18%]">Item Name</th>
@@ -727,8 +727,8 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                                     </thead>
                                     <tbody className="divide-y divide-slate-700/40">
                                         {data.items.map((item: any) => (
-                                            <tr key={item.id} className={`transition-colors duration-150 ${data.isSubmitted ? 'opacity-60 bg-slate-800/30' : 'hover:bg-slate-700/20'}`}>
-                                                <td className="px-4 py-3 font-mono text-xs text-slate-400 font-bold truncate">{item.sku}</td>
+                                            <tr key={item.id} className={`transition-colors duration-150 ${data.isSubmitted ? 'opacity-60 bg-gray-50 dark:bg-slate-800/30' : 'hover:bg-gray-50 dark:hover:bg-slate-700/20'}`}>
+                                                <td className="px-4 py-3 font-mono text-xs text-gray-500 dark:text-slate-400 font-bold truncate">{item.sku}</td>
                                                 <td className="px-4 py-3">
                                                     {/* ISSUE 3: Show plain text vendor for submitted-read-only; ISSUE 6: vendor as text when submitted */}
                                                     {(data.isSubmitted || isSubmittedReadOnly) ? (
@@ -758,7 +758,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
                                                                     } : i
                                                                 ));
                                                             }}
-                                                            className="w-full bg-slate-700/50 border border-slate-600 rounded px-2 py-1 text-[11px] text-white focus:ring-1 focus:ring-blue-500 focus:outline-none font-medium truncate"
+                                                            className="w-full bg-gray-100 dark:bg-slate-700/50 border border-gray-200 dark:border-slate-600 rounded px-2 py-1 text-[11px] text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500 focus:outline-none font-medium truncate"
                                                         >
                                                             <option value="" disabled className="text-slate-500">Select Vendor...</option>
                                                             {item.vendor && !vendorMasters.find(vm => vm.vendor_code === (item.vendor_code || item.vendor)) && (
