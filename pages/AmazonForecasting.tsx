@@ -3,6 +3,10 @@ import { AmazonChannelSku } from '../types/amazon';
 import { AmazonSkuModal } from '../components/amazon/AmazonSkuModal';
 import { APPS_SCRIPT_URL } from '../App';
 
+// ─── Module Cache ─────────────────────────────────────────────────────────────
+let amazonForecastCache: AmazonChannelSku[] | null = null;
+let amazonForecastCacheTime: Date | null = null;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const velocityColor = (band: string) => {
@@ -17,13 +21,15 @@ const docColor = (days: number) => {
   return 'text-green-400';
 };
 
+const formatDoc = (days: number) =>
+  days === 999 ? '∞' : `${Number(days).toFixed(1)}d`;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface GroupedMaster {
   masterSKU: string;
   productName: string;
   items: AmazonChannelSku[];
-  hasSplit: boolean;
   availableQty: number;
   totalRecommended: number;
   totalShipQty: number;
@@ -32,91 +38,40 @@ interface GroupedMaster {
 
 // ─── Filter Chips ─────────────────────────────────────────────────────────────
 
-const FILTER_CHIPS = ['All', 'Needs Ship', 'Split ⚠', 'Slow', 'Medium', 'Fast', '⚠ Listing'] as const;
+const FILTER_CHIPS = ['All', 'Needs Ship', 'Slow', 'Medium', 'Fast', '⚠ Listing'] as const;
 type FilterChip = typeof FILTER_CHIPS[number];
 
-// ─── Split Editor ─────────────────────────────────────────────────────────────
+// ─── SortableHeader Component ──────────────────────────────────────────────────
 
-interface SplitEditorProps {
-  group: GroupedMaster;
-  overrides: Record<string, number>;
-  onUpdate: (channelSku: string, qty: number) => void;
-  onReset: () => void;
-}
-
-const SplitEditor: React.FC<SplitEditorProps> = ({ group, overrides, onUpdate, onReset }) => {
-  const allocations = group.items.map(item => ({
-    channelSku: item.channelSKU,
-    productName: item.productName,
-    mma: item.mma.final,
-    autoQty: item.allocation.autoAllocatedQty,
-    currentQty: overrides[item.channelSKU] ?? item.allocation.autoAllocatedQty,
-    isOverridden: overrides[item.channelSKU] !== undefined,
-  }));
-
-  const totalAllocated = allocations.reduce((s, a) => s + a.currentQty, 0);
-  const isOverLimit = totalAllocated > group.availableQty;
-
+const SortableHeader: React.FC<{
+  label: string;
+  sortKey: string;
+  sortConfig: { key: string; direction: 'asc' | 'desc' };
+  onSort: (key: string) => void;
+  right?: boolean;
+  center?: boolean;
+  className?: string;
+  title?: string;
+}> = ({ label, sortKey, sortConfig, onSort, right, center, className, title }) => {
+  const isActive = sortConfig.key === sortKey;
   return (
-    <div className="mx-4 my-2 p-4 rounded-lg bg-orange-500/5 border border-orange-500/20">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-orange-400">⇄ Inventory Split Editor</span>
-          <span className="text-xs text-gray-500 dark:text-gray-400">
-            Available: <span className="font-semibold text-gray-700 dark:text-gray-300">{group.availableQty.toLocaleString()} units</span>
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded border ${isOverLimit
-            ? 'bg-red-500/20 text-red-400 border-red-500/30'
-            : 'bg-green-500/20 text-green-400 border-green-500/30'
-          }`}>
-            Total: {totalAllocated} / {group.availableQty}
-            {isOverLimit && ' ⚠ Exceeds available'}
-          </span>
-          <button
-            onClick={onReset}
-            className="text-xs px-2 py-0.5 rounded border border-gray-400 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-500 transition-colors"
-          >
-            ↺ Reset to Auto
-          </button>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        {allocations.map(alloc => (
-          <div key={alloc.channelSku} className="flex items-center gap-3 text-xs">
-            <span className="font-mono text-gray-700 dark:text-gray-300 w-28 flex-shrink-0">{alloc.channelSku}</span>
-            <span className="text-gray-500 dark:text-gray-400 flex-1 truncate">{alloc.productName}</span>
-            <span className="text-gray-400 flex-shrink-0">MMA: {alloc.mma}</span>
-            <span className="text-gray-400 flex-shrink-0">Auto: {alloc.autoQty}</span>
-            <div className="flex items-center gap-1 flex-shrink-0">
-              <input
-                type="number"
-                min={0}
-                max={group.availableQty}
-                value={alloc.currentQty}
-                onChange={e => onUpdate(alloc.channelSku, Math.max(0, parseInt(e.target.value) || 0))}
-                className={`w-16 text-center text-xs rounded border px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-orange-500 ${
-                  alloc.isOverridden
-                    ? 'bg-orange-500/10 border-orange-500/40 text-orange-400 dark:text-orange-300'
-                    : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200'
-                }`}
-              />
-              {alloc.isOverridden && (
-                <span className="text-orange-400 text-xs" title="Manually overridden">✎</span>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {isOverLimit && (
-        <p className="mt-3 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-1.5">
-          ⚠ Total allocation ({totalAllocated}) exceeds available warehouse stock ({group.availableQty}). Reduce quantities before confirming.
-        </p>
-      )}
-    </div>
+    <th
+      title={title}
+      onClick={() => onSort(sortKey)}
+      className={`px-3 py-2 border-b border-gray-200 dark:border-gray-700
+        text-xs font-semibold uppercase tracking-wider cursor-pointer select-none
+        transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50
+        ${isActive ? 'text-orange-400 bg-orange-500/5' : 'text-gray-500 dark:text-gray-400'}
+        ${right ? 'text-right' : center ? 'text-center' : 'text-left'}
+        ${className || ''}`}
+    >
+      <span className={`inline-flex items-center gap-1 ${right ? 'justify-end' : center ? 'justify-center' : 'justify-start'}`}>
+        {label}
+        <span className="text-[10px] opacity-60">
+          {isActive ? (sortConfig.direction === 'asc' ? '▲' : '▼') : '↕'}
+        </span>
+      </span>
+    </th>
   );
 };
 
@@ -140,17 +95,32 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   const [debugMode, setDebugMode] = useState(false);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterChip>('All');
+  
+  const [sortConfig, setSortConfig] = useState<{
+    key: string;
+    direction: 'asc' | 'desc';
+  }>({ key: 'docDays', direction: 'asc' });
 
-  // ── Split editor state ──────────────────────────────────────────────────────
-  const [manualOverrides, setManualOverrides] = useState<Record<string, Record<string, number>>>({});
-  const [activeSplitEditor, setActiveSplitEditor] = useState<string | null>(null);
+  // ── Selection state ─────────────────────────────────────────────────────────
+  const [selectedChannelSkus, setSelectedChannelSkus] = useState<Set<string>>(new Set());
+
+  // ── Ship qty override state ─────────────────────────────────────────────────
+  const [shipQtyOverrides, setShipQtyOverrides] = useState<Record<string, number>>({});
 
   // ── Confirm plan state ──────────────────────────────────────────────────────
   const [isConfirming, setIsConfirming] = useState(false);
   const [confirmResult, setConfirmResult] = useState<{ success: boolean; message: string; poNumber?: string } | null>(null);
 
   // ── API fetch ────────────────────────────────────────────────────────────────
-  const fetchForecast = useCallback(async () => {
+  const fetchForecast = useCallback(async (forceRefresh = false) => {
+    // Use cache if available and not forcing refresh
+    if (!forceRefresh && amazonForecastCache) {
+      setSkus(amazonForecastCache);
+      setLastRefreshed(amazonForecastCacheTime);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     try {
@@ -163,8 +133,13 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
       const data = await response.json();
       if (data.status === 'error') throw new Error(data.message);
       if (!Array.isArray(data.data)) throw new Error('Invalid response format');
+      
+      // Update cache
+      amazonForecastCache = data.data;
+      amazonForecastCacheTime = new Date();
+      
       setSkus(data.data);
-      setLastRefreshed(new Date());
+      setLastRefreshed(amazonForecastCacheTime);
     } catch (e: any) {
       setError(e.message || 'Unknown error');
       setSkus([]);
@@ -174,37 +149,89 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   }, []);
 
   useEffect(() => {
-    fetchForecast();
+    fetchForecast(false);
   }, [fetchForecast]);
 
-  // ── Grouping ─────────────────────────────────────────────────────────────────
-  const groupedData = useMemo<GroupedMaster[]>(() => {
+  const handleSort = (key: string) => {
+    setSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
+
+  const getShipQty = (item: AmazonChannelSku): number =>
+    shipQtyOverrides[item.channelSKU] ?? item.allocation.shippingPlanQty;
+
+  const updateShipQty = (channelSku: string, value: number) => {
+    setShipQtyOverrides(prev => ({ ...prev, [channelSku]: Math.max(0, value) }));
+  };
+
+  // ── Grouping & Filtering & Sorting ───────────────────────────────────────────
+  const filteredGroups = useMemo(() => {
     const groups = new Map<string, AmazonChannelSku[]>();
     skus.forEach(item => {
-      if (!groups.has(item.masterSKU)) groups.set(item.masterSKU, []);
-      groups.get(item.masterSKU)!.push(item);
+      // Apply filters
+      const matchSearch = !search ||
+        item.channelSKU.toLowerCase().includes(search.toLowerCase()) ||
+        item.productName.toLowerCase().includes(search.toLowerCase()) ||
+        item.masterSKU.toLowerCase().includes(search.toLowerCase());
+
+      const matchFilter =
+        activeFilter === 'All'        ? true :
+        activeFilter === 'Needs Ship' ? item.needsReplenishment :
+        activeFilter === 'Slow'       ? item.replenishment.velocityBand === 'slow' :
+        activeFilter === 'Medium'     ? item.replenishment.velocityBand === 'medium' :
+        activeFilter === 'Fast'       ? item.replenishment.velocityBand === 'fast' :
+        activeFilter === '⚠ Listing'  ? item.hasListingIssue : true;
+
+      if (matchSearch && matchFilter) {
+        if (!groups.has(item.masterSKU)) groups.set(item.masterSKU, []);
+        groups.get(item.masterSKU)!.push(item);
+      }
     });
-    return Array.from(groups.entries()).map(([masterSKU, items]) => ({
-      masterSKU,
-      productName: items[0].productName,
-      items,
-      hasSplit: items.some(i => i.warehouseCheck.splitRequired),
-      availableQty: items[0].warehouseCheck.availableQty,
-      totalRecommended: items.reduce((s, i) => s + i.replenishment.recommendedQty, 0),
-      totalShipQty: items.reduce((s, i) => s + i.allocation.shippingPlanQty, 0),
-      worstDoc: Math.min(...items.map(i => i.amazonInventory.docDays)),
-    }));
-  }, [skus]);
+
+    return Array.from(groups.entries()).map(([masterSKU, items]) => {
+      // Sort items within group
+      const sortedItems = [...items].sort((a, b) => {
+        const dir = sortConfig.direction === 'asc' ? 1 : -1;
+        switch (sortConfig.key) {
+          case 'channelSKU':     return dir * a.channelSKU.localeCompare(b.channelSKU);
+          case 'mma':            return dir * (a.mma.final - b.mma.final);
+          case 'docDays':        return dir * (a.amazonInventory.docDays - b.amazonInventory.docDays);
+          case 'fbaQty':         return dir * (a.amazonInventory.fbaQty - b.amazonInventory.fbaQty);
+          case 'inbound':        return dir * (a.amazonInventory.inbound - b.amazonInventory.inbound);
+          case 'whAvail':        return dir * (a.warehouseCheck.availableQty - b.warehouseCheck.availableQty);
+          case 'recommended':    return dir * (a.replenishment.recommendedQty - b.replenishment.recommendedQty);
+          case 'shipQty':        return dir * (getShipQty(a) - getShipQty(b));
+          case 'velocityBand': {
+            const order = { fast: 0, medium: 1, slow: 2 };
+            return dir * ((order[a.replenishment.velocityBand] || 0) - (order[b.replenishment.velocityBand] || 0));
+          }
+          default: return 0;
+        }
+      });
+
+      return {
+        masterSKU,
+        productName: sortedItems[0].productName,
+        items: sortedItems,
+        availableQty: sortedItems[0].warehouseCheck.availableQty,
+        totalRecommended: sortedItems.reduce((s, i) => s + i.replenishment.recommendedQty, 0),
+        totalShipQty: sortedItems.reduce((s, i) => s + getShipQty(i), 0),
+        worstDoc: Math.min(...sortedItems.map(i => i.amazonInventory.docDays)),
+      };
+    }).filter(group => group.items.length > 0);
+  }, [skus, search, activeFilter, sortConfig, shipQtyOverrides]); // re-group when overrides change so group totals update
 
   // ── Expand state ──────────────────────────────────────────────────────────────
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
-  // Expand all when data loads
+  // Expand all when data loads initially
   useEffect(() => {
-    if (groupedData.length > 0) {
-      setExpandedGroups(new Set(groupedData.map(g => g.masterSKU)));
+    if (filteredGroups.length > 0 && expandedGroups.size === 0) {
+      setExpandedGroups(new Set(filteredGroups.map(g => g.masterSKU)));
     }
-  }, [groupedData]);
+  }, [skus]); // only run when raw skus load, not every sort
 
   const toggleExpand = (masterSku: string) => {
     setExpandedGroups(prev => {
@@ -214,71 +241,56 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
     });
   };
 
-  // ── Filtering ─────────────────────────────────────────────────────────────────
-  const filteredGroups = useMemo(() => {
-    return groupedData
-      .map(group => ({
-        ...group,
-        items: group.items.filter(item => {
-          const matchSearch = !search ||
-            item.channelSKU.toLowerCase().includes(search.toLowerCase()) ||
-            item.productName.toLowerCase().includes(search.toLowerCase()) ||
-            item.masterSKU.toLowerCase().includes(search.toLowerCase());
+  // ── Selection helpers ───────────────────────────────────────────────────────
+  const toggleSelect = (channelSku: string) => {
+    setSelectedChannelSkus(prev => {
+      const next = new Set(prev);
+      next.has(channelSku) ? next.delete(channelSku) : next.add(channelSku);
+      return next;
+    });
+  };
 
-          const matchFilter =
-            activeFilter === 'All'        ? true :
-            activeFilter === 'Needs Ship' ? item.needsReplenishment :
-            activeFilter === 'Split ⚠'   ? item.warehouseCheck.splitRequired :
-            activeFilter === 'Slow'       ? item.replenishment.velocityBand === 'slow' :
-            activeFilter === 'Medium'     ? item.replenishment.velocityBand === 'medium' :
-            activeFilter === 'Fast'       ? item.replenishment.velocityBand === 'fast' :
-            activeFilter === '⚠ Listing'  ? item.hasListingIssue : true;
+  const toggleSelectAll = (checked: boolean) => {
+    if (checked) {
+      const all = filteredGroups.flatMap(g => g.items).map(i => i.channelSKU);
+      setSelectedChannelSkus(new Set(all));
+    } else {
+      setSelectedChannelSkus(new Set());
+    }
+  };
 
-          return matchSearch && matchFilter;
-        }),
-      }))
-      .filter(group => group.items.length > 0);
-  }, [groupedData, search, activeFilter]);
+  const selectedCount = selectedChannelSkus.size;
+  const totalVisible = filteredGroups.flatMap(g => g.items).length;
 
   // ── Summary stats ──────────────────────────────────────────────────────────
   const allFilteredItems = filteredGroups.flatMap(g => g.items);
-  const totalSkus     = allFilteredItems.length;
+  const totalSkus     = skus.length; // usually total overall, but UI might mean filtered length
   const needShipCount = allFilteredItems.filter(i => i.needsReplenishment).length;
-  const totalUnits    = allFilteredItems.reduce((s, i) => s + i.allocation.shippingPlanQty, 0);
+  // totalUnits considers overrides
+  const totalUnits    = allFilteredItems.reduce((s, i) => s + getShipQty(i), 0);
 
   // ── Confirm Plan ───────────────────────────────────────────────────────────
   const handleConfirmPlan = async () => {
+    // Confirm only selected items if any selected, otherwise all that match criteria
     const itemsToConfirm = skus
-      .filter(item => item.needsReplenishment && item.allocation.shippingPlanQty > 0)
-      .map(item => {
-        const masterOverrides = manualOverrides[item.masterSKU] || {};
-        const overriddenQty = masterOverrides[item.channelSKU];
-        return {
-          ...item,
-          allocation: {
-            ...item.allocation,
-            finalAllocatedQty: overriddenQty ?? item.allocation.finalAllocatedQty,
-            shippingPlanQty:   overriddenQty ?? item.allocation.shippingPlanQty,
-            isManualOverride:  overriddenQty !== undefined,
-            overrideReason:    overriddenQty !== undefined ? 'Manual split adjustment' : '',
-          },
-        };
-      });
+      .filter(item =>
+        (selectedChannelSkus.size === 0 || selectedChannelSkus.has(item.channelSKU)) &&
+        getShipQty(item) > 0
+      )
+      .map(item => ({
+        ...item,
+        allocation: {
+          ...item.allocation,
+          finalAllocatedQty: getShipQty(item),
+          shippingPlanQty: getShipQty(item),
+          isManualOverride: shipQtyOverrides[item.channelSKU] !== undefined,
+          overrideReason: shipQtyOverrides[item.channelSKU] !== undefined ? 'Manual override' : '',
+        }
+      }));
 
     if (itemsToConfirm.length === 0) {
-      alert('No items to confirm. All SKUs either have 0 ship qty or do not need replenishment.');
+      alert('No items to confirm. Either select items with >0 ship qty, or ensure there are requested shipments.');
       return;
-    }
-
-    // Validate split groups
-    const splitGroups = groupedData.filter(g => g.hasSplit);
-    for (const group of splitGroups) {
-      const overrides = manualOverrides[group.masterSKU] || {};
-      const total = group.items.reduce((s, item) => s + (overrides[item.channelSKU] ?? item.allocation.shippingPlanQty), 0);
-      if (total > group.availableQty) {
-        alert(`Cannot confirm: ${group.masterSKU} total allocation (${total}) exceeds available stock (${group.availableQty}). Please fix the split before confirming.`);
-        return;
-      }
     }
 
     setIsConfirming(true);
@@ -293,6 +305,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
       const result = await response.json();
       if (result.status === 'success') {
         setConfirmResult({ success: true, message: result.message, poNumber: result.poNumber });
+        // After success, might be good to clear overrides and selection, or force refresh
       } else {
         throw new Error(result.message || 'Confirm failed');
       }
@@ -325,8 +338,8 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
       item.amazonInventory.inbound,
       item.warehouseCheck.availableQty,
       item.replenishment.velocityBand,
-      item.replenishment.recommendedQty,
-      item.allocation.shippingPlanQty,
+      Math.round(item.replenishment.recommendedQty),
+      getShipQty(item),
       item.needsReplenishment ? 'Yes' : 'No',
       item.warehouseCheck.splitRequired ? 'Yes' : 'No',
       item.hasListingIssue ? 'Yes' : 'No',
@@ -369,6 +382,12 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
           Units: {totalUnits.toLocaleString()}
         </span>
 
+        {selectedCount > 0 && (
+          <span className="bg-orange-500/20 text-orange-400 border border-orange-500/30 px-2 py-0.5 rounded text-xs font-semibold flex-shrink-0">
+            {selectedCount} selected
+          </span>
+        )}
+
         {lastRefreshed && (
           <span className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0">
             Updated {lastRefreshed.toLocaleTimeString()}
@@ -389,7 +408,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
           </button>
 
           <button
-            onClick={() => fetchForecast()}
+            onClick={() => fetchForecast(true)}
             disabled={isLoading}
             className="text-xs px-3 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-400 flex items-center gap-1 transition-colors disabled:opacity-50"
           >
@@ -455,7 +474,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
       </div>
 
       {/* ── TABLE ───────────────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
 
         {/* Loading */}
         {isLoading ? (
@@ -475,7 +494,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
               {error}
             </p>
             <button
-              onClick={() => fetchForecast()}
+              onClick={() => fetchForecast(true)}
               className="text-sm px-4 py-2 rounded border border-red-400 text-red-400 hover:bg-red-500/10 transition-colors"
             >
               ↻ Retry
@@ -484,41 +503,49 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
 
         /* Table */
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 dark:bg-gray-800/80 sticky top-0 z-10">
+          <table className="w-full text-sm table-fixed">
+            <thead className="bg-gray-50 dark:bg-gray-800/80 sticky top-0 z-10 shadow-sm">
               <tr>
-                {[
-                  { label: '', w: 'w-8' },
-                  { label: '', w: 'w-6' },
-                  { label: 'CHANNEL SKU', w: 'w-36' },
-                  { label: 'PRODUCT NAME', w: '' },
-                  { label: 'MMA', w: 'w-16', right: true },
-                  { label: 'DOC', w: 'w-16', right: true },
-                  { label: 'FBA STOCK', w: 'w-20', right: true },
-                  { label: 'INBOUND', w: 'w-16', right: true },
-                  { label: 'WH AVAIL', w: 'w-20', right: true },
-                  { label: 'VELOCITY', w: 'w-20', center: true },
-                  { label: 'RECOMMENDED', w: 'w-24', right: true },
-                  { label: 'SHIP QTY', w: 'w-20', right: true },
-                  { label: 'FLAGS', w: 'w-14', center: true },
-                ].map((col, i) => (
-                  <th
-                    key={i}
-                    className={`px-3 py-2 border-b border-gray-200 dark:border-gray-700
-                      text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400
-                      ${col.right ? 'text-right' : (col as any).center ? 'text-center' : 'text-left'}
-                      ${col.w}`}
-                  >
-                    {col.label}
-                  </th>
-                ))}
+                <th className="px-2 py-2 w-8 text-center border-b border-gray-200 dark:border-gray-700">
+                  <input
+                    type="checkbox"
+                    className="accent-orange-500 cursor-pointer"
+                    checked={totalVisible > 0 && selectedCount === totalVisible}
+                    onChange={e => toggleSelectAll(e.target.checked)}
+                  />
+                </th>
+                <th className="px-2 py-2 w-6 text-center border-b border-gray-200 dark:border-gray-700"></th>
+                
+                <SortableHeader label="CHANNEL SKU" sortKey="channelSKU" sortConfig={sortConfig} onSort={handleSort} className="w-36 border-r border-gray-100 dark:border-gray-700/50" />
+                <th className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold uppercase tracking-wider text-left text-gray-500 dark:text-gray-400 w-48">
+                  PRODUCT NAME
+                </th>
+                <th className="px-2 py-2 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold uppercase tracking-wider text-center text-gray-500 dark:text-gray-400 w-12">
+                  FLAGS
+                </th>
+                <SortableHeader label="MMA" sortKey="mma" sortConfig={sortConfig} onSort={handleSort} right className="w-14" />
+                <SortableHeader label="DOC" sortKey="docDays" sortConfig={sortConfig} onSort={handleSort} right className="w-16" />
+                <SortableHeader label="FBA STOCK" sortKey="fbaQty" sortConfig={sortConfig} onSort={handleSort} right className="w-18" />
+                <SortableHeader label="INBOUND" sortKey="inbound" sortConfig={sortConfig} onSort={handleSort} right className="w-16" />
+                
+                <th className="px-2 py-2 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold uppercase tracking-wider text-right text-gray-400 dark:text-gray-500 w-16" title="Units in created shipments not yet shipped (placeholder — coming soon)">
+                  <div className="flex flex-col items-end leading-[1.1]">
+                    <span>PENDING</span>
+                    <span className="text-[9px] text-gray-400 dark:text-gray-600">TBD</span>
+                  </div>
+                </th>
+
+                <SortableHeader label="EE AVAIL" title="EasyEcom warehouse available stock (after Shopify + YEIO reserve)" sortKey="whAvail" sortConfig={sortConfig} onSort={handleSort} right className="w-18" />
+                <SortableHeader label="VELOCITY" sortKey="velocityBand" sortConfig={sortConfig} onSort={handleSort} center className="w-20" />
+                <SortableHeader label="RECOMMENDED" sortKey="recommended" sortConfig={sortConfig} onSort={handleSort} right className="w-24" />
+                <SortableHeader label="SHIP QTY" sortKey="shipQty" sortConfig={sortConfig} onSort={handleSort} right className="w-20" />
               </tr>
             </thead>
 
             <tbody>
               {filteredGroups.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="text-center py-16 text-gray-400 text-sm">
+                  <td colSpan={14} className="text-center py-16 text-gray-400 text-sm">
                     {skus.length === 0 ? 'No data returned from API' : 'No SKUs match the current filter'}
                   </td>
                 </tr>
@@ -526,22 +553,39 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                 filteredGroups.map(group => {
                   const isExpanded = expandedGroups.has(group.masterSKU);
                   const worstDoc   = group.worstDoc;
-                  const isSplitOpen = activeSplitEditor === group.masterSKU;
 
                   return (
                     <React.Fragment key={group.masterSKU}>
                       {/* ── MASTER SKU ROW ───────────────────────────────────── */}
                       <tr
                         onClick={() => toggleExpand(group.masterSKU)}
-                        className="bg-gray-100/80 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/80 cursor-pointer"
+                        className="bg-gray-100/80 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-700/40 hover:bg-gray-100 dark:hover:bg-gray-800/80 cursor-pointer"
                       >
-                        <td />
+                        <td className="px-2 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            className="accent-orange-500 cursor-pointer"
+                            checked={group.items.length > 0 && group.items.every(i => selectedChannelSkus.has(i.channelSKU))}
+                            onChange={e => {
+                              e.stopPropagation();
+                              const isChecked = e.target.checked;
+                              group.items.forEach(item => {
+                                setSelectedChannelSkus(prev => {
+                                  const next = new Set(prev);
+                                  isChecked ? next.add(item.channelSKU) : next.delete(item.channelSKU);
+                                  return next;
+                                });
+                              });
+                            }}
+                            onClick={e => e.stopPropagation()}
+                          />
+                        </td>
                         <td className="px-1 py-2 text-center">
                           <span className={`inline-block w-2 h-2 rounded-full ${
                             worstDoc < 20 ? 'bg-red-400' : worstDoc < 50 ? 'bg-amber-400' : 'bg-green-400'
                           }`} />
                         </td>
-                        <td colSpan={2} className="px-3 py-2">
+                        <td colSpan={5} className="px-3 py-2 border-r border-transparent">
                           <div className="flex items-center gap-2 pl-1">
                             <span className="text-gray-400 text-xs">{isExpanded ? '▼' : '▶'}</span>
                             <span className="font-mono text-xs bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded text-gray-700 dark:text-gray-300">
@@ -550,175 +594,164 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                             <span className="font-semibold text-gray-800 dark:text-gray-100 truncate text-xs">
                               {group.productName}
                             </span>
-                            {group.hasSplit && (
-                              <span className="bg-orange-500/20 text-orange-400 border border-orange-500/30 px-1.5 py-0.5 rounded text-xs font-medium flex-shrink-0">
-                                ⚠ Split
-                              </span>
-                            )}
-                            {/* Edit Split button */}
-                            {group.hasSplit && (
-                              <button
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  setActiveSplitEditor(isSplitOpen ? null : group.masterSKU);
-                                }}
-                                className="text-xs px-2 py-0.5 rounded border border-orange-500/40 text-orange-400 hover:bg-orange-500/10 transition-colors ml-1 flex-shrink-0"
-                              >
-                                {isSplitOpen ? 'Close Split' : 'Edit Split'}
-                              </button>
-                            )}
                             <span className="text-gray-400 dark:text-gray-500 text-xs ml-1 flex-shrink-0">
                               {group.items.length} variant{group.items.length > 1 ? 's' : ''}
                             </span>
                           </div>
                         </td>
-                        <td /><td /><td /><td />
+                        <td /><td /><td />
+                        <td />
                         <td className="px-3 py-2 text-right text-xs text-gray-600 dark:text-gray-300 font-medium">
                           {group.availableQty.toLocaleString()}
                         </td>
                         <td />
                         <td className="px-3 py-2 text-right text-xs text-gray-600 dark:text-gray-300">
-                          {group.totalRecommended.toLocaleString()}
+                          {Math.round(group.totalRecommended).toLocaleString()}
                         </td>
                         <td className="px-3 py-2 text-right">
                           <span className={`text-xs font-bold ${group.totalShipQty > 0 ? 'text-orange-400' : 'text-gray-400'}`}>
                             {group.totalShipQty.toLocaleString()}
                           </span>
                         </td>
-                        <td />
                       </tr>
 
-                      {/* ── SPLIT EDITOR ROW ─────────────────────────────────── */}
-                      {isExpanded && isSplitOpen && (
-                        <tr>
-                          <td colSpan={13} className="p-0">
-                            <SplitEditor
-                              group={group}
-                              overrides={manualOverrides[group.masterSKU] || {}}
-                              onUpdate={(channelSku, qty) => {
-                                setManualOverrides(prev => ({
-                                  ...prev,
-                                  [group.masterSKU]: { ...(prev[group.masterSKU] || {}), [channelSku]: qty },
-                                }));
-                              }}
-                              onReset={() => {
-                                setManualOverrides(prev => {
-                                  const next = { ...prev };
-                                  delete next[group.masterSKU];
-                                  return next;
-                                });
-                              }}
-                            />
-                          </td>
-                        </tr>
-                      )}
-
                       {/* ── CHANNEL SKU CHILD ROWS ───────────────────────────── */}
-                      {isExpanded && group.items.map(item => (
-                        <React.Fragment key={item.channelSKU}>
-                          <tr
-                            onClick={() => setSelectedSku(item)}
-                            className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-800/40 cursor-pointer"
-                          >
-                            <td className="px-2 py-1.5 text-center" onClick={e => e.stopPropagation()}>
-                              <input type="checkbox" className="rounded accent-orange-500" />
-                            </td>
+                      {isExpanded && group.items.map((item, index) => {
+                         const isLastChild = index === group.items.length - 1;
+                         return (
+                          <React.Fragment key={item.channelSKU}>
+                            <tr
+                              onClick={() => setSelectedSku(item)}
+                              className={`border-b ${isLastChild ? 'border-b-2 border-gray-200 dark:border-gray-700' : 'border-gray-100 dark:border-gray-700/40'} 
+                                odd:bg-white dark:odd:bg-gray-900 even:bg-gray-50/50 dark:even:bg-gray-800/20 
+                                hover:bg-gray-50 dark:hover:bg-gray-800/40 cursor-pointer`}
+                            >
+                              <td className="px-2 py-1.5 text-center" onClick={e => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  className="accent-orange-500 cursor-pointer"
+                                  checked={selectedChannelSkus.has(item.channelSKU)}
+                                  onChange={() => toggleSelect(item.channelSKU)}
+                                />
+                              </td>
 
-                            <td className="px-1 py-1.5 text-center">
-                              <span className={`inline-block w-2 h-2 rounded-full ${
-                                !item.needsReplenishment ? 'bg-green-400' :
-                                item.amazonInventory.docDays < 20 ? 'bg-red-400' : 'bg-amber-400'
-                              }`} />
-                            </td>
+                              <td className="px-1 py-1.5 text-center">
+                                <span className={`inline-block w-2 h-2 rounded-full ${
+                                  !item.needsReplenishment ? 'bg-green-400' :
+                                  item.amazonInventory.docDays < 20 ? 'bg-red-400' : 'bg-amber-400'
+                                }`} />
+                              </td>
 
-                            <td className="px-3 py-1.5 pl-7">
-                              <span className="font-mono text-xs text-gray-700 dark:text-gray-300 font-medium">
-                                {item.channelSKU}
-                              </span>
-                              {item.mma.floorApplied && (
-                                <span className="ml-1 text-xs text-gray-400 dark:text-gray-500">(floor)</span>
-                              )}
-                            </td>
+                              <td className="px-3 py-1.5 pl-7 pr-6 border-r border-gray-100 dark:border-gray-700/50">
+                                <span className="font-mono text-xs text-gray-700 dark:text-gray-300 font-medium whitespace-nowrap">
+                                  {item.channelSKU}
+                                </span>
+                                {item.mma.floorApplied && (
+                                  <span className="ml-1 text-[10px] text-gray-400">(floor)</span>
+                                )}
+                              </td>
 
-                            <td className="px-3 py-1.5">
-                              <span className="text-xs text-gray-700 dark:text-gray-300 truncate block max-w-xs">
-                                {item.productName}
-                              </span>
-                            </td>
+                              <td className="px-3 py-1.5 w-48 max-w-[12rem]">
+                                <span className="text-xs text-gray-700 dark:text-gray-300 leading-tight line-clamp-2 block">
+                                  {item.productName}
+                                </span>
+                              </td>
 
-                            <td className="px-3 py-1.5 text-right text-xs text-gray-700 dark:text-gray-300">
-                              {item.mma.final}
-                            </td>
+                              <td className="px-2 py-1.5 text-center">
+                                {item.hasListingIssue && (
+                                  <span title={item.listingIssueMsg || 'Possible listing issue'} className="text-red-400 cursor-help text-sm">⚠</span>
+                                )}
+                              </td>
 
-                            <td className="px-3 py-1.5 text-right">
-                              <span className={`text-xs font-semibold ${docColor(item.amazonInventory.docDays)}`}>
-                                {item.amazonInventory.docDays === 999 ? '∞' : `${item.amazonInventory.docDays}d`}
-                              </span>
-                            </td>
+                              <td className="px-3 py-1.5 text-right text-xs text-gray-700 dark:text-gray-300">
+                                {item.mma.final}
+                              </td>
 
-                            <td className="px-3 py-1.5 text-right text-xs text-gray-700 dark:text-gray-300">
-                              {item.amazonInventory.fbaQty.toLocaleString()}
-                            </td>
+                              <td className="px-3 py-1.5 text-right">
+                                <span className={`text-xs font-semibold ${docColor(item.amazonInventory.docDays)}`}>
+                                  {formatDoc(item.amazonInventory.docDays)}
+                                </span>
+                              </td>
 
-                            <td className="px-3 py-1.5 text-right text-xs">
-                              {item.amazonInventory.inbound > 0
-                                ? <span className="text-blue-400">{item.amazonInventory.inbound}</span>
-                                : <span className="text-gray-400">-</span>}
-                            </td>
+                              <td className="px-3 py-1.5 text-right text-xs text-gray-700 dark:text-gray-300">
+                                {item.amazonInventory.fbaQty.toLocaleString()}
+                              </td>
 
-                            <td className="px-3 py-1.5 text-right text-xs text-gray-700 dark:text-gray-300">
-                              {item.warehouseCheck.availableQty.toLocaleString()}
-                            </td>
+                              <td className="px-3 py-1.5 text-right text-xs">
+                                {item.amazonInventory.inbound > 0
+                                  ? <span className="text-blue-400">{item.amazonInventory.inbound}</span>
+                                  : <span className="text-gray-400">-</span>}
+                              </td>
+                              
+                              <td className="px-3 py-1.5 text-right">
+                                <span className="text-xs text-gray-400 dark:text-gray-500 italic">—</span>
+                              </td>
 
-                            <td className="px-3 py-1.5 text-center">
-                              <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${velocityColor(item.replenishment.velocityBand)}`}>
-                                {item.replenishment.velocityBand.charAt(0).toUpperCase() + item.replenishment.velocityBand.slice(1)}
-                              </span>
-                            </td>
+                              <td className="px-3 py-1.5 text-right text-xs text-gray-700 dark:text-gray-300">
+                                {item.warehouseCheck.availableQty.toLocaleString()}
+                              </td>
 
-                            <td className="px-3 py-1.5 text-right text-xs text-gray-700 dark:text-gray-300">
-                              {item.replenishment.recommendedQty > 0
-                                ? item.replenishment.recommendedQty.toLocaleString()
-                                : <span className="text-gray-400">-</span>}
-                            </td>
+                              <td className="px-3 py-1.5 text-center">
+                                <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${velocityColor(item.replenishment.velocityBand)}`}>
+                                  {item.replenishment.velocityBand.charAt(0).toUpperCase() + item.replenishment.velocityBand.slice(1)}
+                                </span>
+                              </td>
 
-                            <td className="px-3 py-1.5 text-right" onClick={e => e.stopPropagation()}>
-                              {/* Show manual override qty if set */}
-                              {(() => {
-                                const ov = (manualOverrides[item.masterSKU] || {})[item.channelSKU];
-                                const qty = ov ?? item.allocation.shippingPlanQty;
-                                return (
-                                  <span className={`text-xs font-bold ${qty > 0 ? 'text-orange-400' : 'text-gray-400'} ${ov !== undefined ? 'underline decoration-dotted' : ''}`}
-                                    title={ov !== undefined ? 'Manual override active' : undefined}>
-                                    {qty > 0 ? qty.toLocaleString() : '-'}
-                                    {ov !== undefined && <span className="ml-0.5 text-[9px]">✎</span>}
+                              <td className="px-3 py-1.5 text-right">
+                                <div className="flex flex-col items-end">
+                                  <span className="text-xs text-gray-700 dark:text-gray-300">
+                                    {item.replenishment.recommendedQty > 0
+                                      ? Math.round(item.replenishment.recommendedQty).toLocaleString()
+                                      : <span className="text-gray-400">—</span>}
                                   </span>
-                                );
-                              })()}
-                            </td>
+                                  {item.needsReplenishment &&
+                                   item.replenishment.recommendedQty > 0 &&
+                                   item.warehouseCheck.availableQty < item.replenishment.recommendedQty && (
+                                    <span className="text-[10px] text-red-400 leading-tight">
+                                      -{Math.round(item.replenishment.recommendedQty - item.warehouseCheck.availableQty).toLocaleString()} short
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
 
-                            <td className="px-2 py-1.5 text-center">
-                              {item.hasListingIssue && (
-                                <span title={item.listingIssueMsg || 'Possible listing issue'} className="text-red-400 cursor-help text-sm">⚠</span>
-                              )}
-                              {item.warehouseCheck.splitRequired && (
-                                <span title="Inventory split required" className="text-orange-400 cursor-help text-sm ml-0.5">⇄</span>
-                              )}
-                            </td>
-                          </tr>
-
-                          {/* Debug row */}
-                          {debugMode && (
-                            <tr className="border-b border-gray-100 dark:border-gray-700/50 bg-white dark:bg-gray-900">
-                              <td colSpan={13} className="pl-7 pr-3 py-0">
-                                <pre className="text-xs font-mono text-green-500 dark:text-green-400 bg-gray-950 p-3 rounded my-1 overflow-x-auto max-h-40">
-                                  {JSON.stringify(item, null, 2)}
-                                </pre>
+                              <td className="px-2 py-1 text-right" onClick={e => e.stopPropagation()}>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={getShipQty(item)}
+                                  onChange={e => updateShipQty(item.channelSKU, parseInt(e.target.value) || 0)}
+                                  onFocus={e => e.target.select()}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Tab') {
+                                      // Tab behavior is handled naturally by the browser via tabIndex
+                                    }
+                                  }}
+                                  tabIndex={0}
+                                  className={`w-16 text-center text-xs font-semibold rounded border px-1 py-0.5
+                                    focus:outline-none focus:ring-1 focus:ring-orange-500 focus:border-orange-500
+                                    ${shipQtyOverrides[item.channelSKU] !== undefined
+                                      ? 'bg-orange-500/10 border-orange-500/40 text-orange-400'
+                                      : getShipQty(item) > 0
+                                      ? 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200 font-bold'
+                                      : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 text-right'
+                                    }`}
+                                />
                               </td>
                             </tr>
-                          )}
-                        </React.Fragment>
-                      ))}
+
+                            {/* Debug row */}
+                            {debugMode && (
+                              <tr className="border-b border-gray-100 dark:border-gray-700/50 odd:bg-white dark:odd:bg-gray-900 even:bg-gray-50/50 dark:even:bg-gray-800/20">
+                                <td colSpan={14} className="pl-7 pr-3 py-0">
+                                  <pre className="text-xs font-mono text-green-500 dark:text-green-400 bg-gray-950 p-3 rounded my-1 overflow-x-auto max-h-40">
+                                    {JSON.stringify(item, null, 2)}
+                                  </pre>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                     </React.Fragment>
                   );
                 })
