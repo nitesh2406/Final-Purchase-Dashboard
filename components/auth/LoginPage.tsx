@@ -32,11 +32,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             const data = await response.json();
             
             if (data && data.success) {
+                // Defensively handle both flat {role: '...'} and nested {user: {role: '...'}}
+                const backendUser = data.user || data;
+
                 const userObj = {
                     email: decoded.email,
-                    name: decoded.name || data.name || decoded.email.split('@')[0],
-                    role: data.role || 'VIEWER',
-                    allowedTabs: data.allowedTabs || [],
+                    name: decoded.name || backendUser.name || decoded.email.split('@')[0],
+                    role: backendUser.role || 'VIEWER',
+                    allowedTabs: backendUser.allowedTabs || [],
                     loggedInAt: Date.now()
                 };
                 onLoginSuccess(userObj);
