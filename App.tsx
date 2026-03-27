@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { LoginPage } from './components/auth/LoginPage.tsx';
 import { Sidebar } from './components/layout/Sidebar.tsx';
 import { Header } from './components/layout/Header.tsx';
 import { Dashboard } from './components/dashboard/Dashboard.tsx';
@@ -96,6 +97,43 @@ const App: React.FC = () => {
     const [configLastLoaded, setConfigLastLoaded] = useState<Date | null>(null);
     const [amazonConfig, setAmazonConfig] = useState<any>(null);
     const [amazonConfigLastLoaded, setAmazonConfigLastLoaded] = useState<Date | null>(null);
+    const [user, setUser] = useState<any>(null);
+    const [authChecked, setAuthChecked] = useState(false);
+
+    useEffect(() => {
+        const checkAuth = () => {
+            const storedUser = localStorage.getItem('auth_user');
+            if (storedUser) {
+                try {
+                    const parsed = JSON.parse(storedUser);
+                    const age = Date.now() - parsed.loggedInAt;
+                    if (age > 8 * 60 * 60 * 1000) {
+                        localStorage.removeItem('auth_user');
+                        alert("Session expired. Please sign in again.");
+                    } else {
+                        setUser(parsed);
+                    }
+                } catch (e) {
+                    localStorage.removeItem('auth_user');
+                }
+            }
+            setAuthChecked(true);
+        };
+        checkAuth();
+
+        const interval = setInterval(checkAuth, 60000); // Check every minute
+        return () => clearInterval(interval);
+    }, []);
+
+    const handleLoginSuccess = (userData: any) => {
+        localStorage.setItem('auth_user', JSON.stringify(userData));
+        setUser(userData);
+    };
+
+    const handleLogout = () => {
+        localStorage.removeItem('auth_user');
+        setUser(null);
+    };
 
     const fetchAllData = useCallback(async (silent = false) => {
         if (!silent) setIsLoading(true);
@@ -173,10 +211,11 @@ const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
+        if (!user) return;
         fetchAllData();
         fetchConfig();
         fetchAmazonConfig();
-    }, [fetchAllData, fetchConfig, fetchAmazonConfig]);
+    }, [user, fetchAllData, fetchConfig, fetchAmazonConfig]);
 
     const addSku = (newSkuData: Omit<Sku, 'id'>) => {
         const newSku: Sku = {
@@ -221,6 +260,16 @@ const App: React.FC = () => {
     const updateVendor = (updatedVendor: Vendor) => {
         setVendors(prev => prev.map(v => v.id === updatedVendor.id ? updatedVendor : v));
     };
+
+    if (!authChecked) {
+        return <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-slate-900 border-none outline-none">
+            <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin"></div>
+        </div>;
+    }
+
+    if (!user) {
+        return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+    }
 
     if (isLoading) {
         return (
@@ -345,12 +394,15 @@ const App: React.FC = () => {
                 setView={setCurrentView}
                 isCollapsed={isSidebarCollapsed}
                 setIsCollapsed={setIsSidebarCollapsed}
+                user={user}
             />
             <div className={`flex-1 flex flex-col transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
                 <Header
                     currentView={currentView}
                     notifications={notifications}
                     setNotifications={setNotifications}
+                    user={user}
+                    onLogout={handleLogout}
                 />
                 <main className="flex-1 p-0 overflow-y-auto">
                     {renderContent()}
@@ -377,6 +429,29 @@ const App: React.FC = () => {
                                 <div className="flex justify-between items-center text-xs">
                                     <span className="text-slate-500 font-medium">Highlight Draft ID:</span>
                                     <span className="text-white bg-amber-500/20 px-2 py-0.5 rounded font-mono">{highlightDraftId || 'null'}</span>
+                                </div>
+                                <div className="border-t border-slate-800 pt-2">
+                                    <p className="text-[10px] font-bold text-slate-600 uppercase mb-1">User Info</p>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-slate-500 font-medium">Email:</span>
+                                        <span className="text-white font-mono">{user?.email || 'N/A'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-slate-500 font-medium">Role:</span>
+                                        <span className="text-white font-mono">{user?.role || 'N/A'}</span>
+                                    </div>
+                                    <div className="flex flex-col text-xs mt-1">
+                                        <span className="text-slate-500 font-medium whitespace-nowrap">Allowed Tabs:</span>
+                                        <span className="text-white font-mono text-[9px] break-all">{user?.allowedTabs?.join(', ') || 'None'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs mt-1">
+                                        <span className="text-slate-500 font-medium">Session Age:</span>
+                                        <span className="text-white font-mono">{user?.loggedInAt ? Math.floor((Date.now() - user.loggedInAt) / 60000) + ' min' : 'N/A'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-slate-500 font-medium">Expiry In:</span>
+                                        <span className="text-white font-mono">{user?.loggedInAt ? Math.max(0, Math.floor((8 * 60 * 60 * 1000 - (Date.now() - user.loggedInAt)) / 60000)) + ' min' : 'N/A'}</span>
+                                    </div>
                                 </div>
                                 <div className="border-t border-slate-800 pt-2">
                                     <p className="text-[10px] font-bold text-slate-600 uppercase mb-1">Last API Call</p>

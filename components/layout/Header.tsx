@@ -6,6 +6,8 @@ interface HeaderProps {
   currentView: string;
   notifications: Notification[];
   setNotifications: React.Dispatch<React.SetStateAction<Notification[]>>;
+  user?: any;
+  onLogout?: () => void;
 }
 
 const formatCurrency = (amount: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amount);
@@ -36,7 +38,7 @@ const NotificationIcon: FC<{type: Notification['type']}> = ({type}) => {
 }
 
 
-export const Header: React.FC<HeaderProps> = ({ currentView, notifications, setNotifications }) => {
+export const Header: React.FC<HeaderProps> = ({ currentView, notifications, setNotifications, user, onLogout }) => {
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const bellRef = useRef<HTMLButtonElement>(null);
@@ -116,12 +118,40 @@ export const Header: React.FC<HeaderProps> = ({ currentView, notifications, setN
                 </div>
             )}
         </div>
-        <div className="flex items-center">
-            <UserCircleIcon className="w-10 h-10 text-gray-400"/>
-            <div className="ml-2 hidden sm:block">
-                <p className="text-sm font-medium text-gray-800 dark:text-white">Alex Doe</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Administrator</p>
-            </div>
+        <div className="flex items-center ml-4 border-l dark:border-gray-700 pl-4">
+            {user ? (
+                <div className="flex items-center gap-3">
+                    <div className="hidden sm:flex flex-col items-end">
+                        <div className="flex items-center gap-2">
+                            <p className="text-sm font-bold text-gray-800 dark:text-white leading-none">{user.name}</p>
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                                user.role === 'ADMIN' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400' :
+                                user.role === 'BUYER' ? 'bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-400' :
+                                'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+                            }`}>
+                                {user.role}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-emerald-400 flex items-center justify-center text-white font-bold text-lg shadow-sm border-2 border-white dark:border-gray-800">
+                        {user.name?.charAt(0).toUpperCase() || 'U'}
+                    </div>
+                    <button 
+                        onClick={onLogout}
+                        className="ml-2 text-xs font-medium text-gray-500 hover:text-red-500 transition-colors"
+                        title="Sign Out"
+                    >
+                        Logout
+                    </button>
+                </div>
+            ) : (
+                <div className="flex items-center">
+                    <UserCircleIcon className="w-10 h-10 text-gray-400"/>
+                    <div className="ml-2 hidden sm:block">
+                        <p className="text-sm font-medium text-gray-800 dark:text-white">Guest</p>
+                    </div>
+                </div>
+            )}
         </div>
       </div>
     </header>

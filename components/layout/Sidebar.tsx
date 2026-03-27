@@ -15,6 +15,7 @@ interface SidebarProps {
   setView: (view: ViewType) => void;
   isCollapsed: boolean;
   setIsCollapsed: (isCollapsed: boolean) => void;
+  user?: any;
 }
 
 const navItems: { name: ViewType; icon: React.ReactNode; wip?: boolean; group?: string }[] = [
@@ -32,8 +33,30 @@ const navItems: { name: ViewType; icon: React.ReactNode; wip?: boolean; group?: 
   { name: 'Settings', icon: <Cog6ToothIcon className="w-6 h-6" />, group: 'Other' },
 ];
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollapsed, setIsCollapsed }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollapsed, setIsCollapsed, user }) => {
   const groups = ['Main', 'Procurement', 'Logistics', 'Finance', 'Amazon', 'Other'];
+
+  const checkAllowed = (name: string, group: string) => {
+    if (!user) return false;
+    if (user.role === 'ADMIN' || (user.allowedTabs && user.allowedTabs.includes('all'))) {
+      return true;
+    }
+    const tabs = user.allowedTabs || [];
+    if (name === 'Dashboard') return true;
+    if (name === 'Inventory Forecasting') return tabs.includes('forecasting');
+    if (name === 'Draft Orders') return tabs.includes('drafts');
+    if (name === 'Purchase Orders') return tabs.includes('purchase_orders');
+    if (name === 'Vendor Shipments') return tabs.includes('shipments');
+    if (name === 'Settings') return tabs.includes('settings');
+    if (group === 'Finance') return tabs.includes('finance');
+    
+    // Defaults for anything not specified
+    if (group === 'Amazon') return tabs.includes('forecasting') || tabs.includes('amazon');
+    if (name === 'Shipment Tracker') return tabs.includes('shipments');
+    if (name === 'Inventory Analytics') return tabs.includes('forecasting');
+
+    return false;
+  };
 
   return (
     <aside className={`fixed top-0 left-0 h-full bg-white dark:bg-gray-800 border-r dark:border-gray-700 flex flex-col transition-all duration-300 z-50 ${isCollapsed ? 'w-20' : 'w-64'}`}>
@@ -44,7 +67,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollap
       </div>
       <nav className="flex-1 p-2 overflow-y-auto overflow-x-hidden">
         {groups.map(group => {
-          const items = navItems.filter(item => item.group === group);
+          const items = navItems.filter(item => item.group === group && checkAllowed(item.name, group));
+          if (items.length === 0) return null;
           return (
             <div key={group} className="mb-3">
               {!isCollapsed && (
