@@ -32,16 +32,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             const data = await response.json();
             
             if (data && data.success) {
-                // Defensively handle both flat {role: '...'} and nested {user: {role: '...'}}
-                const backendUser = data.user || data;
+                console.log('RAW backend response:', JSON.stringify(data));
+                console.log('data.user:', JSON.stringify(data.user));
+
+                if (!data.user) {
+                    throw new Error('Login failed: Invalid response from server. Please contact admin.');
+                }
 
                 const userObj = {
-                    email: decoded.email,
-                    name: decoded.name || backendUser.name || decoded.email.split('@')[0],
-                    role: backendUser.role || 'VIEWER',
-                    allowedTabs: backendUser.allowedTabs || [],
+                    email: data.user.email,
+                    name: data.user.name,
+                    role: data.user.role,
+                    allowedTabs: data.user.allowedTabs,
                     loggedInAt: Date.now()
                 };
+
+                console.log('Final userObj being stored:', JSON.stringify(userObj));
                 onLoginSuccess(userObj);
             } else {
                 setError(data?.message || 'Verification failed. Access denied.');
