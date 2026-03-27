@@ -94,6 +94,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                         size="large"
                         text="signin_with"
                         width="100%"
+                        ux_mode="popup"
                     />
                 </div>
 

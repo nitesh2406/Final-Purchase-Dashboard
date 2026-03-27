@@ -97,11 +97,24 @@ const App: React.FC = () => {
     const [configLastLoaded, setConfigLastLoaded] = useState<Date | null>(null);
     const [amazonConfig, setAmazonConfig] = useState<any>(null);
     const [amazonConfigLastLoaded, setAmazonConfigLastLoaded] = useState<Date | null>(null);
-    const [user, setUser] = useState<any>(null);
-    const [authChecked, setAuthChecked] = useState(false);
+    const [user, setUser] = useState<any>(() => {
+        try {
+            const stored = localStorage.getItem('auth_user');
+            if (!stored) return null;
+            const parsed = JSON.parse(stored);
+            const age = Date.now() - parsed.loggedInAt;
+            if (age > 8 * 60 * 60 * 1000) {
+                localStorage.removeItem('auth_user');
+                return null;
+            }
+            return parsed;
+        } catch {
+            return null;
+        }
+    });
 
     useEffect(() => {
-        const checkAuth = () => {
+        const interval = setInterval(() => {
             const storedUser = localStorage.getItem('auth_user');
             if (storedUser) {
                 try {
@@ -109,19 +122,15 @@ const App: React.FC = () => {
                     const age = Date.now() - parsed.loggedInAt;
                     if (age > 8 * 60 * 60 * 1000) {
                         localStorage.removeItem('auth_user');
+                        setUser(null);
                         alert("Session expired. Please sign in again.");
-                    } else {
-                        setUser(parsed);
                     }
                 } catch (e) {
                     localStorage.removeItem('auth_user');
+                    setUser(null);
                 }
             }
-            setAuthChecked(true);
-        };
-        checkAuth();
-
-        const interval = setInterval(checkAuth, 60000); // Check every minute
+        }, 60000); // Check every minute
         return () => clearInterval(interval);
     }, []);
 
@@ -260,12 +269,6 @@ const App: React.FC = () => {
     const updateVendor = (updatedVendor: Vendor) => {
         setVendors(prev => prev.map(v => v.id === updatedVendor.id ? updatedVendor : v));
     };
-
-    if (!authChecked) {
-        return <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-slate-900 border-none outline-none">
-            <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin"></div>
-        </div>;
-    }
 
     if (!user) {
         return <LoginPage onLoginSuccess={handleLoginSuccess} />;
