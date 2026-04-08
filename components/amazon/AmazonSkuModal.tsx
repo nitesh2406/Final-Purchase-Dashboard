@@ -1,5 +1,6 @@
-import React, { FC, useState, useMemo } from 'react';
-import { AmazonChannelSku } from '../../types/amazon';
+import React, { FC, useState, useMemo, useEffect } from 'react';
+import { AmazonChannelSku, AmazonSupplyChain } from '../../types/amazon';
+import { APPS_SCRIPT_URL } from '../../App';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 interface AmazonSkuModalProps {
@@ -22,6 +23,41 @@ const docColor = (days: number) => {
 export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
   const [chartPeriod, setChartPeriod] = useState<'30' | '90'>('30');
   const [showDebug, setShowDebug] = useState(false);
+  const [supplyChain, setSupplyChain] = useState<AmazonSupplyChain | null>(null);
+  const [supplyChainLoading, setSupplyChainLoading] = useState(true);
+  const [supplyChainError, setSupplyChainError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sku?.masterSKU) return;
+
+    setSupplyChainLoading(true);
+    setSupplyChainError(null);
+    setSupplyChain(null);
+
+    fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'get_amazon_sku_supply_chain',
+        masterSKU: sku.masterSKU,
+      }),
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          setSupplyChain({
+            inProduction:    data.inProduction    || 0,
+            inTransit:       data.inTransit       || 0,
+            inProductionPOs: data.inProductionPOs || [],
+            inTransitPOs:    data.inTransitPOs    || [],
+          });
+        } else {
+          setSupplyChainError(data.message || 'Failed to load supply chain data');
+        }
+      })
+      .catch(err => setSupplyChainError(err.message))
+      .finally(() => setSupplyChainLoading(false));
+  }, [sku?.masterSKU]);
 
   const chartData = useMemo(() => {
     const raw = chartPeriod === '30' ? sku.salesHistory30 : sku.salesHistory90;
@@ -215,7 +251,187 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
                 <p className="text-xs text-gray-400 dark:text-gray-500">Target: 57 days</p>
               </div>
             </div>
+
+            {/* In-transit warning */}
+            {sku.inTransitWarning?.hasWarning && (
+              <div className="mt-3 flex items-start gap-3 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                <span className="text-blue-400 text-lg flex-shrink-0">🚢</span>
+                <div>
+                  <p className="text-blue-400 font-semibold text-sm">Inbound Shipment Arriving Soon</p>
+                  <p className="text-gray-500 dark:text-gray-400 text-xs mt-0.5">
+                    <strong className="text-gray-700 dark:text-gray-300">{sku.inTransitWarning.qty} units</strong>
+                    {' '}arriving in{' '}
+                    <strong className="text-blue-400">{sku.inTransitWarning.etaDays} days</strong>
+                    {sku.inTransitWarning.poId ? ` (${sku.inTransitWarning.poId})` : ''}.
+                    {' '}Consider sending top sellers directly to Amazon FBA from this inbound.
+                  </p>
+                </div>
+              </div>
+            )}
           </section>
+
+          {/* ── SUPPLY CHAIN SECTION ─────────────────────────────────────── */}
+          <section>
+            <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white flex items-center gap-2">
+              🚚 Supply Chain
+              <span className="text-xs font-normal text-gray-400 dark:text-gray-500 ml-1">
+                Master SKU: {sku.masterSKU}
+              </span>
+            </h3>
+
+            {/* Loading state */}
+            {supplyChainLoading && (
+              <div className="flex items-center justify-center py-8">
+                <div className="flex items-center gap-3 text-gray-400 dark:text-gray-500">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-orange-500" />
+                  <span className="text-sm">Loading supply chain data...</span>
+                </div>
+              </div>
+            )}
+
+            {/* Error state */}
+            {!supplyChainLoading && supplyChainError && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+                <span>⚠</span>
+                <span>{supplyChainError}</span>
+              </div>
+            )}
+
+            {/* Data loaded */}
+            {!supplyChainLoading && !supplyChainError && supplyChain && (
+              <div className="space-y-5">
+
+                {/* ── In Production ──────────────────────────────────────── */}
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                    🏭 In Production
+                    {supplyChain.inProduction > 0 && (
+                      <span className="text-xs font-normal text-amber-400">
+                        {supplyChain.inProduction.toLocaleString()} units
+                      </span>
+                    )}
+                  </h4>
+
+                  {supplyChain.inProductionPOs.length > 0 ? (
+                    <div className="overflow-hidden border border-gray-200 dark:border-gray-700 rounded-lg">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 dark:bg-gray-800">
+                          <tr>
+                            {['PO #', 'Qty', 'Status'].map(h => (
+                              <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                {h}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                          {supplyChain.inProductionPOs.map((po, idx) => (
+                            <tr key={idx} className="even:bg-gray-50/50 dark:even:bg-gray-800/20">
+                              <td className="px-4 py-2.5 font-mono text-xs text-gray-700 dark:text-gray-300 font-medium">
+                                {po.poId}
+                              </td>
+                              <td className="px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300">
+                                {po.qty.toLocaleString()}
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 font-medium">
+                                  {po.status || 'In Production'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center p-4 border border-dashed border-gray-200 dark:border-gray-700 rounded-lg">
+                      <p className="text-xs text-gray-400 dark:text-gray-500 italic">No items currently in production</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── In Transit ─────────────────────────────────────────── */}
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                    🚢 In Transit
+                    {supplyChain.inTransit > 0 && (
+                      <span className="text-xs font-normal text-blue-400">
+                        {supplyChain.inTransit.toLocaleString()} units
+                      </span>
+                    )}
+                  </h4>
+
+                  {supplyChain.inTransitPOs.length > 0 ? (
+                    <div className="overflow-hidden border border-gray-200 dark:border-gray-700 rounded-lg">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 dark:bg-gray-800">
+                          <tr>
+                            {['PO #', 'Qty', 'Mode', 'Status', 'ETA', 'Days Left'].map(h => (
+                              <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                {h}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                          {supplyChain.inTransitPOs.map((po, idx) => {
+                            const eta = po.etaDate
+                              ? new Date(po.etaDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                              : 'N/A';
+                            return (
+                              <tr key={idx} className="even:bg-gray-50/50 dark:even:bg-gray-800/20">
+                                <td className="px-4 py-2.5 font-mono text-xs text-gray-700 dark:text-gray-300 font-medium">
+                                  {po.poId}
+                                </td>
+                                <td className="px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300">
+                                  {po.qty.toLocaleString()}
+                                </td>
+                                <td className="px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400">
+                                  {po.transportMode || 'Unknown'}
+                                </td>
+                                <td className="px-4 py-2.5">
+                                  <span className={`px-2 py-0.5 rounded text-xs font-medium border ${
+                                    po.isDelayed
+                                      ? 'bg-red-500/20 text-red-400 border-red-500/30'
+                                      : 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                                  }`}>
+                                    {po.isDelayed ? 'Delayed' : (po.status || 'In Transit')}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400">
+                                  {eta}
+                                </td>
+                                <td className={`px-4 py-2.5 text-xs font-semibold ${
+                                  po.isDelayed ? 'text-red-400' :
+                                  (po.daysRemaining !== null && po.daysRemaining !== undefined && po.daysRemaining <= 15)
+                                    ? 'text-amber-400'
+                                    : 'text-gray-700 dark:text-gray-300'
+                                }`}>
+                                  {po.daysRemaining !== null && po.daysRemaining !== undefined
+                                    ? `${po.daysRemaining}d`
+                                    : '—'}
+                                  {po.isDelayed && (
+                                    <span className="ml-1 text-[10px] font-normal text-red-400">(delayed)</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center p-4 border border-dashed border-gray-200 dark:border-gray-700 rounded-lg">
+                      <p className="text-xs text-gray-400 dark:text-gray-500 italic">No items currently in transit</p>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+          </section>
+
+          <hr className="border-gray-100 dark:border-gray-700" />
 
           {/* SECTION 3 — Replenishment Calculation */}
           <section>
@@ -261,9 +477,10 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
             </h3>
             <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 space-y-3 text-sm">
               {[
-                { label: 'EE Warehouse Stock',    value: sku.warehouseCheck.eeWarehouseStock,  color: 'text-green-400', sign: '' },
-                { label: 'Shopify Reserve (30d)', value: sku.warehouseCheck.shopifyReserve,    color: 'text-red-400',   sign: '-' },
-                { label: 'YEIO Reserve',          value: sku.warehouseCheck.yeioReserve,       color: sku.warehouseCheck.yeioReserve > 0 ? 'text-red-400' : 'text-gray-400',   sign: sku.warehouseCheck.yeioReserve > 0 ? '-' : '' },
+                { label: 'EE Warehouse Stock',               value: sku.warehouseCheck.eeWarehouseStock,  color: 'text-green-400', sign: '' },
+                { label: 'Shopify Reserve (30d)',             value: sku.warehouseCheck.shopifyReserve,    color: 'text-red-400',   sign: '-' },
+                { label: 'Quick Commerce Reserve',            value: sku.warehouseCheck.qcommReserve ?? 0, color: (sku.warehouseCheck.qcommReserve ?? 0) > 0 ? 'text-red-400' : 'text-gray-400',   sign: (sku.warehouseCheck.qcommReserve ?? 0) > 0 ? '-' : '' },
+                { label: 'YEIO Reserve',                      value: sku.warehouseCheck.yeioReserve,       color: sku.warehouseCheck.yeioReserve > 0 ? 'text-red-400' : 'text-gray-400',   sign: sku.warehouseCheck.yeioReserve > 0 ? '-' : '' },
               ].map(({ label, value, color, sign }) => (
                 <div key={label} className="flex justify-between">
                   <span className="text-gray-500 dark:text-gray-400">{label}</span>
@@ -277,9 +494,16 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
                 </span>
               </div>
             </div>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
-              Shopify MMA: {sku.warehouseCheck.shopifyMMA} units/mo — 30-day reserve protected
-            </p>
+            <div className="mt-2 space-y-0.5">
+              <p className="text-xs text-gray-400 dark:text-gray-500">
+                Shopify MMA: {sku.warehouseCheck.shopifyMMA} units/mo — 30-day reserve protected
+              </p>
+              {(sku.warehouseCheck.qcommMMA ?? 0) > 0 && (
+                <p className="text-xs text-gray-400 dark:text-gray-500">
+                  Quick Commerce MMA: {sku.warehouseCheck.qcommMMA} units/mo (BB, Zepto, Blinkit, Instamart, Flipkart Min, Hamleys) — {sku.warehouseCheck.qcommReserve} units reserved
+                </p>
+              )}
+            </div>
           </section>
 
           {/* SECTION 5 — Allocation & Shipping Plan */}

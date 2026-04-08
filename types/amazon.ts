@@ -29,10 +29,19 @@ export interface AmazonWarehouseCheck {
   shopifyMMA: number;
   shopifyReserve: number;
   yeioReserve: number;
+  qcommMMA: number;         // Combined QC channel MMA
+  qcommReserve: number;     // QC reserve deducted from available
   availableQty: number;
   totalDemandAcrossChannelSkus: number;
   canFulfill: boolean;
   splitRequired: boolean;
+}
+
+export interface AmazonInTransitWarning {
+  hasWarning: boolean;
+  etaDays: number | null;
+  qty: number;
+  poId: string | null;
 }
 
 export interface AmazonAllocation {
@@ -60,6 +69,24 @@ export interface AmazonChannelSku {
   needsReplenishment: boolean;
   hasListingIssue: boolean;
   listingIssueMsg: string | null;
+  inTransitWarning: AmazonInTransitWarning;
   salesHistory90: { date: string; units: number }[];
   salesHistory30: { date: string; units: number }[];
+}
+
+export interface AmazonPOItem {
+  poId: string;
+  qty: number;
+  status: string;
+  transportMode: string;
+  etaDate?: string | null;
+  daysRemaining?: number | null;
+  isDelayed?: boolean;
+}
+
+export interface AmazonSupplyChain {
+  inProduction: number;
+  inTransit: number;
+  inProductionPOs: AmazonPOItem[];
+  inTransitPOs: AmazonPOItem[];
 }

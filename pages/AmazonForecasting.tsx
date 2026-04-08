@@ -3,6 +3,11 @@ import { AmazonChannelSku } from '../types/amazon';
 import { AmazonSkuModal } from '../components/amazon/AmazonSkuModal';
 import { APPS_SCRIPT_URL } from '../App';
 
+// ─── Module-level cache (persists across tab switches) ───────────────────────
+// Declared outside component so it survives unmount/remount
+let _amazonCache: AmazonChannelSku[] | null = null;
+let _amazonCacheTime: Date | null = null;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const velocityColor = (band: string) => {
@@ -21,7 +26,7 @@ const formatDoc = (days: number) => days === 999 ? '∞' : `${days}d`;
 
 // ─── Filter Chips ─────────────────────────────────────────────────────────────
 
-const FILTER_CHIPS = ['All', 'Needs Ship', 'Slow', 'Medium', 'Fast', '⚠ Listing'] as const;
+const FILTER_CHIPS = ['All', 'Needs Ship', 'Slow', 'Medium', 'Fast', '⚠ Listing', '🚢 Inbound'] as const;
 type FilterChip = typeof FILTER_CHIPS[number];
 
 // ─── Sortable Header ──────────────────────────────────────────────────────────
@@ -83,9 +88,18 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   // ── Confirm plan state ──────────────────────────────────────────────────────
   const [isConfirming, setIsConfirming] = useState(false);
   const [confirmResult, setConfirmResult] = useState<{ success: boolean; message: string; poNumber?: string } | null>(null);
+  const [showVolumeWarning, setShowVolumeWarning] = useState(false);
 
   // ── API fetch ────────────────────────────────────────────────────────────────
-  const fetchForecast = useCallback(async () => {
+  const fetchForecast = useCallback(async (forceRefresh = false) => {
+    // Use cache if available and not forcing refresh
+    if (!forceRefresh && _amazonCache) {
+      setSkus(_amazonCache);
+      setLastRefreshed(_amazonCacheTime);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     try {
@@ -98,8 +112,13 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
       const data = await response.json();
       if (data.status === 'error') throw new Error(data.message);
       if (!Array.isArray(data.data)) throw new Error('Invalid response format');
+
+      // Update module-level cache
+      _amazonCache     = data.data;
+      _amazonCacheTime = new Date();
+
       setSkus(data.data);
-      setLastRefreshed(new Date());
+      setLastRefreshed(_amazonCacheTime);
       // Reset selections and overrides on new fetch
       setSelectedChannelSkus(new Set());
       setShipQtyOverrides({});
@@ -112,12 +131,15 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   }, []);
 
   useEffect(() => {
-    fetchForecast();
+    fetchForecast(false);  // uses cache if available
   }, [fetchForecast]);
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
   const getShipQty = (item: AmazonChannelSku) => shipQtyOverrides[item.channelSKU] ?? item.allocation.shippingPlanQty;
-  const updateShipQty = (channelSku: string, qty: number) => setShipQtyOverrides(prev => ({ ...prev, [channelSku]: qty }));
+  const updateShipQty = (channelSku: string, qty: number, availableQty?: number) => {
+    const capped = availableQty !== undefined ? Math.min(qty, availableQty) : qty;
+    setShipQtyOverrides(prev => ({ ...prev, [channelSku]: Math.max(0, capped) }));
+  };
   
   const handleSort = (key: string) => {
     setSortConfig(prev => ({
@@ -149,7 +171,8 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
         activeFilter === 'Slow'       ? item.replenishment.velocityBand === 'slow' :
         activeFilter === 'Medium'     ? item.replenishment.velocityBand === 'medium' :
         activeFilter === 'Fast'       ? item.replenishment.velocityBand === 'fast' :
-        activeFilter === '⚠ Listing'  ? item.hasListingIssue : true;
+        activeFilter === '⚠ Listing'  ? item.hasListingIssue :
+        activeFilter === '🚢 Inbound' ? item.inTransitWarning?.hasWarning === true : true;
 
       return matchSearch && matchFilter;
     });
@@ -194,7 +217,23 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   const totalUnits    = flatItems.reduce((s, i) => s + getShipQty(i), 0);
 
   // ── Confirm Plan ───────────────────────────────────────────────────────────
+  const confirmTotalUnits = useMemo(() => {
+    return flatItems
+      .filter(item =>
+        (selectedChannelSkus.size === 0 || selectedChannelSkus.has(item.channelSKU)) &&
+        getShipQty(item) > 0
+      )
+      .reduce((s, item) => s + getShipQty(item), 0);
+  }, [flatItems, selectedChannelSkus, shipQtyOverrides]);
+
   const handleConfirmPlan = async () => {
+    // Volume warning — warn if > 1000 units but allow bypass
+    if (confirmTotalUnits > 1000 && !showVolumeWarning) {
+      setShowVolumeWarning(true);
+      return; // Stop here — user must confirm warning first
+    }
+    setShowVolumeWarning(false);
+
     const itemsToConfirm = flatItems
       .filter(item =>
         (selectedChannelSkus.size === 0 || selectedChannelSkus.has(item.channelSKU)) &&
@@ -358,7 +397,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
           </button>
 
           <button
-            onClick={() => fetchForecast()}
+            onClick={() => fetchForecast(true)}
             disabled={isLoading}
             className="text-xs px-3 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-400 flex items-center gap-1 transition-colors disabled:opacity-50"
           >
@@ -377,7 +416,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
             disabled={isConfirming || isLoading}
             className="text-xs px-3 py-1 rounded bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold flex items-center gap-1 transition-colors"
           >
-            {isConfirming ? '⏳ Confirming...' : 'Confirm Plan ▶'}
+            {isConfirming ? '⏳ Confirming...' : `Confirm Plan ▶${confirmTotalUnits > 0 ? ` (${confirmTotalUnits.toLocaleString()} units)` : ''}`}
           </button>
         </div>
       </div>
@@ -395,6 +434,27 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
               : `✗ Confirm failed: ${confirmResult.message}`}
           </span>
           <button onClick={() => setConfirmResult(null)} className="ml-4 opacity-60 hover:opacity-100">✕</button>
+        </div>
+      )}
+
+      {/* ── VOLUME WARNING ──────────────────────────────────────────────────── */}
+      {showVolumeWarning && (
+        <div className="flex items-center justify-between px-4 py-2 text-xs border-b flex-shrink-0
+                        bg-amber-500/10 border-amber-500/20 text-amber-400">
+          <div className="flex items-center gap-2">
+            <span>⚠</span>
+            <span>
+              <strong>Large shipment: {confirmTotalUnits.toLocaleString()} units.</strong>
+              {' '}Recommended max is 1,000 units per shipment for same-day packing.
+              Click Confirm again to proceed anyway.
+            </span>
+          </div>
+          <button
+            onClick={() => setShowVolumeWarning(false)}
+            className="ml-4 opacity-60 hover:opacity-100"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -444,7 +504,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
               {error}
             </p>
             <button
-              onClick={() => fetchForecast()}
+              onClick={() => fetchForecast(true)}
               className="text-sm px-4 py-2 rounded border border-red-400 text-red-400 hover:bg-red-500/10 transition-colors"
             >
               ↻ Retry
@@ -475,8 +535,8 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                 <th className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold uppercase tracking-wider text-left text-gray-500 dark:text-gray-400 w-48">
                   PRODUCT NAME
                 </th>
-                <th className="px-2 py-2 w-8 text-center border-b border-gray-200 dark:border-gray-700 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  FLAG
+                <th className="px-2 py-2 w-14 text-center border-b border-gray-200 dark:border-gray-700 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  FLAGS
                 </th>
                 <SortableHeader label="MMA"         sortKey="mma"         sortConfig={sortConfig} onSort={handleSort} right className="w-12" />
                 <SortableHeader label="DOC"         sortKey="docDays"     sortConfig={sortConfig} onSort={handleSort} right className="w-14" />
@@ -508,7 +568,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                       </p>
                       {skus.length === 0 && (
                         <button
-                          onClick={() => fetchForecast()}
+                          onClick={() => fetchForecast(true)}
                           className="mt-2 text-xs px-3 py-1.5 rounded border border-orange-500/40 text-orange-400 hover:bg-orange-500/10 transition-colors"
                         >
                           Load Forecast
@@ -523,11 +583,15 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                   <React.Fragment key={item.channelSKU}>
                     <tr
                       onClick={() => setSelectedSku(item)}
-                      className={`border-b border-gray-100 dark:border-gray-700/40 cursor-pointer transition-colors
-                        ${index % 2 === 0
-                          ? 'bg-white dark:bg-gray-900'
-                          : 'bg-gray-50/30 dark:bg-gray-800/20'}
-                        hover:bg-orange-500/5 dark:hover:bg-orange-500/5`}
+                      className={`border-b cursor-pointer transition-colors ${
+                        getShipQty(item) > 0
+                          ? 'border-orange-200 dark:border-orange-500/20 bg-orange-50/60 dark:bg-orange-500/5 border-l-2 border-l-orange-400'
+                          : `border-gray-100 dark:border-gray-700/40 ${
+                              index % 2 === 0
+                                ? 'bg-white dark:bg-gray-900'
+                                : 'bg-gray-50/30 dark:bg-gray-800/20'
+                            }`
+                      } hover:bg-orange-500/5 dark:hover:bg-orange-500/5`}
                     >
                       {/* Checkbox */}
                       <td className="px-2 py-1.5 text-center" onClick={e => e.stopPropagation()}>
@@ -575,12 +639,22 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
 
                       {/* Flags */}
                       <td className="px-2 py-1.5 text-center">
-                        {item.hasListingIssue && (
-                          <span
-                            title={item.listingIssueMsg || 'Possible listing issue — 0 sales in last 7 days'}
-                            className="text-red-400 cursor-help text-xs"
-                          >⚠</span>
-                        )}
+                        <div className="flex items-center justify-center gap-1">
+                          {/* Listing issue flag */}
+                          {item.hasListingIssue && (
+                            <span
+                              title={item.listingIssueMsg || 'Possible listing issue — 0 sales in last 7 days'}
+                              className="text-red-400 cursor-help text-xs"
+                            >⚠</span>
+                          )}
+                          {/* In-transit warning flag — inbound from China arriving soon */}
+                          {item.inTransitWarning?.hasWarning && (
+                            <span
+                              title={`Inbound shipment arriving in ${item.inTransitWarning.etaDays} days — ${item.inTransitWarning.qty} units (${item.inTransitWarning.poId}). Consider sending top sellers directly to Amazon FBA.`}
+                              className="text-blue-400 cursor-help text-xs"
+                            >🚢</span>
+                          )}
+                        </div>
                       </td>
 
                       {/* MMA */}
@@ -647,8 +721,13 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                         <input
                           type="number"
                           min={0}
+                          max={item.warehouseCheck.availableQty}
                           value={getShipQty(item)}
-                          onChange={e => updateShipQty(item.channelSKU, parseInt(e.target.value) || 0)}
+                          onChange={e => updateShipQty(
+                            item.channelSKU,
+                            parseInt(e.target.value) || 0,
+                            item.warehouseCheck.availableQty
+                          )}
                           onFocus={e => e.target.select()}
                           onKeyDown={e => {
                             if (e.key === 'Enter') e.preventDefault();
