@@ -10,6 +10,7 @@ export interface AmazonMMA {
 
 export interface AmazonInventory {
   fbaQty: number;
+  fbaQtyRaw: number;    // raw value including negatives, for display
   reserved: number;
   inbound: number;
   pending: number;

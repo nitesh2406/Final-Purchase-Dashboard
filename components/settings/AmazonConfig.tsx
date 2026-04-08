@@ -31,6 +31,8 @@ interface AmazonConfigData {
     SHOPIFY_RESERVE_DAYS: number;
     AMAZON_STOCKOUT_SIGNAL_DAYS: number;
     AMAZON_OUTPUT_STORE_CODE: string;
+    QCOMM_RESERVE_DAYS: number;
+    AMAZON_INTRANSIT_WARNING_DAYS: number;
 }
 
 type SectionKey = 'coverage' | 'mma' | 'velocity' | 'rounding' | 'output';
@@ -51,6 +53,8 @@ const DEFAULTS: AmazonConfigData = {
     SHOPIFY_RESERVE_DAYS: 30,
     AMAZON_STOCKOUT_SIGNAL_DAYS: 7,
     AMAZON_OUTPUT_STORE_CODE: 'ISK3',
+    QCOMM_RESERVE_DAYS: 30,
+    AMAZON_INTRANSIT_WARNING_DAYS: 15,
 };
 
 const SECTION_FIELDS: Record<SectionKey, (keyof AmazonConfigData)[]> = {
@@ -59,7 +63,8 @@ const SECTION_FIELDS: Record<SectionKey, (keyof AmazonConfigData)[]> = {
                'ADS_WEIGHT_15D', 'ADS_WEIGHT_30D', 'ADS_WEIGHT_60D', 'ADS_WEIGHT_90D'],
     velocity: ['AMAZON_SLOW_MMA_MAX', 'AMAZON_FAST_MMA_MIN'],
     rounding: ['AMAZON_ROUND_THRESHOLD'],
-    output:   ['SHOPIFY_RESERVE_DAYS', 'AMAZON_STOCKOUT_SIGNAL_DAYS', 'AMAZON_OUTPUT_STORE_CODE'],
+    //output:   ['SHOPIFY_RESERVE_DAYS', 'AMAZON_STOCKOUT_SIGNAL_DAYS', 'AMAZON_OUTPUT_STORE_CODE'],
+    output:   ['SHOPIFY_RESERVE_DAYS', 'QCOMM_RESERVE_DAYS', 'AMAZON_INTRANSIT_WARNING_DAYS', 'AMAZON_STOCKOUT_SIGNAL_DAYS', 'AMAZON_OUTPUT_STORE_CODE'],
 };
 
 const SECTION_META: Record<SectionKey, { title: string; description: string; icon: React.ReactNode }> = {
@@ -106,6 +111,8 @@ const FIELD_META: Record<keyof AmazonConfigData, { label: string; description: s
     SHOPIFY_RESERVE_DAYS:        { label: 'Shopify Reserve',        description: 'Days of Shopify MMA stock to protect from Amazon allocation',        unit: 'days' },
     AMAZON_STOCKOUT_SIGNAL_DAYS: { label: 'Listing Issue Signal',   description: 'Flag listing issue if 0 sales for N days with MMA > 0',              unit: 'days' },
     AMAZON_OUTPUT_STORE_CODE:    { label: 'Store Code',             description: 'Store code written to Amazon_Shipment_Plan sheet',                   unit: '', isString: true },
+    QCOMM_RESERVE_DAYS:          { label: 'Quick Commerce Reserve', description: 'Days of QC MMA to reserve (BB, Zepto, Blinkit, Instamart, Flipkart Min, Hamleys)', unit: 'days' },
+    AMAZON_INTRANSIT_WARNING_DAYS: {label: 'In-Transit Warning Days', description: 'Flag inbound shipments arriving within this many days', unit: 'days' },
 };
 
 interface DebugEntry { time: string; type: 'req' | 'res' | 'err'; data: any; }

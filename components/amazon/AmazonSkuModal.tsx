@@ -223,10 +223,16 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
             </h3>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                { label: 'FBA Fulfillable', value: sku.amazonInventory.fbaQty, color: 'text-green-400' },
+                {
+                  label: 'FBA Fulfillable',
+                  value: sku.amazonInventory.fbaQtyRaw ?? sku.amazonInventory.fbaQty,
+                  color: (sku.amazonInventory.fbaQtyRaw ?? sku.amazonInventory.fbaQty) < 0
+                    ? 'text-red-400'
+                    : 'text-green-400'
+                },
                 { label: 'Reserved',        value: sku.amazonInventory.reserved, color: '' },
                 { label: 'Inbound',         value: sku.amazonInventory.inbound,  color: 'text-blue-400' },
-                { label: 'Pending (TBD)',   value: sku.amazonInventory.pending,  color: 'text-gray-400' },
+                { label: 'Pending',         value: sku.amazonInventory.pending,  color: 'text-blue-400' },
               ].map(({ label, value, color }) => (
                 <div key={label} className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3">
                   <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>
@@ -240,7 +246,12 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
               <div>
                 <p className="text-xs text-gray-500 dark:text-gray-400">Total Coverage</p>
                 <p className="text-lg font-bold text-gray-800 dark:text-white">
-                  {sku.amazonInventory.totalCoverage.toLocaleString()} units
+                  {(
+                    (sku.amazonInventory.fbaQtyRaw ?? sku.amazonInventory.fbaQty) +
+                    sku.amazonInventory.reserved +
+                    sku.amazonInventory.inbound +
+                    sku.amazonInventory.pending
+                  ).toLocaleString()} units
                 </p>
               </div>
               <div className="text-right">

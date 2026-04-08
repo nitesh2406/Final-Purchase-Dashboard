@@ -22,7 +22,8 @@ const docColor = (days: number) => {
   return 'text-green-400';
 };
 
-const formatDoc = (days: number) => days === 999 ? '∞' : `${days}d`;
+const formatDoc = (days: number) =>
+  days === 999 ? '∞' : String(Math.round(days));
 
 // ─── Filter Chips ─────────────────────────────────────────────────────────────
 
@@ -530,8 +531,8 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                 <th className="px-1 py-2 w-5 border-b border-gray-200 dark:border-gray-700" />
 
                 {/* Sortable columns */}
-                <SortableHeader label="CHANNEL SKU" sortKey="channelSKU" sortConfig={sortConfig} onSort={handleSort} className="w-32" />
-                <SortableHeader label="MASTER SKU"  sortKey="masterSKU"  sortConfig={sortConfig} onSort={handleSort} className="w-24" />
+                <SortableHeader label="CHANNEL SKU" sortKey="channelSKU" sortConfig={sortConfig} onSort={handleSort} className="w-28" />
+                <SortableHeader label="MASTER SKU"  sortKey="masterSKU"  sortConfig={sortConfig} onSort={handleSort} className="w-20" />
                 <th className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs font-semibold uppercase tracking-wider text-left text-gray-500 dark:text-gray-400 w-48">
                   PRODUCT NAME
                 </th>
@@ -540,7 +541,8 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                 </th>
                 <SortableHeader label="MMA"         sortKey="mma"         sortConfig={sortConfig} onSort={handleSort} right className="w-12" />
                 <SortableHeader label="DOC"         sortKey="docDays"     sortConfig={sortConfig} onSort={handleSort} right className="w-14" />
-                <SortableHeader label="FBA"         sortKey="fbaQty"      sortConfig={sortConfig} onSort={handleSort} right className="w-14" />
+                <SortableHeader label="FBA"         sortKey="fbaQty"      sortConfig={sortConfig} onSort={handleSort} right className="w-14"
+                                title="FBA Fulfillable + Reserved" />
                 <SortableHeader label="INBOUND"     sortKey="inbound"     sortConfig={sortConfig} onSort={handleSort} right className="w-14" />
                 <th className="px-2 py-2 w-14 text-right border-b border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500"
                     title="Placeholder — coming soon">
@@ -553,7 +555,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                                 title="EasyEcom warehouse stock after Shopify + YEIO reserve" />
                 <SortableHeader label="VELOCITY"    sortKey="velocityBand" sortConfig={sortConfig} onSort={handleSort} center className="w-20" />
                 <SortableHeader label="RECOMMENDED" sortKey="recommended" sortConfig={sortConfig} onSort={handleSort} right className="w-24" />
-                <SortableHeader label="SHIP QTY"    sortKey="shipQty"     sortConfig={sortConfig} onSort={handleSort} right className="w-20" />
+                <SortableHeader label="SHIP QTY"    sortKey="shipQty"     sortConfig={sortConfig} onSort={handleSort} right className="w-24" />
               </tr>
             </thead>
 
@@ -585,13 +587,13 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                       onClick={() => setSelectedSku(item)}
                       className={`border-b cursor-pointer transition-colors ${
                         getShipQty(item) > 0
-                          ? 'border-orange-200 dark:border-orange-500/20 bg-orange-50/60 dark:bg-orange-500/5 border-l-2 border-l-orange-400'
-                          : `border-gray-100 dark:border-gray-700/40 ${
+                          ? 'border-orange-200 dark:border-orange-500/20 bg-orange-50 dark:bg-orange-500/8 border-l-2 border-l-orange-400 hover:bg-orange-100/80 dark:hover:bg-orange-500/10'
+                          : `border-gray-100 dark:border-gray-700/40 hover:bg-gray-50 dark:hover:bg-gray-800/40 ${
                               index % 2 === 0
                                 ? 'bg-white dark:bg-gray-900'
                                 : 'bg-gray-50/30 dark:bg-gray-800/20'
                             }`
-                      } hover:bg-orange-500/5 dark:hover:bg-orange-500/5`}
+                      }`}
                     >
                       {/* Checkbox */}
                       <td className="px-2 py-1.5 text-center" onClick={e => e.stopPropagation()}>
@@ -612,7 +614,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                       </td>
 
                       {/* Channel SKU */}
-                      <td className="px-3 py-1.5 w-32 max-w-0 overflow-hidden text-left">
+                      <td className="px-3 py-1.5 w-28 max-w-0 overflow-hidden text-left">
                         <div className="flex items-center gap-1 min-w-0">
                           <span className="font-mono text-xs text-gray-700 dark:text-gray-300 font-medium truncate">
                             {item.channelSKU}
@@ -624,7 +626,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                       </td>
 
                       {/* Master SKU */}
-                      <td className="px-3 py-1.5 w-24 max-w-0 overflow-hidden text-left">
+                      <td className="px-3 py-1.5 w-20 max-w-0 overflow-hidden text-left">
                         <span className="font-mono text-xs bg-gray-100 dark:bg-gray-700/60 px-1.5 py-0.5 rounded text-gray-600 dark:text-gray-400 truncate block">
                           {item.masterSKU}
                         </span>
@@ -669,9 +671,9 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                         </span>
                       </td>
 
-                      {/* FBA Stock */}
+                      {/* FBA Stock = Fulfillable + Reserved */}
                       <td className="px-3 py-1.5 text-right text-xs text-gray-700 dark:text-gray-300">
-                        {item.amazonInventory.fbaQty.toLocaleString()}
+                        {(item.amazonInventory.fbaQty + item.amazonInventory.reserved).toLocaleString()}
                       </td>
 
                       {/* Inbound */}
@@ -733,12 +735,12 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                             if (e.key === 'Enter') e.preventDefault();
                           }}
                           tabIndex={index + 1}
-                          className={`w-16 text-center text-xs font-semibold rounded border px-1 py-0.5
+                          className={`w-20 text-center text-xs font-semibold rounded border px-1 py-0.5
                             focus:outline-none focus:ring-1 focus:ring-orange-500 focus:border-orange-500
                             ${shipQtyOverrides[item.channelSKU] !== undefined
-                              ? 'bg-orange-500/10 border-orange-500/40 text-orange-400'
+                              ? 'bg-orange-500/20 border-orange-500/50 text-orange-500 dark:text-orange-300'
                               : getShipQty(item) > 0
-                              ? 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200'
+                              ? 'bg-orange-100 dark:bg-orange-500/20 border-orange-300 dark:border-orange-500/40 text-orange-700 dark:text-orange-300 font-bold'
                               : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400'
                             }`}
                         />
