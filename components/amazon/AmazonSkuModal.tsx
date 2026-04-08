@@ -225,10 +225,8 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
               {[
                 {
                   label: 'FBA Fulfillable',
-                  value: sku.amazonInventory.fbaQtyRaw ?? sku.amazonInventory.fbaQty,
-                  color: (sku.amazonInventory.fbaQtyRaw ?? sku.amazonInventory.fbaQty) < 0
-                    ? 'text-red-400'
-                    : 'text-green-400'
+                  value: sku.amazonInventory.fbaQty,
+                  color: sku.amazonInventory.fbaQty < 0 ? 'text-red-400' : 'text-green-400'
                 },
                 { label: 'Reserved',        value: sku.amazonInventory.reserved, color: '' },
                 { label: 'Inbound',         value: sku.amazonInventory.inbound,  color: 'text-blue-400' },
@@ -247,7 +245,7 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
                 <p className="text-xs text-gray-500 dark:text-gray-400">Total Coverage</p>
                 <p className="text-lg font-bold text-gray-800 dark:text-white">
                   {(
-                    (sku.amazonInventory.fbaQtyRaw ?? sku.amazonInventory.fbaQty) +
+                    sku.amazonInventory.fbaQty +
                     sku.amazonInventory.reserved +
                     sku.amazonInventory.inbound +
                     sku.amazonInventory.pending

@@ -544,12 +544,8 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                 <SortableHeader label="FBA"         sortKey="fbaQty"      sortConfig={sortConfig} onSort={handleSort} right className="w-14"
                                 title="FBA Fulfillable + Reserved" />
                 <SortableHeader label="INBOUND"     sortKey="inbound"     sortConfig={sortConfig} onSort={handleSort} right className="w-14" />
-                <th className="px-2 py-2 w-14 text-right border-b border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500"
-                    title="Placeholder — coming soon">
-                  <div className="flex flex-col items-end leading-none">
-                    <span className="text-[9px] font-semibold uppercase tracking-wider">PENDING</span>
-                    <span className="text-[8px] text-gray-400 dark:text-gray-600 mt-0.5">TBD</span>
-                  </div>
+                <th className="px-2 py-2 w-14 text-right border-b border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500">
+                  <span className="text-[9px] font-semibold uppercase tracking-wider">PENDING</span>
                 </th>
                 <SortableHeader label="EE AVAIL"    sortKey="whAvail"     sortConfig={sortConfig} onSort={handleSort} right className="w-16"
                                 title="EasyEcom warehouse stock after Shopify + YEIO reserve" />
@@ -587,7 +583,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                       onClick={() => setSelectedSku(item)}
                       className={`border-b cursor-pointer transition-colors ${
                         getShipQty(item) > 0
-                          ? 'border-orange-200 dark:border-orange-500/20 bg-orange-50 dark:bg-orange-500/8 border-l-2 border-l-orange-400 hover:bg-orange-100/80 dark:hover:bg-orange-500/10'
+                          ? 'border-orange-200 dark:border-orange-500/20 bg-orange-50 dark:bg-orange-500/5 border-l-2 border-l-orange-400 hover:bg-orange-100/80 dark:hover:bg-orange-500/10'
                           : `border-gray-100 dark:border-gray-700/40 hover:bg-gray-50 dark:hover:bg-gray-800/40 ${
                               index % 2 === 0
                                 ? 'bg-white dark:bg-gray-900'
@@ -683,9 +679,11 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                           : <span className="text-gray-400">-</span>}
                       </td>
 
-                      {/* Pending (placeholder) */}
-                      <td className="px-3 py-1.5 text-right">
-                        <span className="text-xs text-gray-400 dark:text-gray-600">—</span>
+                      {/* Pending Pipeline */}
+                      <td className="px-3 py-1.5 text-right text-xs">
+                        {item.amazonInventory.pending > 0
+                          ? <span className="text-blue-400 font-medium">{item.amazonInventory.pending}</span>
+                          : <span className="text-gray-400">-</span>}
                       </td>
 
                       {/* EE Avail */}
