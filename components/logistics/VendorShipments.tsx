@@ -1390,9 +1390,10 @@ setLastResponse(data);
                         <div className="flex gap-1 flex-wrap">
                           <button
                             onClick={() => {
+                              const allAccepted = filteredRows.every(r => r.resolution_action === 'ACCEPT');
                               setValidationRows(prev => prev.map(r =>
                                 filteredRows.find(fr => fr.line_id === r.line_id)
-                                  ? { ...r, resolution_action: 'ACCEPT' }
+                                  ? { ...r, resolution_action: allAccepted ? '' : 'ACCEPT' }
                                   : r
                               ));
                             }}
@@ -1402,9 +1403,10 @@ setLastResponse(data);
                           </button>
                           <button
                             onClick={() => {
+                              const allIdSet = filteredRows.every(r => r.resolution_update_id);
                               setValidationRows(prev => prev.map(r =>
                                 filteredRows.find(fr => fr.line_id === r.line_id)
-                                  ? { ...r, resolution_update_id: true }
+                                  ? { ...r, resolution_update_id: !allIdSet }
                                   : r
                               ));
                             }}
@@ -1414,9 +1416,10 @@ setLastResponse(data);
                           </button>
                           <button
                             onClick={() => {
+                              const allPriceSet = filteredRows.every(r => r.resolution_update_price);
                               setValidationRows(prev => prev.map(r =>
                                 filteredRows.find(fr => fr.line_id === r.line_id)
-                                  ? { ...r, resolution_update_price: true }
+                                  ? { ...r, resolution_update_price: !allPriceSet }
                                   : r
                               ));
                             }}
@@ -1692,13 +1695,13 @@ setLastResponse(data);
                             </div>
                           ) : ['MATCH', 'SKU_MISMATCH', 'PARTIAL_MATCH', 'UNMATCHED', 'MULTIPLE_VARIANT', 'MULTIPLE_MATCH'].includes(row.match_status) ? (
                             <div className="space-y-1.5">
-                              {/* Primary action chips */}
+                              {/* Line 1: Primary action chips */}
                               <div className="flex flex-wrap gap-1">
                                 {[
                                   { value: 'ACCEPT', label: 'Accept', active: 'bg-emerald-600 text-white border-emerald-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-emerald-500/50' },
                                   { value: 'REJECT_LINE', label: 'Skip', active: 'bg-slate-600 text-white border-slate-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-slate-400' },
-                                  { value: 'REQUEST_NEW_SKU', label: 'New SKU', active: 'bg-orange-600 text-white border-orange-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-orange-500/50', hide: !['UNMATCHED'].includes(row.match_status) },
-                                ].filter(chip => !chip.hide).map(chip => (
+                                  { value: 'REQUEST_NEW_SKU', label: 'New SKU', active: 'bg-orange-600 text-white border-orange-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-orange-500/50' },
+                                ].map(chip => (
                                   <button
                                     key={chip.value}
                                     onClick={() => handleRowChange(row.line_id, 'resolution_action',
@@ -1712,9 +1715,9 @@ setLastResponse(data);
                                   </button>
                                 ))}
                               </div>
-                              {/* Update toggle chips — shown for MATCH and PARTIAL_MATCH only */}
+                              {/* Line 2: Update toggles — compact, same line */}
                               {row.match_status !== 'MANUAL_ENTRY' && (
-                                <div className="flex flex-wrap gap-1">
+                                <div className="flex gap-1">
                                   <button
                                     onClick={() => handleRowChange(row.line_id, 'resolution_update_id', !row.resolution_update_id)}
                                     className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${
