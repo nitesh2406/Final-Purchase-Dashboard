@@ -1694,30 +1694,26 @@ setLastResponse(data);
                               </button>
                             </div>
                           ) : ['MATCH', 'SKU_MISMATCH', 'PARTIAL_MATCH', 'UNMATCHED', 'MULTIPLE_VARIANT', 'MULTIPLE_MATCH'].includes(row.match_status) ? (
-                            <div className="space-y-1.5">
-                              {/* Line 1: Primary action chips */}
-                              <div className="flex flex-wrap gap-1">
-                                {[
-                                  { value: 'ACCEPT', label: 'Accept', active: 'bg-emerald-600 text-white border-emerald-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-emerald-500/50' },
-                                  { value: 'REJECT_LINE', label: 'Skip', active: 'bg-slate-600 text-white border-slate-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-slate-400' },
-                                  { value: 'REQUEST_NEW_SKU', label: 'New SKU', active: 'bg-orange-600 text-white border-orange-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-orange-500/50' },
-                                ].map(chip => (
-                                  <button
-                                    key={chip.value}
-                                    onClick={() => handleRowChange(row.line_id, 'resolution_action',
-                                      row.resolution_action === chip.value ? '' : chip.value
-                                    )}
-                                    className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${
-                                      row.resolution_action === chip.value ? chip.active : chip.inactive
-                                    }`}
-                                  >
-                                    {chip.label}
-                                  </button>
-                                ))}
-                              </div>
-                              {/* Line 2: Update toggles — compact, same line */}
+                            <div className="flex flex-wrap gap-1">
+                              {[
+                                { value: 'ACCEPT', label: 'Accept', active: 'bg-emerald-600 text-white border-emerald-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-emerald-500/50' },
+                                { value: 'REJECT_LINE', label: 'Skip', active: 'bg-slate-600 text-white border-slate-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-slate-400' },
+                                { value: 'REQUEST_NEW_SKU', label: 'New SKU', active: 'bg-orange-600 text-white border-orange-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-orange-500/50' },
+                              ].map(chip => (
+                                <button
+                                  key={chip.value}
+                                  onClick={() => handleRowChange(row.line_id, 'resolution_action',
+                                    row.resolution_action === chip.value ? '' : chip.value
+                                  )}
+                                  className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                    row.resolution_action === chip.value ? chip.active : chip.inactive
+                                  }`}
+                                >
+                                  {chip.label}
+                                </button>
+                              ))}
                               {row.match_status !== 'MANUAL_ENTRY' && (
-                                <div className="flex gap-1">
+                                <>
                                   <button
                                     onClick={() => handleRowChange(row.line_id, 'resolution_update_id', !row.resolution_update_id)}
                                     className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${
@@ -1738,7 +1734,7 @@ setLastResponse(data);
                                   >
                                     {row.resolution_update_price ? '✓ ' : ''}¥
                                   </button>
-                                </div>
+                                </>
                               )}
                               {row.resolution_action === 'FLAG_REVIEW' && (
                                 <Badge variant="warning" className="text-[8px]">🚩 FLAGGED</Badge>
