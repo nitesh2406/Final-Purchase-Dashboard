@@ -1713,7 +1713,7 @@ setLastResponse(data);
                                 ))}
                               </div>
                               {/* Update toggle chips — shown for MATCH and PARTIAL_MATCH only */}
-                              {['MATCH', 'PARTIAL_MATCH', 'SKU_MISMATCH'].includes(row.match_status) && (
+                              {row.match_status !== 'MANUAL_ENTRY' && (
                                 <div className="flex flex-wrap gap-1">
                                   <button
                                     onClick={() => handleRowChange(row.line_id, 'resolution_update_id', !row.resolution_update_id)}
