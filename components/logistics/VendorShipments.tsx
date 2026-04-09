@@ -282,6 +282,8 @@ interface EnrichedRow {
   master_cost?: number;
   match_type?: string;
   resolution_action?: string;
+  resolution_update_id?: boolean;
+  resolution_update_price?: boolean;
   resolution_notes?: string;
   partial_match_reason?: string;
   name_similarity?: number;
@@ -830,6 +832,20 @@ setLastResponse(data);
     r.resolution_action !== 'REQUEST_NEW_SKU'
 );
 
+      // Build update payload for updateCustomFieldsSmart
+      const updatePayload = validationRows
+        .filter(r => r.resolution_update_id || r.resolution_update_price)
+        .map(r => ({
+          sku: r.matched_sku || r.sku,
+          factory_code: r.factory_code ? r.factory_code.split('|')[0] : '',
+          rmb_price: r.resolution_update_price ? r.unit_price : null
+        }))
+        .filter(r => r.sku);
+
+      if (updatePayload.length > 0) {
+        console.log('updateCustomFieldsSmart payload:', JSON.stringify(updatePayload));
+      }
+
       const payload = {
         action: 'allocate_to_open_pos',
         vendor_code: vendorCode,
@@ -1368,7 +1384,49 @@ setLastResponse(data);
                     <th className="px-2 py-3 w-[4%] text-right">QTY</th>
                     <th className="px-2 py-3 w-[6%] text-right">PRICE</th>
                     <th className="px-2 py-3 w-[6%] text-right">DIFFS</th>
-                    <th className="px-2 py-3 w-[12%]">RESOLUTION</th>
+                    <th className="px-2 py-3 w-[12%]">
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-slate-400">Resolution</span>
+                        <div className="flex gap-1 flex-wrap">
+                          <button
+                            onClick={() => {
+                              setValidationRows(prev => prev.map(r =>
+                                filteredRows.find(fr => fr.line_id === r.line_id)
+                                  ? { ...r, resolution_action: 'ACCEPT' }
+                                  : r
+                              ));
+                            }}
+                            className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 hover:bg-emerald-600/40 transition-all"
+                          >
+                            ✓ All
+                          </button>
+                          <button
+                            onClick={() => {
+                              setValidationRows(prev => prev.map(r =>
+                                filteredRows.find(fr => fr.line_id === r.line_id)
+                                  ? { ...r, resolution_update_id: true }
+                                  : r
+                              ));
+                            }}
+                            className="px-2 py-0.5 rounded text-[9px] font-bold bg-blue-600/20 text-blue-400 border border-blue-600/30 hover:bg-blue-600/40 transition-all"
+                          >
+                            ID All
+                          </button>
+                          <button
+                            onClick={() => {
+                              setValidationRows(prev => prev.map(r =>
+                                filteredRows.find(fr => fr.line_id === r.line_id)
+                                  ? { ...r, resolution_update_price: true }
+                                  : r
+                              ));
+                            }}
+                            className="px-2 py-0.5 rounded text-[9px] font-bold bg-purple-600/20 text-purple-400 border border-purple-600/30 hover:bg-purple-600/40 transition-all"
+                          >
+                            ¥ All
+                          </button>
+                        </div>
+                      </div>
+                    </th>
                     <th className="px-2 py-3 w-[16%]">NOTES</th>
                   </tr>
                 </thead>
@@ -1633,19 +1691,52 @@ setLastResponse(data);
                               </button>
                             </div>
                           ) : ['MATCH', 'SKU_MISMATCH', 'PARTIAL_MATCH', 'UNMATCHED', 'MULTIPLE_VARIANT', 'MULTIPLE_MATCH'].includes(row.match_status) ? (
-                            <div className="space-y-1">
-                              <select
-                                value={row.resolution_action || ''}
-                                onChange={(e) => handleRowChange(row.line_id, 'resolution_action', e.target.value)}
-                                className="w-full max-w-[120px] bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-[10px] text-white outline-none focus:ring-1 focus:ring-blue-500"
-                              >
-                                <option value="">Select Action</option>
-                                <option value="ACCEPT">Accept</option>
-                                <option value="OVERRIDE">Override (Update Master)</option>
-                                <option value="FLAG_REVIEW">Flag for Review</option>
-                                <option value="REJECT_LINE">Skip Item</option>
-                                <option value="REQUEST_NEW_SKU">Request New SKU</option>
-                              </select>
+                            <div className="space-y-1.5">
+                              {/* Primary action chips */}
+                              <div className="flex flex-wrap gap-1">
+                                {[
+                                  { value: 'ACCEPT', label: 'Accept', active: 'bg-emerald-600 text-white border-emerald-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-emerald-500/50' },
+                                  { value: 'REJECT_LINE', label: 'Skip', active: 'bg-slate-600 text-white border-slate-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-slate-400' },
+                                  { value: 'REQUEST_NEW_SKU', label: 'New SKU', active: 'bg-orange-600 text-white border-orange-500', inactive: 'bg-slate-800 text-slate-400 border-slate-600 hover:border-orange-500/50', hide: !['UNMATCHED'].includes(row.match_status) },
+                                ].filter(chip => !chip.hide).map(chip => (
+                                  <button
+                                    key={chip.value}
+                                    onClick={() => handleRowChange(row.line_id, 'resolution_action',
+                                      row.resolution_action === chip.value ? '' : chip.value
+                                    )}
+                                    className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                      row.resolution_action === chip.value ? chip.active : chip.inactive
+                                    }`}
+                                  >
+                                    {chip.label}
+                                  </button>
+                                ))}
+                              </div>
+                              {/* Update toggle chips — shown for MATCH and PARTIAL_MATCH only */}
+                              {['MATCH', 'PARTIAL_MATCH', 'SKU_MISMATCH'].includes(row.match_status) && (
+                                <div className="flex flex-wrap gap-1">
+                                  <button
+                                    onClick={() => handleRowChange(row.line_id, 'resolution_update_id', !row.resolution_update_id)}
+                                    className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                      row.resolution_update_id
+                                        ? 'bg-blue-600 text-white border-blue-500'
+                                        : 'bg-slate-800 text-slate-500 border-slate-700 hover:border-blue-500/50'
+                                    }`}
+                                  >
+                                    {row.resolution_update_id ? '✓ ' : ''}ID
+                                  </button>
+                                  <button
+                                    onClick={() => handleRowChange(row.line_id, 'resolution_update_price', !row.resolution_update_price)}
+                                    className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                      row.resolution_update_price
+                                        ? 'bg-purple-600 text-white border-purple-500'
+                                        : 'bg-slate-800 text-slate-500 border-slate-700 hover:border-purple-500/50'
+                                    }`}
+                                  >
+                                    {row.resolution_update_price ? '✓ ' : ''}¥
+                                  </button>
+                                </div>
+                              )}
                               {row.resolution_action === 'FLAG_REVIEW' && (
                                 <Badge variant="warning" className="text-[8px]">🚩 FLAGGED</Badge>
                               )}
