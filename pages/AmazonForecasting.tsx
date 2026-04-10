@@ -27,7 +27,7 @@ const formatDoc = (days: number) =>
 
 // ─── Filter Chips ─────────────────────────────────────────────────────────────
 
-const FILTER_CHIPS = ['All', 'Needs Ship', 'Slow', 'Medium', 'Fast', '⚠ Listing', '🚢 Inbound'] as const;
+const FILTER_CHIPS = ['All', 'Needs Ship', 'Slow', 'Medium', 'Fast', '⚠ Listing', '🚢 Inbound', '🚫 Excluded'] as const;
 type FilterChip = typeof FILTER_CHIPS[number];
 
 // ─── Sortable Header ──────────────────────────────────────────────────────────
@@ -167,13 +167,14 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
         item.masterSKU.toLowerCase().includes(search.toLowerCase());
 
       const matchFilter =
-        activeFilter === 'All'        ? true :
-        activeFilter === 'Needs Ship' ? item.needsReplenishment :
-        activeFilter === 'Slow'       ? item.replenishment.velocityBand === 'slow' :
-        activeFilter === 'Medium'     ? item.replenishment.velocityBand === 'medium' :
-        activeFilter === 'Fast'       ? item.replenishment.velocityBand === 'fast' :
-        activeFilter === '⚠ Listing'  ? item.hasListingIssue :
-        activeFilter === '🚢 Inbound' ? item.inTransitWarning?.hasWarning === true : true;
+        activeFilter === 'All'        ? !item.isExcluded :
+        activeFilter === 'Needs Ship' ? item.needsReplenishment && !item.isExcluded :
+        activeFilter === 'Slow'       ? item.replenishment.velocityBand === 'slow' && !item.isExcluded :
+        activeFilter === 'Medium'     ? item.replenishment.velocityBand === 'medium' && !item.isExcluded :
+        activeFilter === 'Fast'       ? item.replenishment.velocityBand === 'fast' && !item.isExcluded :
+        activeFilter === '⚠ Listing'  ? item.hasListingIssue && !item.isExcluded :
+        activeFilter === '🚢 Inbound' ? item.inTransitWarning?.hasWarning === true && !item.isExcluded :
+        activeFilter === '🚫 Excluded' ? item.isExcluded : true;
 
       return matchSearch && matchFilter;
     });
@@ -475,7 +476,9 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
             onClick={() => setActiveFilter(chip)}
             className={`text-xs px-2.5 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
               activeFilter === chip
-                ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 font-medium'
+                ? chip === '🚫 Excluded'
+                  ? 'bg-red-500/20 text-red-400 border-red-500/40 font-medium'
+                  : 'bg-orange-500/20 text-orange-400 border-orange-500/40 font-medium'
                 : 'text-gray-500 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
             }`}
           >

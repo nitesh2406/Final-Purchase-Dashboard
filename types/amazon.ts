@@ -72,6 +72,7 @@ export interface AmazonChannelSku {
   inTransitWarning: AmazonInTransitWarning;
   salesHistory90: { date: string; units: number }[];
   salesHistory30: { date: string; units: number }[];
+  isExcluded: boolean;
 }
 
 export interface AmazonPOItem {
