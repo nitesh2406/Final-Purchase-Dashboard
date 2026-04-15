@@ -1651,16 +1651,27 @@ setLastResponse(data);
 
                         {/* PRICE (¥) */}
                         <td className="px-2 py-3 text-right font-bold text-gray-800 dark:text-slate-300 font-mono text-sm">
-                          {row.match_status === 'MANUAL_ENTRY' ? (
+                          {row.match_status === 'MANUAL_ENTRY' || row.unit_price === 0 || typeof row.unit_price_base === 'string' ? (
                             <input
-                              type="number"
-                              value={row.unit_price_base || row.unit_price}
+                              type="text"
+                              inputMode="decimal"
+                              value={row.unit_price_base !== undefined && row.unit_price_base !== 0
+                                ? String(row.unit_price_base)
+                                : row.unit_price !== 0
+                                ? String(row.unit_price)
+                                : ''}
                               onChange={(e) => {
-                                const val = toNum(e.target.value);
-                                handleRowChange(row.line_id, 'unit_price_base', val);
-                                handleRowChange(row.line_id, 'unit_price', val);
+                                const raw = e.target.value;
+                                // Allow typing decimals freely — only parse on valid number
+                                handleRowChange(row.line_id, 'unit_price_base', raw);
+                                const val = parseFloat(raw);
+                                if (!isNaN(val)) {
+                                  handleRowChange(row.line_id, 'unit_price', val);
+                                  handleRowChange(row.line_id, 'unit_price_total', val);
+                                }
                               }}
-                              className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[10px] text-right text-slate-300 focus:ring-1 focus:ring-blue-500"
+                              className="w-16 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded px-2 py-1 text-[11px] text-right text-gray-900 dark:text-slate-300 focus:ring-1 focus:ring-blue-500"
+                              placeholder="0.00"
                             />
                           ) : `¥${row.unit_price.toFixed(2)}`}
                         </td>
@@ -1743,6 +1754,12 @@ setLastResponse(data);
                           ) : (
                             <span className="text-slate-600 text-xs italic">Selection required</span>
                           )}
+                          <button
+                            onClick={() => setValidationRows(prev => prev.filter(r => r.line_id !== row.line_id))}
+                            className="mt-1.5 flex items-center gap-1 text-[9px] text-red-400 hover:text-red-300 transition-colors"
+                          >
+                            <TrashIcon className="w-3 h-3" /> Remove
+                          </button>
                         </td>
 
                         {/* RESOLUTION NOTES */}
@@ -2714,6 +2731,7 @@ const COLUMN_MAP: Record<string, string> = {
   'item name': 'item_name',
   'description': 'item_name',
   'descriptions': 'item_name',
+  'descriptions ': 'item_name',
   'product name': 'item_name',
   'desc': 'item_name',
 
@@ -2742,6 +2760,7 @@ const COLUMN_MAP: Record<string, string> = {
   'total qty': 'invoice_qty',
   'pcs': 'invoice_qty',
   'quantity': 'invoice_qty',
+  'qtypcs': 'invoice_qty',
 
   // Carton variations
   'total ctn': 'carton_count',
@@ -2911,7 +2930,7 @@ const parseVendorFile = async (file: File): Promise<any> => {
           //if (firstNonEmpty.startsWith('total')) continue;
           //if (firstNonEmpty.includes('discount')) continue;
           //if (/^[=\-]+$/.test(firstNonEmpty)) continue;
-          const skipPatterns = ['total', 'sum', 'sum:', 'subtotal', 'grand total', 'discount', 'ps:', 'bank', 'note'];
+          const skipPatterns = ['total', 'sum', 'sum:', 'subtotal', 'grand total', 'discount', 'ps:', 'bank', 'note', 'container', '============'];
           if (skipPatterns.some(p => firstNonEmpty.startsWith(p) || firstNonEmpty === p)) continue;
           if (/^[=\-]+$/.test(firstNonEmpty)) continue;
 
@@ -2953,6 +2972,9 @@ const parseVendorFile = async (file: File): Promise<any> => {
 
           const ean = String(rowObj.ean || "").trim();
           const carton_count = toNum(rowObj.carton_count);
+
+          // Skip rows with no meaningful data after column mapping
+          if (!item_name && !factory_code && !ean && invoice_qty === 0) continue;
 
           parsedRows.push({
             factory_code,
