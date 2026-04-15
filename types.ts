@@ -478,6 +478,7 @@ export interface Batch {
   is_delayed: boolean;
   delay_days: number;
   vendor_shipments?: BatchVendorShipment[];
+  vendor_summary?: any[];
 
   // Financial reconciliation fields
   original_amount_rmb: number;

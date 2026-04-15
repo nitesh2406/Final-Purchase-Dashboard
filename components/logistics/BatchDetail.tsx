@@ -23,71 +23,43 @@ import { Button } from '../ui/Button';
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const getColor = (status: string) => {
     const colors: Record<string, string> = {
-      'Shipped': 'bg-purple-400/10 text-purple-400',
-      'In-Transit China': 'bg-blue-400/10 text-blue-400',
-      'At Port China': 'bg-cyan-400/10 text-cyan-400',
-      'In-Transit Ocean': 'bg-blue-500/10 text-blue-500',
-      'In-Transit Air': 'bg-indigo-400/10 text-indigo-400',
-      'Customs Clearance': 'bg-yellow-400/10 text-yellow-400',
-      'In-Transit India': 'bg-green-400/10 text-green-400',
-      'Out for Delivery': 'bg-emerald-400/10 text-emerald-400',
-      'Delivered': 'bg-emerald-500/10 text-emerald-500'
+      'Shipped': 'bg-purple-100 text-purple-700 dark:bg-purple-400/10 dark:text-purple-400',
+      'In-Transit China': 'bg-blue-100 text-blue-700 dark:bg-blue-400/10 dark:text-blue-400',
+      'At Port China': 'bg-cyan-100 text-cyan-700 dark:bg-cyan-400/10 dark:text-cyan-400',
+      'In-Transit Ocean': 'bg-sky-100 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400',
+      'In-Transit Air': 'bg-indigo-100 text-indigo-700 dark:bg-indigo-400/10 dark:text-indigo-400',
+      'Customs Clearance': 'bg-yellow-100 text-yellow-700 dark:bg-yellow-400/10 dark:text-yellow-400',
+      'In-Transit India': 'bg-green-100 text-green-700 dark:bg-green-400/10 dark:text-green-400',
+      'Out for Delivery': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-400',
+      'Delivered': 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400',
+      'OPEN': 'bg-gray-100 text-gray-600 dark:bg-gray-400/10 dark:text-gray-400',
     };
-    return colors[status] || 'bg-gray-400/10 text-gray-400';
+    return colors[status] || 'bg-gray-100 text-gray-600 dark:bg-gray-400/10 dark:text-gray-400';
   };
-
   return (
-    <span className={`px-3 py-1.5 rounded-md text-sm font-medium border border-transparent ${getColor(status)}`}>
+    <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wide ${getColor(status)}`}>
       {status}
     </span>
   );
 };
 
-// Check Icon Helper
-const CheckCell: React.FC<{ value: boolean | null }> = ({ value }) => {
-  if (value === null) return <span className="text-slate-600 text-sm">-</span>;
-  return value ? <CheckIcon className="w-4 h-4 text-green-500 mx-auto" /> : <XMarkIcon className="w-4 h-4 text-red-500 mx-auto" />;
-};
-
 // DOC Badge
 const DOCBadge: React.FC<{ doc: number | null }> = ({ doc }) => {
-  if (doc === null) return <span className="text-slate-600 text-sm">-</span>;
-  const color = doc > 30 ? 'bg-green-500/10 text-green-500' : doc >= 15 ? 'bg-yellow-500/10 text-yellow-500' : 'bg-red-500/10 text-red-500';
-  return <span className={`inline-block px-2 py-1 rounded text-sm font-medium ${color}`}>{doc}d</span>;
+  if (doc === null) return <span className="text-gray-400 dark:text-slate-600 text-sm">—</span>;
+  const color = doc > 30
+    ? 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400'
+    : doc >= 15
+    ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400'
+    : 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400';
+  return <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-medium ${color}`}>{doc}d</span>;
 };
 
-// Batch Info Header
-const BatchInfoHeader: React.FC<{ batch: Batch }> = ({ batch }) => {
-  const formatDate = (dateString: string) => {
-    if (!dateString) return 'TBA';
-    const d = new Date(dateString);
-    return isNaN(d.getTime()) ? dateString : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-  };
-
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-5 bg-slate-800 rounded-lg border border-slate-700 shadow-sm">
-      <div>
-        <p className="text-xs text-slate-500 mb-1 uppercase tracking-wide font-bold">Carrier & Tracking</p>
-        <p className="text-base font-semibold text-slate-100">{batch.carrier}</p>
-        <p className="text-sm text-slate-400 font-mono">{batch.tracking_number || 'No Tracking #'}</p>
-      </div>
-      <div>
-        <p className="text-xs text-slate-500 mb-1 uppercase tracking-wide font-bold">Expected Delivery</p>
-        <p className="text-base font-semibold text-slate-100">{formatDate(batch.expected_delivery)}</p>
-        {batch.actual_delivery && <p className="text-sm text-green-500">Delivered: {formatDate(batch.actual_delivery)}</p>}
-      </div>
-      <div>
-        <p className="text-xs text-slate-500 mb-1 uppercase tracking-wide font-bold">Total Quantity</p>
-        <p className="text-base font-semibold text-slate-100">{batch.total_units} units</p>
-        <p className="text-sm text-slate-400">{batch.total_vendors} vendors</p>
-      </div>
-      <div>
-        <p className="text-xs text-slate-500 mb-1 uppercase tracking-wide font-bold">Total Cartons</p>
-        <p className="text-base font-semibold text-slate-100">{batch.total_cartons} cartons</p>
-        <p className="text-sm text-slate-400">{batch.batch_type === 'sea' ? '🚢 Sea Freight' : '✈️ Air Freight'}</p>
-      </div>
-    </div>
-  );
+// Check Cell
+const CheckCell: React.FC<{ value: boolean | null }> = ({ value }) => {
+  if (value === null) return <span className="text-gray-300 dark:text-slate-600 text-sm">—</span>;
+  return value
+    ? <span className="text-green-600 dark:text-green-500 font-bold text-sm">✓</span>
+    : <span className="text-red-500 dark:text-red-500 font-bold text-sm">✗</span>;
 };
 
 // Vendor Shipment Row (Expandable)
@@ -97,55 +69,57 @@ const VendorShipmentRow: React.FC<{
   onToggle: () => void;
   isSearching: boolean;
 }> = ({ vendor, isExpanded, onToggle, isSearching }) => {
-  const ChevronIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
   const totalUnits = vendor.line_items.reduce((sum, item) => sum + (item.incoming_qty || 0), 0);
 
   return (
-    <div className="border-b border-slate-700 last:border-0">
-      <button onClick={onToggle} className="w-full px-6 py-4 hover:bg-slate-700/50 transition-colors flex items-center justify-between text-left">
-        <div className="flex items-center gap-4">
-          <ChevronIcon className="w-5 h-5 text-slate-500 flex-shrink-0" />
-          <div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <span className="font-bold text-base text-slate-100 uppercase tracking-tight">{vendor.vendor_code}</span>
-              <span className="text-slate-600">|</span>
-              <span className="text-base text-slate-300">{vendor.vendor_name}</span>
-              <span className="text-slate-600">|</span>
-              <span className="text-sm text-slate-500">Invoice: {vendor.invoice_no}</span>
-            </div>
-            <div className="text-sm text-slate-500 mt-1">
-              {vendor.carton_count} cartons • {totalUnits} units
-              {isSearching && <span className="text-blue-400 ml-2 font-medium">• {vendor.line_items.length} matching items</span>}
-            </div>
-          </div>
-        </div>
+    <div className="border-b border-gray-100 dark:border-slate-700 last:border-0">
+      <button
+        onClick={onToggle}
+        className="w-full px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors flex items-center gap-3 text-left"
+      >
+        <ChevronRightIcon className={`w-4 h-4 text-gray-400 dark:text-slate-500 shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+        <span className="font-bold text-sm text-gray-900 dark:text-slate-100 uppercase">{vendor.vendor_code}</span>
+        <span className="text-gray-300 dark:text-slate-600">|</span>
+        <span className="text-sm text-gray-500 dark:text-slate-400">{vendor.vendor_name}</span>
+        <span className="text-gray-300 dark:text-slate-600">|</span>
+        <span className="text-xs text-gray-400 dark:text-slate-500">Invoice: {vendor.invoice_no}</span>
+        <span className="text-gray-300 dark:text-slate-600">·</span>
+        <span className="text-xs text-gray-400 dark:text-slate-500">{vendor.carton_count} cartons · {totalUnits} units</span>
+        {isSearching && (
+          <span className="text-blue-500 dark:text-blue-400 text-xs font-medium ml-1">· {vendor.line_items.length} matching</span>
+        )}
       </button>
 
       {isExpanded && (
-        <div className="bg-slate-900/50 px-6 py-4 animate-in slide-in-from-top-2 duration-200">
+        <div className="bg-gray-50 dark:bg-slate-900/50 px-4 py-3">
           <div className="overflow-x-auto">
             <table className="w-full min-w-max text-sm">
               <thead>
-                <tr className="border-b border-slate-700">
-                  {['SKU', 'Item Name', 'Incoming', 'Current Stock', 'Future Stock', 'MMA', 'DOC', 'Logo', 'Pkg', 'Manual', 'OPP'].map((label, i) => (
-                    <th key={label} className={`py-3 px-3 text-xs font-bold text-slate-500 uppercase tracking-wider text-${i < 2 ? 'left' : (i > 6 ? 'center' : 'right')}`}>{label}</th>
+                <tr className="border-b border-gray-200 dark:border-slate-700">
+                  {['SKU', 'Item Name', 'Incoming', 'Current', 'Future', 'MMA', 'DOC', 'Logo', 'Pkg', 'Manual', 'OPP'].map((label, i) => (
+                    <th
+                      key={label}
+                      className={`py-2 px-3 text-[10px] font-bold text-gray-500 dark:text-slate-500 uppercase tracking-wider ${i < 2 ? 'text-left' : i > 6 ? 'text-center' : 'text-right'}`}
+                    >
+                      {label}
+                    </th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800">
+              <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
                 {vendor.line_items.map(item => (
-                  <tr key={item.line_id} className="hover:bg-slate-800/50 transition-colors">
-                    <td className="py-3 px-3 font-mono text-xs font-medium text-blue-400 whitespace-nowrap">{item.sku}</td>
-                    <td className="py-3 px-3 text-slate-300 whitespace-nowrap">{item.item_name}</td>
-                    <td className="py-3 px-3 text-right font-bold text-white">{item.incoming_qty}</td>
-                    <td className="py-3 px-3 text-right text-slate-400">{item.current_stock ?? '-'}</td>
-                    <td className="py-3 px-3 text-right font-medium text-slate-100">{item.future_stock ?? '-'}</td>
-                    <td className="py-3 px-3 text-right text-slate-400">{item.mma ?? '-'}</td>
-                    <td className="py-3 px-3 text-right"><DOCBadge doc={item.doc_after_arrival} /></td>
-                    <td className="py-3 px-3 text-center"><CheckCell value={item.has_logo} /></td>
-                    <td className="py-3 px-3 text-center"><CheckCell value={item.has_packaging} /></td>
-                    <td className="py-3 px-3 text-center"><CheckCell value={item.has_manual} /></td>
-                    <td className="py-3 px-3 text-center"><CheckCell value={item.has_opp_wrap} /></td>
+                  <tr key={item.line_id} className="hover:bg-white dark:hover:bg-slate-800/50 transition-colors">
+                    <td className="py-2.5 px-3 font-mono text-[11px] font-medium text-blue-600 dark:text-blue-400 whitespace-nowrap">{item.sku}</td>
+                    <td className="py-2.5 px-3 text-gray-700 dark:text-slate-300 whitespace-nowrap">{item.item_name}</td>
+                    <td className="py-2.5 px-3 text-right font-bold text-gray-900 dark:text-white">{item.incoming_qty}</td>
+                    <td className="py-2.5 px-3 text-right text-gray-500 dark:text-slate-400">{item.current_stock ?? '—'}</td>
+                    <td className="py-2.5 px-3 text-right font-medium text-gray-800 dark:text-slate-100">{item.future_stock ?? '—'}</td>
+                    <td className="py-2.5 px-3 text-right text-gray-500 dark:text-slate-400">{item.mma ?? '—'}</td>
+                    <td className="py-2.5 px-3 text-right"><DOCBadge doc={item.doc_after_arrival} /></td>
+                    <td className="py-2.5 px-3 text-center"><CheckCell value={item.has_logo} /></td>
+                    <td className="py-2.5 px-3 text-center"><CheckCell value={item.has_packaging} /></td>
+                    <td className="py-2.5 px-3 text-center"><CheckCell value={item.has_manual} /></td>
+                    <td className="py-2.5 px-3 text-center"><CheckCell value={item.has_opp_wrap} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -282,25 +256,27 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack }) => 
     </div>
   );
 
+  const formatDate = (dateString: string) => {
+    if (!dateString) return 'TBA';
+    const d = new Date(dateString);
+    return isNaN(d.getTime()) ? dateString : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
   return (
-    <div className="max-w-[1600px] mx-auto animate-in fade-in duration-500 pb-24 p-6">
-      <button onClick={onBack} className="group flex items-center gap-2 text-slate-400 hover:text-white mb-8 transition-colors">
-        <ArrowLeftIcon className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-        <span className="font-bold text-sm uppercase tracking-widest">Back to Batch List</span>
-      </button>
+    <div className="max-w-[1600px] mx-auto pb-24 p-4">
 
       {isLoading ? (
         <div className="flex flex-col items-center justify-center min-h-[400px]">
-          <ArrowPathIcon className="w-12 h-12 text-blue-500 animate-spin mb-4" />
-          <p className="text-lg text-slate-300 font-medium">Loading batch details...</p>
+          <ArrowPathIcon className="w-10 h-10 text-blue-500 animate-spin mb-4" />
+          <p className="text-base text-gray-500 dark:text-slate-300 font-medium">Loading batch details...</p>
           {renderDebugPanel()}
         </div>
       ) : error || !batch ? (
         <div className="flex flex-col items-center justify-center min-h-[400px]">
-          <div className="text-center bg-slate-800 p-12 rounded-2xl border border-slate-700 shadow-xl max-w-md">
-            <ExclamationTriangleIcon className="w-16 h-16 mx-auto text-red-500 mb-4 opacity-70" />
-            <h2 className="text-2xl font-bold text-white mb-2">{error ? 'Network Error' : 'Batch Not Found'}</h2>
-            <p className="text-slate-400 mb-8">{error || 'The requested batch could not be found.'}</p>
+          <div className="text-center bg-white dark:bg-slate-800 p-10 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm max-w-md">
+            <ExclamationTriangleIcon className="w-12 h-12 mx-auto text-red-500 mb-4 opacity-70" />
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">{error ? 'Network Error' : 'Batch Not Found'}</h2>
+            <p className="text-gray-500 dark:text-slate-400 mb-6 text-sm">{error || 'The requested batch could not be found.'}</p>
             <div className="flex gap-3">
               <Button variant="secondary" onClick={onBack} className="flex-1">Back to List</Button>
               <Button onClick={loadBatch} className="flex-1 bg-blue-600">Retry</Button>
@@ -310,62 +286,117 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack }) => 
         </div>
       ) : (
         <>
-          <div className="mb-8">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="p-2 rounded-lg bg-slate-800 border border-slate-700">
-                {batch.batch_type === 'sea' ? <ShipIcon className="w-6 h-6 text-slate-400" /> : <AirplaneIcon className="w-6 h-6 text-slate-400" />}
-              </div>
-              <h1 className="text-3xl font-bold text-white tracking-tight">{batch.batch_id}</h1>
-              <StatusBadge status={batch.status} />
-              {batch.is_delayed && <span className="px-2.5 py-1 bg-red-500/10 text-red-400 text-[10px] font-black rounded uppercase tracking-tighter border border-red-500/20">Delayed {batch.delay_days}d</span>}
+          {/* Top bar — back + batch ID + badges + search all in one line */}
+          <div className="flex items-center gap-3 mb-3 flex-wrap">
+            <button
+              onClick={onBack}
+              className="flex items-center gap-1.5 text-xs font-bold text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700"
+            >
+              <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+            </button>
+            <div className="flex items-center gap-2">
+              {batch.batch_type === 'sea'
+                ? <ShipIcon className="w-5 h-5 text-gray-400 dark:text-slate-500" />
+                : <AirplaneIcon className="w-5 h-5 text-gray-400 dark:text-slate-500" />
+              }
+              <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100">{batch.batch_id}</h1>
             </div>
-            <BatchInfoHeader batch={batch} />
-          </div>
-
-          <div className="bg-slate-800 p-5 rounded-xl border border-slate-700 mb-8 shadow-sm">
-            <div className="relative">
-              <MagnifyingGlassIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-500" />
+            <StatusBadge status={batch.status} />
+            {batch.is_delayed && (
+              <span className="px-2.5 py-1 bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400 text-[10px] font-bold rounded uppercase tracking-wide border border-red-200 dark:border-red-500/20">
+                Delayed {batch.delay_days}d
+              </span>
+            )}
+            <div className="ml-auto relative">
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-slate-500" />
               <input
                 type="text"
-                placeholder="Search container by SKU or Item Name..."
+                placeholder="Search SKU or item name..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-12 pr-12 py-3.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-base placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                className="pl-9 pr-8 py-1.5 text-sm bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 w-60"
               />
-              {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-500 hover:text-white transition-colors"><XMarkIcon className="w-5 h-5" /></button>}
+              {searchTerm && (
+                <button onClick={() => setSearchTerm('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 dark:hover:text-white">
+                  <XMarkIcon className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-lg">
-            <div className="px-6 py-4 border-b border-slate-700 bg-slate-900/40">
-              <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <ArchiveBoxIcon className="w-4 h-4" /> Shipment Contents
-                <span className="ml-2 text-xs text-slate-600 lowercase font-normal">({filteredVendors.length} shipments total)</span>
+          {/* Compact info strip */}
+          <div className="grid grid-cols-2 md:grid-cols-4 border border-gray-200 dark:border-slate-700 rounded-lg overflow-hidden mb-4">
+            <div className="px-4 py-3 border-r border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
+              <p className="text-[10px] text-gray-400 dark:text-slate-500 uppercase tracking-wider font-bold mb-1">Carrier & Tracking</p>
+              <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">{batch.carrier || '—'}</p>
+              <p className="text-[11px] font-mono text-gray-400 dark:text-slate-500 mt-0.5">{batch.tracking_number || 'No tracking #'}</p>
+            </div>
+            <div className="px-4 py-3 border-r border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
+              <p className="text-[10px] text-gray-400 dark:text-slate-500 uppercase tracking-wider font-bold mb-1">Expected Delivery</p>
+              <p className={`text-sm font-semibold ${batch.is_delayed ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-slate-100'}`}>
+                {formatDate(batch.expected_delivery)}
+              </p>
+              {batch.actual_delivery
+                ? <p className="text-[11px] text-green-600 dark:text-green-500 mt-0.5">Delivered: {formatDate(batch.actual_delivery)}</p>
+                : batch.is_delayed
+                ? <p className="text-[11px] text-red-500 mt-0.5">{batch.delay_days}d overdue</p>
+                : null
+              }
+            </div>
+            <div className="px-4 py-3 border-r border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
+              <p className="text-[10px] text-gray-400 dark:text-slate-500 uppercase tracking-wider font-bold mb-1">Quantities</p>
+              <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">{batch.total_units} units · {batch.total_cartons} cartons</p>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">{batch.total_vendors} vendor{batch.total_vendors !== 1 ? 's' : ''}</p>
+            </div>
+            <div className="px-4 py-3 bg-gray-50 dark:bg-slate-800/50">
+              <p className="text-[10px] text-gray-400 dark:text-slate-500 uppercase tracking-wider font-bold mb-1">Mode</p>
+              <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">
+                {batch.batch_type === 'sea' ? '🚢 Sea Freight' : '✈️ Air Freight'}
+              </p>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">{batch.batch_id}</p>
+            </div>
+          </div>
+
+          {/* Shipment contents */}
+          <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden shadow-sm">
+            <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/40 flex items-center gap-2">
+              <ArchiveBoxIcon className="w-4 h-4 text-gray-400 dark:text-slate-500" />
+              <h2 className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">
+                Shipment Contents
               </h2>
+              <span className="text-xs text-gray-400 dark:text-slate-600 font-normal lowercase">
+                ({filteredVendors.length} shipment{filteredVendors.length !== 1 ? 's' : ''})
+              </span>
             </div>
 
             {filteredVendors.length === 0 ? (
-              <div className="text-center py-20 px-6">
-                <MagnifyingGlassIcon className="w-12 h-12 mx-auto text-slate-600 mb-4 opacity-30" />
-                <p className="text-lg text-slate-300 font-bold mb-1 uppercase tracking-tight">No items found</p>
-                <p className="text-sm text-slate-500">Try a different SKU code or item name</p>
+              <div className="text-center py-16 px-6">
+                <MagnifyingGlassIcon className="w-10 h-10 mx-auto text-gray-300 dark:text-slate-600 mb-3 opacity-50" />
+                <p className="text-base font-bold text-gray-500 dark:text-slate-300 mb-1">No items found</p>
+                <p className="text-sm text-gray-400 dark:text-slate-500">Try a different SKU or item name</p>
               </div>
             ) : (
-              <div className="divide-y divide-slate-700">
+              <div className="divide-y divide-gray-100 dark:divide-slate-700">
                 {filteredVendors.map(vendor => (
-                  <VendorShipmentRow key={vendor.shipment_id} vendor={vendor} isExpanded={expandedVendors.has(vendor.shipment_id)} onToggle={() => toggleVendor(vendor.shipment_id)} isSearching={searchTerm.trim().length > 0} />
+                  <VendorShipmentRow
+                    key={vendor.shipment_id}
+                    vendor={vendor}
+                    isExpanded={expandedVendors.has(vendor.shipment_id)}
+                    onToggle={() => toggleVendor(vendor.shipment_id)}
+                    isSearching={searchTerm.trim().length > 0}
+                  />
                 ))}
               </div>
             )}
           </div>
 
           {batch.notes && (
-            <div className="mt-8 bg-slate-800/40 p-6 rounded-xl border border-slate-700/50">
-              <div className="flex items-center gap-2 mb-3">
-                <DocumentTextIcon className="w-5 h-5 text-slate-500" />
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Internal Batch Notes</h3>
+            <div className="mt-4 bg-gray-50 dark:bg-slate-800/40 p-4 rounded-lg border border-gray-200 dark:border-slate-700/50">
+              <div className="flex items-center gap-2 mb-2">
+                <DocumentTextIcon className="w-4 h-4 text-gray-400 dark:text-slate-500" />
+                <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Notes</h3>
               </div>
-              <p className="text-slate-300 text-sm italic leading-relaxed border-l-2 border-slate-700 pl-4">"{batch.notes}"</p>
+              <p className="text-gray-600 dark:text-slate-300 text-sm italic leading-relaxed border-l-2 border-gray-200 dark:border-slate-700 pl-3">"{batch.notes}"</p>
             </div>
           )}
 

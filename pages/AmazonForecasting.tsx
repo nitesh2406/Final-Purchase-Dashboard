@@ -241,19 +241,34 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
         (selectedChannelSkus.size === 0 || selectedChannelSkus.has(item.channelSKU)) &&
         getShipQty(item) > 0
       )
+      // .map(item => {
+      //   const overriddenQty = shipQtyOverrides[item.channelSKU];
+      //   return {
+      //     ...item,
+      //     allocation: {
+      //       ...item.allocation,
+      //       finalAllocatedQty: overriddenQty ?? item.allocation.finalAllocatedQty,
+      //       shippingPlanQty:   overriddenQty ?? item.allocation.shippingPlanQty,
+      //       isManualOverride:  overriddenQty !== undefined,
+      //       overrideReason:    overriddenQty !== undefined ? 'Manual split adjustment' : '',
+      //     },
+      //   };
+      // });
       .map(item => {
-        const overriddenQty = shipQtyOverrides[item.channelSKU];
-        return {
-          ...item,
-          allocation: {
-            ...item.allocation,
-            finalAllocatedQty: overriddenQty ?? item.allocation.finalAllocatedQty,
-            shippingPlanQty:   overriddenQty ?? item.allocation.shippingPlanQty,
-            isManualOverride:  overriddenQty !== undefined,
-            overrideReason:    overriddenQty !== undefined ? 'Manual split adjustment' : '',
-          },
-        };
-      });
+  // Always use getShipQty — this is what the user sees in the Ship Qty column
+  // Uses manual override if set, otherwise falls back to shippingPlanQty (GAS auto qty)
+  const confirmedQty = getShipQty(item);
+  return {
+    ...item,
+    allocation: {
+      ...item.allocation,
+      finalAllocatedQty: confirmedQty,
+      shippingPlanQty:   confirmedQty,
+      isManualOverride:  shipQtyOverrides[item.channelSKU] !== undefined,
+      overrideReason:    shipQtyOverrides[item.channelSKU] !== undefined ? 'Manual adjustment' : '',
+    },
+  };
+});
 
     if (itemsToConfirm.length === 0) {
       alert('No items to confirm. All selected SKUs either have 0 ship qty or do not need replenishment.');
@@ -266,7 +281,8 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
         if (!masterTotals[item.masterSKU]) {
             masterTotals[item.masterSKU] = { assigned: 0, available: item.warehouseCheck.availableQty };
         }
-        masterTotals[item.masterSKU].assigned += item.allocation.shippingPlanQty;
+        //masterTotals[item.masterSKU].assigned += item.allocation.shippingPlanQty;
+        masterTotals[item.masterSKU].assigned += item.allocation.finalAllocatedQty;
     }
 
     for (const [masterSKU, totals] of Object.entries(masterTotals)) {
