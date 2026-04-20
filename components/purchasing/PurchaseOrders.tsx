@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { 
@@ -107,8 +107,13 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [detailsError, setDetailsError] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
-    const [activeTab, setActiveTab] = useState<'All' | POStatus>('All');
+    const [activeTab, setActiveTab] = useState<'All' | POStatus>('OPEN');
     const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+
+    // ISSUE 6: Prefetch cache for OPEN PO lines
+    const [poLinesCache, setPoLinesCache] = useState<Map<string, POLine[]>>(new Map());
+    const [lastPrefetchTime, setLastPrefetchTime] = useState<string>('');
+    const prefetchedRef = useRef(false);
 
     const mapLineToUi = (l: any): POLine => {
         const ordered = Number(l.ordered_qty ?? 0);
@@ -209,9 +214,54 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
         fetchPurchaseOrders();
     }, []);
 
+    // ISSUE 6: Prefetch all OPEN PO lines after headers load
+    const prefetchOpenPoLines = useCallback(async () => {
+        const openPos = purchaseOrders.filter(po => po.po_status === 'OPEN');
+        if (openPos.length === 0) return;
+
+        const newCache = new Map<string, POLine[]>();
+        const action = API_ACTIONS.GET_PURCHASE_ORDER_DETAILS || 'get_purchase_order_details';
+
+        const results = await Promise.all(
+            openPos.map(async (po) => {
+                try {
+                    const response = await fetch(APPS_SCRIPT_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                        body: JSON.stringify({ action, po_id: po.po_id })
+                    });
+                    const result = await response.json();
+                    if (result && result.success === true) {
+                        const lines = (result.lines || []).map(mapLineToUi);
+                        return { poId: po.po_id, lines, po: result.po };
+                    }
+                } catch (err) {
+                    console.error(`Prefetch failed for PO ${po.po_id}:`, err);
+                }
+                return null;
+            })
+        );
+
+        results.forEach(r => {
+            if (r) newCache.set(r.poId, r.lines);
+        });
+
+        setPoLinesCache(newCache);
+        setLastPrefetchTime(new Date().toLocaleTimeString());
+    }, [purchaseOrders]);
+
+    // Trigger prefetch when POs load
+    useEffect(() => {
+        if (purchaseOrders.length > 0 && !prefetchedRef.current) {
+            prefetchedRef.current = true;
+            prefetchOpenPoLines();
+        }
+    }, [purchaseOrders, prefetchOpenPoLines]);
+
     useEffect(() => {
         const handler = (e: any) => {
             // Refresh PO list
+            prefetchedRef.current = false; // Re-trigger prefetch on refresh
             fetchPurchaseOrders();
 
             // If a PO is currently open, refresh its details too
@@ -233,6 +283,25 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
             return matchesStatus && matchesSearch;
         });
     }, [searchTerm, activeTab, purchaseOrders]);
+
+    // ISSUE 6: Enhanced click handler — use cache if available
+    const handlePoClick = (poId: string) => {
+        const cachedLines = poLinesCache.get(poId);
+        if (cachedLines) {
+            const po = purchaseOrders.find(p => p.po_id === poId);
+            if (po) {
+                const total_value = cachedLines.reduce((s, x) => s + (x.ordered_qty * x.unit_price), 0);
+                setSelectedPo({
+                    ...po,
+                    lines: cachedLines,
+                    total_value,
+                } as PurchaseOrderUI);
+                return;
+            }
+        }
+        // Fallback to full API fetch
+        fetchPurchaseOrderDetails(poId);
+    };
 
     const handleClosePo = () => {
         setShowCloseConfirm(false);
@@ -478,12 +547,12 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
             {/* Status Tabs */}
             <div className="flex gap-8 border-b border-slate-800 px-1 mt-2">
                 {(['All', 'OPEN', 'PARTIALLY_SHIPPED', 'CLOSED', 'CLOSED_CANCELLED'] as const).map(tab => {
-                    const labels = {
+                    const labels: Record<string, string> = {
                         'All': 'All POs',
                         'OPEN': 'Open',
                         'PARTIALLY_SHIPPED': 'Partially Shipped',
-                        'CLOSED': 'Closed',
-                        'CLOSED_CANCELLED': 'Closed (Cancelled)'
+                        'CLOSED': 'Completed',
+                        'CLOSED_CANCELLED': 'Cancelled'
                     };
                     return (
                         <button
@@ -538,7 +607,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                 {filteredPos.map((po) => (
                                     <tr 
                                         key={po.po_id} 
-                                        onClick={() => fetchPurchaseOrderDetails(po.po_id)}
+                                        onClick={() => handlePoClick(po.po_id)}
                                         className="group hover:bg-gray-50 dark:hover:bg-slate-700/40 transition-colors duration-150 cursor-pointer"
                                     >
                                         <td className="px-6 py-4 font-mono font-bold text-blue-400">{po.po_id}</td>

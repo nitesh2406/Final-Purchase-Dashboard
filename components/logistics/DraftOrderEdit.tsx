@@ -67,9 +67,9 @@ const ModeBadge: React.FC<{ mode?: string }> = ({ mode }) => {
 };
 
 export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, setDrafts, onSave, onOrdersSubmitted, onRefreshPOs, existingPoCount = 0, skus, addSkuToCatalog, vendorMasters }) => {
-    const isViewOnly = draft?.status === 'Order Placed' || draft?.status === 'Cancelled';
+    const isViewOnly = draft?.status === 'SUBMITTED' || draft?.status === 'CANCELLED';
     // ISSUE 3: Full read-only for submitted/order_placed drafts
-    const isSubmittedReadOnly = draft?.status === 'SUBMITTED' || draft?.status === 'ORDER_PLACED' || draft?.status === 'Submitted' || draft?.status === 'Order Placed';
+    const isSubmittedReadOnly = draft?.status === 'SUBMITTED';
     const isCreateMode = !draft;
 
     // ISSUE 8: Auto-populate PO Date with today if empty
@@ -568,11 +568,12 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
             <div className="flex justify-between items-end px-1 mb-4">
                 <div>
                     <div className="flex items-center gap-3 mb-1">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${draft?.status === 'Order Placed' ? 'bg-green-600/20 text-green-400 border border-green-500/30' :
-                            draft?.status === 'Cancelled' ? 'bg-red-600/20 text-red-400 border border-red-500/30' :
-                                'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${draft?.status === 'SUBMITTED' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' :
+                            draft?.status === 'CANCELLED' ? 'bg-red-600/20 text-red-400 border border-red-500/30' :
+                            draft?.status === 'PARTIALLY_SUBMITTED' ? 'bg-amber-600/20 text-amber-400 border border-amber-500/30' :
+                                'bg-slate-600/20 text-slate-400 border border-slate-500/30'
                             }`}>
-                            {draft?.status || 'Draft'}
+                            {draft?.status || 'DRAFT'}
                         </span>
                         <h2 className="text-2xl font-black tracking-tight text-white">
                             {isCreateMode ? 'Drafting New Order' : `Order Draft: ${draft?.id}`}

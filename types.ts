@@ -41,7 +41,7 @@ export interface PurchaseOrder {
   amount?: number; // Added for list view convenience
 }
 
-export type DraftStatus = 'Draft' | 'Partially Submitted' | 'Order Placed' | 'Cancelled';
+export type DraftStatus = 'DRAFT' | 'PARTIALLY_SUBMITTED' | 'SUBMITTED' | 'CANCELLED';
 
 export interface DraftOrder {
   id: string;
@@ -368,6 +368,7 @@ export interface ForecastingSku {
   inboundETA: string | null;
   daysOfCover: number;
   reorderQty: number;
+  rawReorderQty?: number; // Pre-MOQ recommendation value
   unitCost: number;
   urgencyLevel: "critical" | "warning" | "healthy";
   mode: "Sea" | "Air" | "Both";

@@ -13,7 +13,7 @@ interface CancelDraftModalProps {
 export const CancelDraftModal: React.FC<CancelDraftModalProps> = ({ isOpen, onClose, onConfirm, draftId, status }) => {
     if (!isOpen) return null;
 
-    const isPartial = status === 'Partially Submitted';
+    const isPartial = status === 'PARTIALLY_SUBMITTED';
 
     return (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-in fade-in duration-200">

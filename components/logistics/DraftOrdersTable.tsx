@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import {
@@ -13,15 +13,21 @@ import { PurchaseOrder, DraftOrder, Sku, DraftStatus, Vendor, VendorMaster } fro
 import { APPS_SCRIPT_URL, API_ACTIONS, ViewType } from '../../App';
 
 const StatusBadge: React.FC<{ status: DraftStatus }> = ({ status }) => {
-    const config = {
-        'Draft': 'bg-slate-600 text-white',
-        'Partially Submitted': 'bg-amber-600 text-white',
-        'Order Placed': 'bg-green-600 text-white',
-        'Cancelled': 'bg-red-600 text-white',
+    const config: Record<string, string> = {
+        'DRAFT': 'bg-slate-600 text-white',
+        'PARTIALLY_SUBMITTED': 'bg-amber-600 text-white',
+        'SUBMITTED': 'bg-blue-600 text-white',
+        'CANCELLED': 'bg-red-600 text-white',
+    };
+    const labels: Record<string, string> = {
+        'DRAFT': 'Draft',
+        'PARTIALLY_SUBMITTED': 'Partially Submitted',
+        'SUBMITTED': 'Submitted',
+        'CANCELLED': 'Cancelled',
     };
     return (
-        <span className={`px-2 py-1 text-[11px] font-bold rounded uppercase tracking-wider ${config[status]}`}>
-            {status}
+        <span className={`px-2 py-1 text-[11px] font-bold rounded uppercase tracking-wider ${config[status] || 'bg-slate-600 text-white'}`}>
+            {labels[status] || status}
         </span>
     );
 };
@@ -80,12 +86,17 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [activeTab, setActiveTab] = useState<'All' | DraftStatus>('All');
+    const [activeTab, setActiveTab] = useState<'All' | DraftStatus>('DRAFT');
     const [cancelModalDraft, setCancelModalDraft] = useState<DraftOrder | null>(null);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [isMutating, setIsMutating] = useState(false);
     const [isFetchingDetails, setIsFetchingDetails] = useState(false);
+
+    // ISSUE 7: Prefetch cache for DRAFT lines
+    const [draftLinesCache, setDraftLinesCache] = useState<Map<string, any[]>>(new Map());
+    const [lastPrefetchTime, setLastPrefetchTime] = useState<string>('');
+    const prefetchedRef = useRef(false);
 
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'id', direction: 'desc' });
     const [currentPage, setCurrentPage] = useState(1);
@@ -94,8 +105,55 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     const handleRefresh = async () => {
         setIsRefreshing(true);
         await onRefreshDrafts();
+        prefetchedRef.current = false; // Re-trigger prefetch after refresh
         setIsRefreshing(false);
     };
+
+    // ISSUE 7: Prefetch all DRAFT lines on load
+    const prefetchDraftLines = useCallback(async () => {
+        const draftItems = drafts.filter(d => d.status === 'DRAFT');
+        if (draftItems.length === 0) return;
+
+        const newCache = new Map<string, any[]>();
+        const CONCURRENCY = 5;
+
+        // Process in batches of CONCURRENCY
+        for (let i = 0; i < draftItems.length; i += CONCURRENCY) {
+            const batch = draftItems.slice(i, i + CONCURRENCY);
+            const results = await Promise.all(
+                batch.map(async (draft) => {
+                    try {
+                        const response = await fetch(APPS_SCRIPT_URL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                            body: JSON.stringify({ action: API_ACTIONS.GET_DRAFT_BY_ID, draftId: draft.id })
+                        });
+                        const result = await response.json();
+                        if (result.status === 'success' && result.lines) {
+                            return { id: draft.id, lines: result.lines, draft: result.draft };
+                        }
+                    } catch (err) {
+                        console.error(`Prefetch failed for draft ${draft.id}:`, err);
+                    }
+                    return null;
+                })
+            );
+            results.forEach(r => {
+                if (r) newCache.set(r.id, r.lines);
+            });
+        }
+
+        setDraftLinesCache(newCache);
+        setLastPrefetchTime(new Date().toLocaleTimeString());
+    }, [drafts]);
+
+    // Trigger prefetch when drafts are loaded
+    useEffect(() => {
+        if (drafts.length > 0 && !prefetchedRef.current) {
+            prefetchedRef.current = true;
+            prefetchDraftLines();
+        }
+    }, [drafts, prefetchDraftLines]);
 
     const filteredDrafts = useMemo(() => {
         const lowerQuery = searchQuery.toLowerCase();
@@ -177,7 +235,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
             const result = await response.json();
             if (result.success) {
                 setDrafts(prev => prev.map(d => d.id === cancelModalDraft.id ? {
-                    ...d, status: 'Cancelled', cancelledAt: new Date().toISOString()
+                    ...d, status: 'CANCELLED' as const, cancelledAt: new Date().toISOString()
                 } : d));
                 showToast(`Draft order ${cancelModalDraft.id} cancelled`, 'success');
             } else {
@@ -192,7 +250,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     };
 
     const handleBulkCancel = async () => {
-        const affected = drafts.filter(d => selectedIds.includes(d.id) && ['Draft', 'Partially Submitted'].includes(d.status));
+        const affected = drafts.filter(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY_SUBMITTED'].includes(d.status));
         if (affected.length === 0) return;
         if (confirm(`Cancel ${affected.length} selected draft orders?`)) {
             setIsMutating(true);
@@ -204,8 +262,8 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                 });
                 const result = await response.json();
                 if (result.success) {
-                    setDrafts(prev => prev.map(d => selectedIds.includes(d.id) && ['Draft', 'Partially Submitted'].includes(d.status)
-                        ? { ...d, status: 'Cancelled', cancelledAt: new Date().toISOString() }
+                    setDrafts(prev => prev.map(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY_SUBMITTED'].includes(d.status)
+                        ? { ...d, status: 'CANCELLED' as const, cancelledAt: new Date().toISOString() }
                         : d));
                     showToast(`${affected.length} drafts cancelled`, 'success');
                     setSelectedIds([]);
@@ -222,6 +280,19 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
 
     const handleEdit = async (id: string) => {
         if (isFetchingDetails || !id) return;
+
+        // ISSUE 7: Check prefetch cache first
+        const cachedLines = draftLinesCache.get(id);
+        if (cachedLines) {
+            const draft = drafts.find(d => d.id === id);
+            if (draft) {
+                setDrafts(prev => prev.map(d => d.id === id ? { ...d, items: cachedLines } : d));
+                setSelectedDraftId(id);
+                setView('edit');
+                return;
+            }
+        }
+
         setIsFetchingDetails(true);
         try {
             const response = await fetch(APPS_SCRIPT_URL, {
@@ -396,14 +467,20 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                 <>
                     <div className="space-y-3">
                         <div className="flex gap-8 border-b border-slate-800 px-1">
-                            {(['All', 'Draft', 'Partially Submitted', 'Order Placed', 'Cancelled'] as const).map(tab => (
+                            {([
+                                { key: 'All' as const, label: 'All' },
+                                { key: 'DRAFT' as const, label: 'Draft' },
+                                { key: 'PARTIALLY_SUBMITTED' as const, label: 'Partially Submitted' },
+                                { key: 'SUBMITTED' as const, label: 'Submitted' },
+                                { key: 'CANCELLED' as const, label: 'Cancelled' },
+                            ]).map(({ key: tab, label }) => (
                                 <button
                                     key={tab}
                                     onClick={() => { setActiveTab(tab); setCurrentPage(1); }}
                                     className={`pb-3 text-sm font-medium transition-all relative ${activeTab === tab ? 'text-blue-500' : 'text-slate-500 hover:text-slate-300'
                                         }`}
                                 >
-                                    {tab}
+                                    {label}
                                     {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-full" />}
                                 </button>
                             ))}
@@ -440,7 +517,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                                 key={draft.id}
                                                 id={`draft-row-${draft.id}`}
                                                 onClick={() => handleEdit(draft.id)}
-                                                className={`group hover:bg-gray-50 dark:hover:bg-slate-700/40 transition-all duration-300 cursor-pointer ${draft.status === 'Cancelled' ? 'opacity-50' : ''} ${highlightedId === draft.id ? 'ring-4 ring-blue-500/50 bg-blue-900/20 z-10' : ''}`}
+                                                className={`group hover:bg-gray-50 dark:hover:bg-slate-700/40 transition-all duration-300 cursor-pointer ${draft.status === 'CANCELLED' ? 'opacity-50' : ''} ${highlightedId === draft.id ? 'ring-4 ring-blue-500/50 bg-blue-900/20 z-10' : ''}`}
                                             >
                                                 <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                                     <input
@@ -469,12 +546,12 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                                 <td className="px-4 py-3 text-right">
                                                     <div className="flex justify-end gap-1.5" onClick={e => e.stopPropagation()}>
                                                         <button onClick={() => handleEdit(draft.id)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-600 rounded text-gray-400 dark:text-slate-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors duration-150" title="Edit">
-                                                            {['Draft', 'Partially Submitted'].includes(draft.status) ? <PencilIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
+                                                            {['DRAFT', 'PARTIALLY_SUBMITTED'].includes(draft.status) ? <PencilIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
                                                         </button>
                                                         <button onClick={() => handleDuplicate(draft)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-600 rounded text-gray-400 dark:text-slate-400 hover:text-gray-800 dark:hover:text-white transition-colors duration-150" title="Duplicate">
                                                             <DocumentDuplicateIcon className="w-4 h-4" />
                                                         </button>
-                                                        {['Draft', 'Partially Submitted'].includes(draft.status) && (
+                                                        {['DRAFT', 'PARTIALLY_SUBMITTED'].includes(draft.status) && (
                                                             <button onClick={() => setCancelModalDraft(draft)} className="p-1.5 hover:bg-red-500/20 rounded text-gray-400 dark:text-slate-400 hover:text-red-500 transition-colors duration-150" title="Cancel">
                                                                 <TrashIcon className="w-4 h-4" />
                                                             </button>

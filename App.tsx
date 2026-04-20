@@ -14,13 +14,15 @@ import { InventoryAnalytics } from './components/inventory/InventoryAnalytics.ts
 import { InventoryForecasting } from './components/inventory/InventoryForecasting.tsx';
 import { Settings } from './components/settings/Settings.tsx';
 import { AmazonForecasting } from './pages/AmazonForecasting.tsx';
+import { NewSkuDashboard } from './components/dashboard/NewSkuDashboard.tsx';
+import { NewSkuDetail } from './components/dashboard/NewSkuDetail.tsx';
 import { ShipmentFinance } from './components/finance/ShipmentFinance.tsx';
 import { ShipmentFinanceDetail } from './components/finance/ShipmentFinanceDetail.tsx';
 import { PaymentLedger } from './components/finance/PaymentLedger.tsx';
 import { AccountsView } from './components/finance/AccountsView.tsx';
 import { Sku, PurchaseOrder, Shipment, Invoice, Vendor, Notification, DraftOrder, VendorMaster } from './types.ts';
 
-export type ViewType = 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders' | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance' | 'Inventory Analytics' | 'Settings' | 'Shipment Finance' | 'Shipment Finance Detail' | 'Payment Ledger' | 'Accounts View' | 'Amazon Forecasting';
+export type ViewType = 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders' | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance' | 'Inventory Analytics' | 'Settings' | 'Shipment Finance' | 'Shipment Finance Detail' | 'Payment Ledger' | 'Accounts View' | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail';
 
 export const APPS_SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycby2w_vPzSmxd1gFxlhbqdQevKuA-_bThNZG1s7AK-gIONmBCDmUg3-rBmC6S4HvZVDd/exec';
 
@@ -79,6 +81,7 @@ const App: React.FC = () => {
     const [currentView, setCurrentView] = useState<ViewType>('Dashboard');
     const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
     const [selectedFinanceBatchId, setSelectedFinanceBatchId] = useState<string | null>(null);
+    const [selectedSkuRequestId, setSelectedSkuRequestId] = useState<string | null>(null);
     const [highlightDraftId, setHighlightDraftId] = useState<string | null>(null);
     const [lastApiLog, setLastApiLog] = useState<{ action: string; status: number | string; timestamp: string } | null>(null);
     const [showGlobalDebug, setShowGlobalDebug] = useState(false);
@@ -376,6 +379,21 @@ const App: React.FC = () => {
                     amazonConfig={amazonConfig}
                     onConfigUpdate={fetchAmazonConfig}
                 />;
+            case 'Create SKU':
+                return <NewSkuDashboard onOpenDetail={(id) => {
+                    setSelectedSkuRequestId(id);
+                    setCurrentView('SKU Detail');
+                }} />;
+            case 'SKU Detail':
+                return selectedSkuRequestId ? (
+                    <NewSkuDetail
+                        requestId={selectedSkuRequestId}
+                        onBack={() => setCurrentView('Create SKU')}
+                    />
+                ) : <NewSkuDashboard onOpenDetail={(id) => {
+                    setSelectedSkuRequestId(id);
+                    setCurrentView('SKU Detail');
+                }} />;
             case 'Settings':
                 return <Settings
                     config={forecastingConfig}

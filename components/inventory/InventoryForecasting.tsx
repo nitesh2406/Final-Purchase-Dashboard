@@ -82,17 +82,18 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     const [isCreatingDraft, setIsCreatingDraft] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [toast, setToast] = useState<ToastState | null>(null);
-    const [activeMode, setActiveMode] = useState<'sea' | 'air'>('sea');
+    const [activeMode, setActiveMode] = useState<'all' | 'sea' | 'air'>('all');
 
     // Per-mode reorderQty overrides (ISSUE 1 fix)
     // Stored separately from skus so switching modes doesn't lose edits
     const [qtyOverrides, setQtyOverrides] = useState<{
+        all: Record<string, number>;
         sea: Record<string, number>;
         air: Record<string, number>;
-    }>({ sea: {}, air: {} });
+    }>({ all: {}, sea: {}, air: {} });
 
     // Per-mode last manual refresh timestamp (ISSUE 9 debug)
-    const [lastManualRefresh, setLastManualRefresh] = useState<Record<string, string>>({ sea: '', air: '' });
+    const [lastManualRefresh, setLastManualRefresh] = useState<Record<string, string>>({ all: '', sea: '', air: '' });
 
     // Per-tab state — keyed by mode so switching tabs restores previous work
     type TabState = {
@@ -114,6 +115,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         modalChartPeriod: '30',
     });
     const [tabStates, setTabStates] = useState<Record<string, TabState>>({
+        all: defaultTabState(),
         sea: defaultTabState(),
         air: defaultTabState(),
     });
@@ -173,7 +175,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     const [showDebug, setShowDebug] = useState(false);
     const [debugLog, setDebugLog] = useState<DebugEntry[]>([]);
 
-    const prevModeRef = useRef<'sea' | 'air' | null>(null);
+    const prevModeRef = useRef<'all' | 'sea' | 'air' | null>(null);
     const latestModeRef = useRef(activeMode);
 
     const addDebugLog = useCallback((type: 'req' | 'res' | 'err', data: any) => {
@@ -232,7 +234,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     }, [activeMode]);
 
     // Switch tab: restore persisted state for the newly selected tab
-    const handleModeSwitch = (mode: 'sea' | 'air') => {
+    const handleModeSwitch = (mode: 'all' | 'sea' | 'air') => {
         if (mode === activeMode) return;
         // Save current state before switching
         const currentState: TabState = { statusFilter, searchTerm, sortConfig, selectedSkuIds, showNeedsOrderOnly, editingQty, modalChartPeriod };
@@ -519,6 +521,9 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                         </th>
                         <th scope="col" className="px-2 py-3"></th>
                         <SortableHeader label="SKU" sortKey="masterSKU" className="text-left" />
+                        {activeMode === 'all' && (
+                            <th scope="col" className="px-2 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider text-center">Mode</th>
+                        )}
                         <SortableHeader label="Product Name" sortKey="productName" className="text-left" />
                         <SortableHeader label="15D Sale" sortKey="sale15Days" className="text-center" />
                         <SortableHeader label="30D Sale" sortKey="sale30Days" className="text-center" />
@@ -528,6 +533,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                         <SortableHeader label="Available" sortKey="inStock" className="text-center" />
                         <SortableHeader label="In-Transit" sortKey="inTransit" className="text-center" />
                         <SortableHeader label="Days of Cover" sortKey="daysOfCover" className="text-center" />
+                        <SortableHeader label="Rec Qty" sortKey="reorderQty" className="text-center" />
                         <SortableHeader label="Reorder Qty" sortKey="reorderQty" className="text-center" />
                     </tr>
                 </thead>
@@ -549,7 +555,18 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                 </div>
                             </td>
                             <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-left text-gray-800 dark:text-white">{sku.masterSKU}</td>
-                            <td className="px-3 py-3 text-sm text-left max-w-[300px] overflow-x-auto whitespace-nowrap text-gray-700 dark:text-gray-200">{sku.productName}</td>
+                            {activeMode === 'all' && (
+                                <td className="px-2 py-3 text-center">
+                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold rounded border ${
+                                        String(sku.mode).toUpperCase() === 'AIR'
+                                            ? 'bg-sky-600/20 text-sky-400 border-sky-600/30'
+                                            : 'bg-blue-600/20 text-blue-400 border-blue-600/30'
+                                    }`}>
+                                        {String(sku.mode).toUpperCase()}
+                                    </span>
+                                </td>
+                            )}
+                            <td className="px-3 py-3 text-sm text-left max-w-[300px] text-gray-700 dark:text-gray-200 line-clamp-2">{sku.productName}</td>
                             <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{formatNumber(sku.sale15Days)}</td>
                             <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{formatNumber(sku.sale30Days)}</td>
                             <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{formatNumber(sku.sale90Days)}</td>
@@ -606,6 +623,15 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                         (OOS: {sku.outOfStock30Days}d)
                                     </div>
                                 )}
+                            </td>
+                            {/* ISSUE 1: REC QTY column — pre-MOQ recommendation */}
+                            <td className="px-3 py-3 whitespace-nowrap text-right">
+                                {(() => {
+                                    const raw = sku.rawReorderQty ?? 0;
+                                    if (raw === 0) return <span className="text-sm text-slate-500 font-mono">—</span>;
+                                    const hasMoqDiff = raw !== sku.reorderQty;
+                                    return <span className={`text-sm font-mono ${hasMoqDiff ? 'text-amber-400' : 'text-slate-300'}`}>{raw}</span>;
+                                })()}
                             </td>
                             <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
                                 <div className="w-24 mx-auto">
@@ -792,6 +818,9 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                     </button>
                 </div>
                 <div className="flex items-center p-1 bg-gray-200 dark:bg-gray-700 rounded-lg flex-shrink-0">
+                    <button onClick={() => handleModeSwitch('all')} className={`py-1 px-3 rounded-md text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 ${activeMode === 'all' ? 'bg-slate-600 text-white shadow-sm' : 'text-gray-600 dark:text-gray-300'}`}>
+                        ALL
+                    </button>
                     <button onClick={() => handleModeSwitch('sea')} className={`py-1 px-3 rounded-md text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 ${activeMode === 'sea' ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 dark:text-gray-300'}`}>
                         <ShipIcon className="w-4 h-4" /> SEA
                     </button>
@@ -840,6 +869,14 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                 <div className="bg-slate-800 p-2 rounded">
                                     <p className="text-[9px] text-slate-500 uppercase font-bold">AIR Edits</p>
                                     <p className="text-sm font-mono text-sky-400">{Object.keys(qtyOverrides.air).length}</p>
+                                </div>
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">ALL Edits</p>
+                                    <p className="text-sm font-mono text-slate-300">{Object.keys(qtyOverrides.all).length}</p>
+                                </div>
+                                <div className="bg-slate-800 p-2 rounded">
+                                    <p className="text-[9px] text-slate-500 uppercase font-bold">ALL Mode SKUs</p>
+                                    <p className="text-sm font-mono text-cyan-400">{activeMode === 'all' ? skus.length : (forecastingCache['all']?.length ?? '—')}</p>
                                 </div>
                                 {/* ISSUE 9 + DEBUG: Auto-refresh status and last manual refresh */}
                                 <div className="bg-slate-800 p-2 rounded">
