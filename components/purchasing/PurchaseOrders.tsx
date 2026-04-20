@@ -216,7 +216,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
 
     // ISSUE 6: Prefetch all OPEN PO lines after headers load
     const prefetchOpenPoLines = useCallback(async () => {
-        const openPos = purchaseOrders.filter(po => po.po_status === 'OPEN');
+        const openPos = purchaseOrders.filter(po => String(po.po_status).toUpperCase() === 'OPEN');
         if (openPos.length === 0) return;
 
         const newCache = new Map<string, POLine[]>();
@@ -277,7 +277,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
 
     const filteredPos = useMemo(() => {
         return purchaseOrders.filter(po => {
-            const matchesStatus = activeTab === 'All' || po.po_status === activeTab;
+            const matchesStatus = activeTab === 'All' || String(po.po_status).toUpperCase() === activeTab;
             const matchesSearch = po.po_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
                                  po.vendor_code.toLowerCase().includes(searchTerm.toLowerCase());
             return matchesStatus && matchesSearch;

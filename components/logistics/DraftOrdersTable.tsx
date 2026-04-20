@@ -26,8 +26,8 @@ const StatusBadge: React.FC<{ status: DraftStatus }> = ({ status }) => {
         'CANCELLED': 'Cancelled',
     };
     return (
-        <span className={`px-2 py-1 text-[11px] font-bold rounded uppercase tracking-wider ${config[status] || 'bg-slate-600 text-white'}`}>
-            {labels[status] || status}
+        <span className={`px-2 py-1 text-[11px] font-bold rounded uppercase tracking-wider ${config[String(status).toUpperCase()] || 'bg-slate-600 text-white'}`}>
+            {labels[String(status).toUpperCase()] || status}
         </span>
     );
 };
@@ -111,7 +111,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
 
     // ISSUE 7: Prefetch all DRAFT lines on load
     const prefetchDraftLines = useCallback(async () => {
-        const draftItems = drafts.filter(d => d.status === 'DRAFT');
+        const draftItems = drafts.filter(d => String(d.status).toUpperCase() === 'DRAFT');
         if (draftItems.length === 0) return;
 
         const newCache = new Map<string, any[]>();
@@ -158,7 +158,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     const filteredDrafts = useMemo(() => {
         const lowerQuery = searchQuery.toLowerCase();
         return drafts.filter(d => {
-            const matchesTab = activeTab === 'All' || d.status === activeTab;
+            const matchesTab = activeTab === 'All' || String(d.status).toUpperCase() === activeTab;
             const matchesSearch = d.id.toLowerCase().includes(lowerQuery) ||
                 (d.vendors && d.vendors.some(v => v.toLowerCase().includes(lowerQuery)));
             return matchesTab && matchesSearch;
@@ -250,7 +250,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     };
 
     const handleBulkCancel = async () => {
-        const affected = drafts.filter(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY_SUBMITTED'].includes(d.status));
+        const affected = drafts.filter(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY_SUBMITTED'].includes(String(d.status).toUpperCase()));
         if (affected.length === 0) return;
         if (confirm(`Cancel ${affected.length} selected draft orders?`)) {
             setIsMutating(true);
@@ -262,7 +262,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                 });
                 const result = await response.json();
                 if (result.success) {
-                    setDrafts(prev => prev.map(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY_SUBMITTED'].includes(d.status)
+                    setDrafts(prev => prev.map(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY_SUBMITTED'].includes(String(d.status).toUpperCase())
                         ? { ...d, status: 'CANCELLED' as const, cancelledAt: new Date().toISOString() }
                         : d));
                     showToast(`${affected.length} drafts cancelled`, 'success');
@@ -517,7 +517,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                                 key={draft.id}
                                                 id={`draft-row-${draft.id}`}
                                                 onClick={() => handleEdit(draft.id)}
-                                                className={`group hover:bg-gray-50 dark:hover:bg-slate-700/40 transition-all duration-300 cursor-pointer ${draft.status === 'CANCELLED' ? 'opacity-50' : ''} ${highlightedId === draft.id ? 'ring-4 ring-blue-500/50 bg-blue-900/20 z-10' : ''}`}
+                                                className={`group hover:bg-gray-50 dark:hover:bg-slate-700/40 transition-all duration-300 cursor-pointer ${String(draft.status).toUpperCase() === 'CANCELLED' ? 'opacity-50' : ''} ${highlightedId === draft.id ? 'ring-4 ring-blue-500/50 bg-blue-900/20 z-10' : ''}`}
                                             >
                                                 <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                                     <input
@@ -546,12 +546,12 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                                 <td className="px-4 py-3 text-right">
                                                     <div className="flex justify-end gap-1.5" onClick={e => e.stopPropagation()}>
                                                         <button onClick={() => handleEdit(draft.id)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-600 rounded text-gray-400 dark:text-slate-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors duration-150" title="Edit">
-                                                            {['DRAFT', 'PARTIALLY_SUBMITTED'].includes(draft.status) ? <PencilIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
+                                                            {['DRAFT', 'PARTIALLY_SUBMITTED'].includes(String(draft.status).toUpperCase()) ? <PencilIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
                                                         </button>
                                                         <button onClick={() => handleDuplicate(draft)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-600 rounded text-gray-400 dark:text-slate-400 hover:text-gray-800 dark:hover:text-white transition-colors duration-150" title="Duplicate">
                                                             <DocumentDuplicateIcon className="w-4 h-4" />
                                                         </button>
-                                                        {['DRAFT', 'PARTIALLY_SUBMITTED'].includes(draft.status) && (
+                                                        {['DRAFT', 'PARTIALLY_SUBMITTED'].includes(String(draft.status).toUpperCase()) && (
                                                             <button onClick={() => setCancelModalDraft(draft)} className="p-1.5 hover:bg-red-500/20 rounded text-gray-400 dark:text-slate-400 hover:text-red-500 transition-colors duration-150" title="Cancel">
                                                                 <TrashIcon className="w-4 h-4" />
                                                             </button>
