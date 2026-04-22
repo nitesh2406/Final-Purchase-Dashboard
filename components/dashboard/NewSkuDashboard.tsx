@@ -314,14 +314,9 @@ export const NewSkuDashboard: React.FC<{ onOpenDetail: (id: string) => void }> =
 
         {/* Top row: title + actions */}
         <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 dark:text-white">
-              Create SKU
-            </h1>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              Manage new SKU creation requests across EasyEcom, Zoho and Shopify
-            </p>
-          </div>
+          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
+            Manage new SKU creation requests across EasyEcom, Zoho and Shopify
+          </p>
           <div className="flex items-center gap-3">
             {/* Debug toggle */}
             <button
