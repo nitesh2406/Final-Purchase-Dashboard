@@ -307,96 +307,97 @@ export const NewSkuDashboard: React.FC<{ onOpenDetail: (id: string) => void }> =
   const statusChips: (SkuStatus | 'ALL')[] = ['ALL', 'PENDING', 'IN_PROGRESS', 'ACTION_REQ', 'CREATED', 'REJECTED'];
 
   return (
-    <div className="space-y-6 max-w-[1600px] mx-auto p-6 animate-in fade-in duration-500">
+    <div className="space-y-4 max-w-[1600px] mx-auto p-6 animate-in fade-in duration-500">
 
-      {/* ─── SECTION 5: PAGE HEADER ─── */}
-      <div className="flex justify-between items-start">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Create SKU
-          </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Manage new SKU creation requests across EasyEcom, Zoho and Shopify
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {/* Debug toggle */}
-          <button
-            onClick={toggleDebug}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all ${
-              debugMode
-                ? 'bg-amber-500 text-white'
-                : 'bg-gray-200 dark:bg-gray-700 text-gray-500'
-            }`}
-          >
-            Debug
-          </button>
-
-          {/* + Create SKU */}
-          <Button variant="primary" onClick={() => onOpenDetail('NEW')}>
-            <PlusIcon className="w-4 h-4 mr-1" />
-            Create SKU
-          </Button>
-        </div>
-      </div>
-
-      {/* ─── SECTION 6: FILTER BAR ─── */}
+      {/* ─── SECTION 5+6: UNIFIED FILTER BAR WITH HEADER ─── */}
       <Card className="!p-4">
-        {/* Row 1 — Status chips */}
-        <div className="flex flex-wrap gap-2 mb-3">
-          {statusChips.map(s => {
-            const isActive = statusFilter === s;
-            const label = s === 'ALL' ? 'All' : STATUS_CONFIG[s].label;
-            return (
-              <button
-                key={s}
-                onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all ${
-                  isActive
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
+
+        {/* Top row: title + actions */}
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white">
+              Create SKU
+            </h1>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Manage new SKU creation requests across EasyEcom, Zoho and Shopify
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            {/* Debug toggle */}
+            <button
+              onClick={() => {
+                const next = !debugMode;
+                setDebugMode(next);
+                localStorage.setItem('skuDebugMode', String(next));
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                debugMode
+                  ? 'bg-amber-500 text-white'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+              }`}
+            >
+              Debug
+            </button>
+            {/* + Create SKU button */}
+            <Button onClick={() => onOpenDetail('NEW')} className="flex items-center gap-1.5">
+              <PlusIcon className="w-4 h-4" />
+              Create SKU
+            </Button>
+          </div>
         </div>
 
-        {/* Row 2 — Controls */}
+        {/* Status chips */}
+        <div className="flex flex-wrap gap-2 mb-3">
+          {(['ALL', 'PENDING', 'IN_PROGRESS', 'ACTION_REQ', 'CREATED', 'REJECTED'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all ${
+                statusFilter === s
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }`}
+            >
+              {s === 'ALL' ? 'All'
+                : s === 'IN_PROGRESS' ? 'In Progress'
+                : s === 'ACTION_REQ' ? 'Action Req'
+                : s.charAt(0) + s.slice(1).toLowerCase()}
+            </button>
+          ))}
+        </div>
+
+        {/* Filter controls row */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Vendor select */}
+
+          {/* Vendor */}
           <select
             value={vendorFilter}
             onChange={e => setVendorFilter(e.target.value)}
-            className="text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+            className="h-9 text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
           >
             <option value="ALL">All Vendors</option>
-            {vendors.map(v => (
-              <option key={v} value={v}>{v}</option>
-            ))}
+            {vendors.map(v => <option key={v} value={v}>{v}</option>)}
           </select>
 
-          {/* Date From */}
-          <div className="flex flex-col">
-            <span className="text-xs text-gray-400 mb-0.5">From</span>
+          {/* From date */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">From</span>
             <input
               type="date"
               value={dateFrom}
               onChange={e => setDateFrom(e.target.value)}
-              className="text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+              className="h-9 text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
           </div>
 
-          {/* Date To */}
-          <div className="flex flex-col">
-            <span className="text-xs text-gray-400 mb-0.5">To</span>
+          {/* To date */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">To</span>
             <input
               type="date"
               value={dateTo}
               onChange={e => setDateTo(e.target.value)}
-              className="text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+              className="h-9 text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
           </div>
 
@@ -408,14 +409,15 @@ export const NewSkuDashboard: React.FC<{ onOpenDetail: (id: string) => void }> =
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               placeholder="Search by name, ID or SKU..."
-              className="w-full pl-8 text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+              className="h-9 w-full pl-8 pr-3 text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
           </div>
 
-          {/* Results count */}
+          {/* Count */}
           <span className="ml-auto text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
             Showing {filtered.length} of {data.length} requests
           </span>
+
         </div>
       </Card>
 

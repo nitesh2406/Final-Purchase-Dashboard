@@ -382,7 +382,7 @@ export const NewSkuDetail: React.FC<{
   };
 
   return (
-    <div className="space-y-6 max-w-[1600px] mx-auto p-6 animate-in fade-in duration-500">
+    <div className="max-w-[1600px] mx-auto p-6 flex flex-col h-screen overflow-hidden animate-in fade-in duration-500">
 
       {/* ─── SECTION 3: PAGE HEADER ─── */}
       <div className="flex items-center gap-3 mb-6">
@@ -405,10 +405,10 @@ export const NewSkuDetail: React.FC<{
       </div>
 
       {/* ─── SECTION 4: TWO-COLUMN LAYOUT ─── */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <div className="flex gap-6 h-[calc(100vh-120px)]">
 
-        {/* LEFT: Form sections — 2/3 width */}
-        <div className="xl:col-span-2 space-y-6">
+        {/* LEFT column — independently scrollable */}
+        <div className="flex-1 overflow-y-auto pr-2 space-y-6 scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
 
           {/* ─── SECTION A: Source Info (read-only) ─── */}
           {!isNew && (
@@ -783,10 +783,48 @@ export const NewSkuDetail: React.FC<{
               </div>
             </div>
           </Card>
+          {/* ─── SECTION 7: DEBUG PANEL (inside left column) ─── */}
+          {debugMode && (
+            <Card className="border-2 border-amber-400 dark:border-amber-600 !p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <ExclamationTriangleIcon className="w-4 h-4 text-amber-500" />
+                <span className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
+                  🐛 Debug Panel
+                </span>
+                <span className="text-[10px] text-amber-400 dark:text-amber-500 ml-auto">
+                  In debug mode, step buttons can be triggered regardless of sequential lock
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-4 text-xs font-mono">
+                <div>
+                  <p className="text-gray-500 dark:text-gray-400 mb-1">Form State:</p>
+                  <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-48">
+                    {JSON.stringify(form, null, 2)}
+                  </pre>
+                </div>
+                <div>
+                  <p className="text-gray-500 dark:text-gray-400 mb-1">Platform Status:</p>
+                  <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-24">
+                    {JSON.stringify(platformStatus, null, 2)}
+                  </pre>
+                  <p className="text-gray-500 dark:text-gray-400 mb-1 mt-2">Pricing:</p>
+                  <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-24">
+                    {JSON.stringify({ landedCost, suggestedMrp, suggestedSelling, grossMarginPct, profitPerUnit }, null, 2)}
+                  </pre>
+                </div>
+                <div>
+                  <p className="text-gray-500 dark:text-gray-400 mb-1">Source Data:</p>
+                  <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-48">
+                    {JSON.stringify(sourceData, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            </Card>
+          )}
         </div>
 
-        {/* ─── RIGHT COLUMN: Status panel — 1/3 width ─── */}
-        <div className="xl:col-span-1 space-y-4">
+        {/* RIGHT column — sticky, does NOT scroll with left */}
+        <div className="w-80 xl:w-96 flex-shrink-0 overflow-y-auto space-y-4 scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
 
           {/* ─── A: Margin Calculator ─── */}
           <Card>
@@ -1040,45 +1078,6 @@ export const NewSkuDetail: React.FC<{
           </Card>
         </div>
       </div>
-
-      {/* ─── SECTION 7: DEBUG PANEL ─── */}
-      {debugMode && (
-        <Card className="border-2 border-amber-400 dark:border-amber-600 !p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <ExclamationTriangleIcon className="w-4 h-4 text-amber-500" />
-            <span className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
-              🐛 Debug Panel
-            </span>
-            <span className="text-[10px] text-amber-400 dark:text-amber-500 ml-auto">
-              In debug mode, step buttons can be triggered regardless of sequential lock
-            </span>
-          </div>
-          <div className="grid grid-cols-3 gap-4 text-xs font-mono">
-            <div>
-              <p className="text-gray-500 dark:text-gray-400 mb-1">Form State:</p>
-              <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-48">
-                {JSON.stringify(form, null, 2)}
-              </pre>
-            </div>
-            <div>
-              <p className="text-gray-500 dark:text-gray-400 mb-1">Platform Status:</p>
-              <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-24">
-                {JSON.stringify(platformStatus, null, 2)}
-              </pre>
-              <p className="text-gray-500 dark:text-gray-400 mb-1 mt-2">Pricing:</p>
-              <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-24">
-                {JSON.stringify({ landedCost, suggestedMrp, suggestedSelling, grossMarginPct, profitPerUnit }, null, 2)}
-              </pre>
-            </div>
-            <div>
-              <p className="text-gray-500 dark:text-gray-400 mb-1">Source Data:</p>
-              <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-48">
-                {JSON.stringify(sourceData, null, 2)}
-              </pre>
-            </div>
-          </div>
-        </Card>
-      )}
     </div>
   );
 };
