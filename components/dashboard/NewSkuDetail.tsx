@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { APPS_SCRIPT_URL, API_ACTIONS } from '../../App';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import {
@@ -76,97 +77,13 @@ interface PricingConfig {
   margin_factor: number;
 }
 
-const MOCK_PRICING_CONFIG: PricingConfig = {
-  cny_conv_rate: 12.5,
-  shipping_factor: 1.18,
-  mrp_factor: 3.2,
-  margin_factor: 0.55,
-};
-
-// SKU category prefix map
-const SKU_CATEGORY_MAP: Record<string, string> = {
-  '2x2': '102', '3x3': '103', '4x4': '104', '5x5': '105',
-  '6x6': '106', '7x7': '107', 'Accessory': '140', 'Big Cubes': '108',
-  'Clock': '153', 'Design': 'EMC', 'Event Equipment': '999',
-  'Events': '802', 'Gift Box': '146', 'Kreativity': '400',
-  'Learn': '990', 'Lubricant': '137', 'Megaminx': '129',
-  'Mirror': '112', 'Other': '139', 'Other Puzzles': '163',
-  'Pyraminx': '128', 'SERVICE': 'SER', 'Snake': '131',
-  'Timer and Mat': '138', 'Shape Mod': '113', 'Skewb': '113',
-  'Square-1': '115',
-};
-
-const CATEGORIES = Object.keys(SKU_CATEGORY_MAP);
-
-// ─────────────────────────────────────────
-// MOCK DATA (same as NewSkuDashboard)
-// ─────────────────────────────────────────
-
-const MOCK_SKU_REQUESTS: SkuRequest[] = [
-  {
-    request_id: 'NSR-001', shipment_id: 'VS-PW260401-4',
-    item_name: 'MoYu RS3M 2021 Stickerless', category: '3x3', vendor_code: 'PW',
-    invoice_qty: 500, unit_price: 48.50, requested_by: 'Nitesh',
-    requested_at: '2026-04-10T09:30:00Z', status: 'CREATED',
-    ee_done: true, zoho_done: true, shopify_done: true, ee_po_updated: true,
-    ee_sku: 'CUBE-RS3M-STK-001', shopify_listing_url: 'https://cubelelo.com/products/moyu-rs3m-2021',
-  },
-  {
-    request_id: 'NSR-002', shipment_id: 'VS-QY260402-1',
-    item_name: 'QiYi MS Pyraminx', category: 'Pyraminx', vendor_code: 'QY',
-    invoice_qty: 200, unit_price: 32.00, requested_by: 'Arjun',
-    requested_at: '2026-04-11T11:15:00Z', status: 'IN_PROGRESS',
-    ee_done: true, zoho_done: true, shopify_done: false, ee_po_updated: false,
-    ee_sku: 'CUBE-QIYI-PYR-002', shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-003', shipment_id: 'VS-MY260403-2',
-    item_name: 'GAN 12 M Leap', category: '3x3', vendor_code: 'MY',
-    invoice_qty: 100, unit_price: 198.00, requested_by: 'Nitesh',
-    requested_at: '2026-04-12T14:00:00Z', status: 'PENDING',
-    ee_done: false, zoho_done: false, shopify_done: false, ee_po_updated: false,
-    ee_sku: '', shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-004', shipment_id: '',
-    item_name: 'YJ MGC Megaminx Magnetic', category: 'Megaminx', vendor_code: 'PW',
-    invoice_qty: 150, unit_price: 85.00, requested_by: 'Priya',
-    requested_at: '2026-04-13T08:45:00Z', status: 'ACTION_REQ',
-    ee_done: true, zoho_done: false, shopify_done: false, ee_po_updated: false,
-    ee_sku: 'CUBE-MGC-MEGA-004', shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-005', shipment_id: 'VS-QY260404-3',
-    item_name: 'QiYi X-Man Tornado V3 Pioneer', category: '3x3', vendor_code: 'QY',
-    invoice_qty: 300, unit_price: 72.50, requested_by: 'Arjun',
-    requested_at: '2026-04-14T10:20:00Z', status: 'REJECTED',
-    ee_done: false, zoho_done: false, shopify_done: false, ee_po_updated: false,
-    ee_sku: '', shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-006', shipment_id: 'VS-PW260405-1',
-    item_name: 'MoYu WeiLong WRM V10 MagLev', category: '3x3', vendor_code: 'PW',
-    invoice_qty: 250, unit_price: 135.00, requested_by: 'Nitesh',
-    requested_at: '2026-04-15T07:10:00Z', status: 'PENDING',
-    ee_done: false, zoho_done: false, shopify_done: false, ee_po_updated: false,
-    ee_sku: '', shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-007', shipment_id: '',
-    item_name: 'QiYi Clock Magnetic', category: 'Clock', vendor_code: 'QY',
-    invoice_qty: 120, unit_price: 55.00, requested_by: 'Priya',
-    requested_at: '2026-04-16T13:30:00Z', status: 'IN_PROGRESS',
-    ee_done: true, zoho_done: false, shopify_done: false, ee_po_updated: false,
-    ee_sku: 'CUBE-QY-CLK-007', shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-008', shipment_id: 'VS-MY260406-5',
-    item_name: 'MoYu AoYan Skewb M', category: 'Skewb', vendor_code: 'MY',
-    invoice_qty: 180, unit_price: 42.00, requested_by: 'Arjun',
-    requested_at: '2026-04-17T06:00:00Z', status: 'ACTION_REQ',
-    ee_done: true, zoho_done: true, shopify_done: true, ee_po_updated: false,
-    ee_sku: 'CUBE-AOYAN-SKW-008', shopify_listing_url: 'https://cubelelo.com/products/moyu-aoyan-skewb',
-  },
+const CATEGORIES = [
+  '2x2','3x3','4x4','5x5','6x6','7x7',
+  'Accessory','Big Cubes','Clock','Design',
+  'Event Equipment','Events','Gift Box','Kreativity',
+  'Learn','Lubricant','Megaminx','Mirror','Other',
+  'Other Puzzles','Pyraminx','SERVICE','Shape Mod',
+  'Skewb','Snake','Square-1','Timer and Mat',
 ];
 
 // ─────────────────────────────────────────
@@ -215,9 +132,71 @@ export const NewSkuDetail: React.FC<{
   const isNew = requestId === 'NEW';
 
   // Source data (read-only, from sheet row or blank for manual)
-  const [sourceData] = useState<Partial<SkuRequest>>(
-    isNew ? {} : MOCK_SKU_REQUESTS.find(r => r.request_id === requestId) ?? {}
-  );
+  const [sourceData, setSourceData] = useState<Partial<SkuRequest>>({});
+  const [isLoadingSource, setIsLoadingSource] = useState(!isNew);
+
+  useEffect(() => {
+    if (isNew) return;
+    const fetchRequest = async () => {
+      setIsLoadingSource(true);
+      try {
+        const response = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID,
+            request_id: requestId
+          })
+        });
+        const result = await response.json();
+        if (result.success) {
+          setSourceData(result.data);
+          // Pre-fill platform status from loaded data
+          setPlatformStatus({
+            ee:       !!result.data.ee_sku,
+            zoho:     !!result.data.zoho_created_date,
+            shopify:  !!result.data.shopify_listing_url,
+            ee_po:    result.data.status === 'CREATED',
+          });
+          // Pre-fill editable form fields from saved data
+          setForm(f => ({
+            ...f,
+            suggested_sku:         result.data.suggested_sku        || '',
+            listing_name:          result.data.listing_name         || result.data.item_name || '',
+            variant:               result.data.variant              || '',
+            listing_type:          result.data.listing_type         || '',
+            parent_sku:            result.data.parent_sku           || '',
+            category:              result.data.category             || '',
+            brand:                 result.data.brand                || '',
+            mrp:                   result.data.mrp                  || '',
+            shopify_selling_price: result.data.shopify_selling_price|| '',
+            shopify_compare_price: result.data.shopify_compare_price|| '',
+            pkg_height_cm:         result.data.pkg_height_cm        || '',
+            pkg_length_cm:         result.data.pkg_length_cm        || '',
+            pkg_width_cm:          result.data.pkg_width_cm         || '',
+            pkg_weight_gm:         result.data.pkg_weight_gm        || '',
+            product_dims_mm:       result.data.product_dims_mm      || '',
+            nw_gm:                 result.data.nw_gm                || '',
+            relevant_tags:         result.data.relevant_tags        || '',
+            fnsku:                 result.data.fnsku                || '',
+            fnsku_status_ee:       result.data.fnsku_status_ee      || '',
+            remark:                result.data.remark               || '',
+            notes:                 result.data.notes                || '',
+            lead_time:             result.data.lead_time            || '',
+            moq:                   result.data.moq                  || '',
+            threshold_qty:         result.data.threshold_qty        || '',
+            supplier_code:         result.data.supplier_code        || '',
+            pack_size:             result.data.pack_size            || '',
+          }));
+        }
+      } catch (err) {
+        console.error('fetchRequest error:', err);
+      } finally {
+        setIsLoadingSource(false);
+      }
+    };
+    fetchRequest();
+  }, [requestId, isNew]);
 
   // All editable form fields
   const [form, setForm] = useState<FormData>({
@@ -250,7 +229,29 @@ export const NewSkuDetail: React.FC<{
   });
 
   // Pricing config (fetched from GAS in production)
-  const [pricingConfig] = useState<PricingConfig>(MOCK_PRICING_CONFIG);
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig>({
+    cny_conv_rate: 12.5,
+    shipping_factor: 1.18,
+    mrp_factor: 3.2,
+    margin_factor: 0.55,
+  });
+
+  useEffect(() => {
+    const fetchPricingConfig = async () => {
+      try {
+        const response = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: API_ACTIONS.GET_PRICING_CONFIG })
+        });
+        const result = await response.json();
+        if (result.success) setPricingConfig(result.data);
+      } catch (err) {
+        console.error('fetchPricingConfig error:', err);
+      }
+    };
+    fetchPricingConfig();
+  }, []);
 
   // Platform creation status
   const [platformStatus, setPlatformStatus] = useState({
@@ -312,61 +313,252 @@ export const NewSkuDetail: React.FC<{
     setIsDirty(true);
   };
 
-  // ─── MOCK HANDLERS ───
+  // ─── HANDLERS ───
 
-  // MOCK — replace with GAS: getNextAvailableSku_(category)
-  const handleAutoAssignSku = () => {
-    const prefix = SKU_CATEGORY_MAP[form.category] || '???';
-    updateField('suggested_sku', `${prefix}XXXX (auto-assign pending)`);
+  const handleAutoAssignSku = async () => {
+    if (!form.category) return;
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:   API_ACTIONS.GET_NEXT_AVAILABLE_SKU,
+          category: form.category
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        updateField('suggested_sku', result.data.suggested_sku);
+        if (result.data.warning) {
+          alert(result.data.warning);
+        }
+      } else {
+        alert('SKU assignment failed: ' + result.error);
+      }
+    } catch (err) {
+      console.error('handleAutoAssignSku error:', err);
+    }
   };
 
-  // MOCK — replace with GAS: createSkuOnEasyEcom_(requestId)
-  const handleCreateEE = async () => {
-    setLoading(l => ({ ...l, ee: true }));
-    await new Promise(r => setTimeout(r, 1500));
-    setPlatformStatus(p => ({ ...p, ee: true }));
-    setLoading(l => ({ ...l, ee: false }));
-  };
+  useEffect(() => {
+    if (!form.category) return;
+    const fetchTags = async () => {
+      try {
+        const response = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action:   API_ACTIONS.GET_TAGS_BY_CATEGORY,
+            category: form.category
+          })
+        });
+        const result = await response.json();
+        if (result.success && result.data.tags) {
+          // Only pre-fill if tags field is currently empty
+          if (!form.relevant_tags) {
+            updateField('relevant_tags', result.data.tags);
+          }
+        }
+      } catch (err) {
+        console.error('fetchTags error:', err);
+      }
+    };
+    fetchTags();
+  }, [form.category]);
 
-  // MOCK — replace with GAS: createSkuOnZoho_(requestId)
-  const handleCreateZoho = async () => {
-    setLoading(l => ({ ...l, zoho: true }));
-    await new Promise(r => setTimeout(r, 1500));
-    setPlatformStatus(p => ({ ...p, zoho: true }));
-    setLoading(l => ({ ...l, zoho: false }));
-  };
-
-  // MOCK — replace with GAS: createSkuOnShopify_(requestId)
-  const handleCreateShopify = async () => {
-    setLoading(l => ({ ...l, shopify: true }));
-    await new Promise(r => setTimeout(r, 1500));
-    setPlatformStatus(p => ({ ...p, shopify: true }));
-    setLoading(l => ({ ...l, shopify: false }));
-  };
-
-  // MOCK — replace with GAS: updateEePurchaseOrder_(requestId)
-  const handleUpdateEEPO = async () => {
-    setLoading(l => ({ ...l, ee_po: true }));
-    await new Promise(r => setTimeout(r, 1500));
-    setPlatformStatus(p => ({ ...p, ee_po: true }));
-    setLoading(l => ({ ...l, ee_po: false }));
-  };
-
-  // MOCK — replace with GAS: saveNewSkuDraft_(payload)
   const handleSaveDraft = async () => {
     setLoading(l => ({ ...l, save: true }));
-    await new Promise(r => setTimeout(r, 800));
-    setIsDirty(false);
-    setLoading(l => ({ ...l, save: false }));
-    setShowSaved(true);
-    setTimeout(() => setShowSaved(false), 2000);
+    try {
+      const requestIdToUse = isNew
+        ? await handleCreateManualFirst()
+        : requestId;
+      if (!requestIdToUse) return;
+
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:     API_ACTIONS.SAVE_NEW_SKU_DRAFT,
+          request_id: requestIdToUse,
+          edited_by:  'user', // replace with user?.name if passed as prop
+          form,
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setIsDirty(false);
+        console.log('Draft saved:', result.data);
+        setShowSaved(true);
+        setTimeout(() => setShowSaved(false), 2000);
+      } else {
+        alert('Save failed: ' + result.error);
+      }
+    } catch (err) {
+      console.error('handleSaveDraft error:', err);
+      alert('Network error saving draft');
+    } finally {
+      setLoading(l => ({ ...l, save: false }));
+    }
   };
 
-  // MOCK — replace with GAS: rejectSkuRequest_(requestId, remark)
-  const handleReject = async () => {
-    setIsRejected(true);
-    setShowRejectConfirm(false);
-    setRejectRemark('');
+  // Helper: create manual request first if this is a new entry
+  const handleCreateManualFirst = async (): Promise<string | null> => {
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:     API_ACTIONS.CREATE_MANUAL_SKU,
+          created_by:  'user',
+          form,
+        })
+      });
+      const result = await response.json();
+      if (result.success) return result.data.request_id;
+      alert('Failed to create request: ' + result.error);
+      return null;
+    } catch (err) {
+      console.error('handleCreateManualFirst error:', err);
+      return null;
+    }
+  };
+
+  // STEP 1 — EasyEcom
+  const handleCreateEE = async () => {
+    setLoading(l => ({ ...l, ee: true }));
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:     API_ACTIONS.CREATE_SKU_ON_EE,
+          request_id: requestId
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPlatformStatus(p => ({ ...p, ee: true }));
+        // Refresh source data to get ee_sku written back
+        setSourceData(d => ({ ...d, ee_sku: result.data.ee_sku }));
+      } else {
+        alert('EasyEcom creation failed: ' + result.error);
+      }
+    } catch (err) {
+      alert('Network error');
+      console.error(err);
+    } finally {
+      setLoading(l => ({ ...l, ee: false }));
+    }
+  };
+
+  // STEP 2 — Zoho
+  const handleCreateZoho = async () => {
+    setLoading(l => ({ ...l, zoho: true }));
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:     API_ACTIONS.CREATE_SKU_ON_ZOHO,
+          request_id: requestId
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPlatformStatus(p => ({ ...p, zoho: true }));
+      } else {
+        alert('Zoho creation failed: ' + result.error);
+      }
+    } catch (err) {
+      alert('Network error');
+      console.error(err);
+    } finally {
+      setLoading(l => ({ ...l, zoho: false }));
+    }
+  };
+
+  // STEP 3 — Shopify
+  const handleCreateShopify = async () => {
+    setLoading(l => ({ ...l, shopify: true }));
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:     API_ACTIONS.CREATE_SKU_ON_SHOPIFY,
+          request_id: requestId
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPlatformStatus(p => ({ ...p, shopify: true }));
+        if (result.data.shopify_listing_url) {
+          setSourceData(d => ({ 
+            ...d, 
+            shopify_listing_url: result.data.shopify_listing_url 
+          }));
+        }
+      } else {
+        alert('Shopify creation failed: ' + result.error);
+      }
+    } catch (err) {
+      alert('Network error');
+      console.error(err);
+    } finally {
+      setLoading(l => ({ ...l, shopify: false }));
+    }
+  };
+
+  // STEP 4 — Update EE PO
+  const handleUpdateEEPO = async () => {
+    setLoading(l => ({ ...l, ee_po: true }));
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:     API_ACTIONS.UPDATE_EE_PO,
+          request_id: requestId,
+          updated_by: 'user'
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPlatformStatus(p => ({ ...p, ee_po: true }));
+      } else {
+        alert('EE PO update failed: ' + result.error);
+      }
+    } catch (err) {
+      alert('Network error');
+      console.error(err);
+    } finally {
+      setLoading(l => ({ ...l, ee_po: false }));
+    }
+  };
+
+  const handleConfirmReject = async (remark: string) => {
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:      API_ACTIONS.REJECT_SKU_REQUEST,
+          request_id:  requestId,
+          remark,
+          rejected_by: 'user'
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setSourceData(d => ({ ...d, status: 'REJECTED' }));
+        onBack(); // navigate back to list
+      } else {
+        alert('Reject failed: ' + result.error);
+      }
+    } catch (err) {
+      alert('Network error');
+      console.error(err);
+    }
   };
 
   // Sequential lock check (debug mode overrides)
@@ -477,11 +669,6 @@ export const NewSkuDetail: React.FC<{
                     Auto-assign
                   </Button>
                 </div>
-                {form.suggested_sku && form.category && (
-                  <p className="text-[10px] text-gray-400 mt-1">
-                    Prefix: {SKU_CATEGORY_MAP[form.category] || '???'}
-                  </p>
-                )}
               </div>
 
               {/* Row 2: Listing Name (full width) */}
@@ -501,17 +688,9 @@ export const NewSkuDetail: React.FC<{
                 <select
                   className={inputClasses}
                   value={form.category}
+                  // Auto-assign SKU logic moved to server-side
                   onChange={e => {
                     updateField('category', e.target.value);
-                    // Auto-assign SKU prefix on category change
-                    const prefix = SKU_CATEGORY_MAP[e.target.value] || '???';
-                    setForm(f => ({
-                      ...f,
-                      category: e.target.value,
-                      suggested_sku: f.suggested_sku || `${prefix}XXXX`,
-                      relevant_tags: e.target.value ? `${e.target.value}, Cubelelo, Speed Cube, Puzzle` : '',
-                    }));
-                    setIsDirty(true);
                   }}
                 >
                   <option value="">Select category...</option>
@@ -1050,7 +1229,7 @@ export const NewSkuDetail: React.FC<{
                         <Button
                           variant="danger"
                           className="text-xs flex-1"
-                          onClick={handleReject}
+                          onClick={() => handleConfirmReject(rejectRemark)}
                           disabled={!rejectRemark.trim()}
                         >
                           Confirm Reject

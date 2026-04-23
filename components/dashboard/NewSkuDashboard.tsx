@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { APPS_SCRIPT_URL, API_ACTIONS } from '../../App';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { PlusIcon, MagnifyingGlassIcon, ChevronRightIcon, ExclamationTriangleIcon } from '../icons/Icons';
@@ -27,157 +28,6 @@ interface SkuRequest {
   ee_sku: string;
   shopify_listing_url: string;
 }
-
-// ─────────────────────────────────────────
-// MOCK DATA
-// ─────────────────────────────────────────
-
-const MOCK_SKU_REQUESTS: SkuRequest[] = [
-  {
-    request_id: 'NSR-001',
-    shipment_id: 'VS-PW260401-4',
-    item_name: 'MoYu RS3M 2021 Stickerless',
-    category: '3x3',
-    vendor_code: 'PW',
-    invoice_qty: 500,
-    unit_price: 48.50,
-    requested_by: 'Nitesh',
-    requested_at: '2026-04-10T09:30:00Z',
-    status: 'CREATED',
-    ee_done: true,
-    zoho_done: true,
-    shopify_done: true,
-    ee_po_updated: true,
-    ee_sku: 'CUBE-RS3M-STK-001',
-    shopify_listing_url: 'https://cubelelo.com/products/moyu-rs3m-2021',
-  },
-  {
-    request_id: 'NSR-002',
-    shipment_id: 'VS-QY260402-1',
-    item_name: 'QiYi MS Pyraminx',
-    category: 'Pyraminx',
-    vendor_code: 'QY',
-    invoice_qty: 200,
-    unit_price: 32.00,
-    requested_by: 'Arjun',
-    requested_at: '2026-04-11T11:15:00Z',
-    status: 'IN_PROGRESS',
-    ee_done: true,
-    zoho_done: true,
-    shopify_done: false,
-    ee_po_updated: false,
-    ee_sku: 'CUBE-QIYI-PYR-002',
-    shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-003',
-    shipment_id: 'VS-MY260403-2',
-    item_name: 'GAN 12 M Leap',
-    category: '3x3',
-    vendor_code: 'MY',
-    invoice_qty: 100,
-    unit_price: 198.00,
-    requested_by: 'Nitesh',
-    requested_at: '2026-04-12T14:00:00Z',
-    status: 'PENDING',
-    ee_done: false,
-    zoho_done: false,
-    shopify_done: false,
-    ee_po_updated: false,
-    ee_sku: '',
-    shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-004',
-    shipment_id: '',
-    item_name: 'YJ MGC Megaminx Magnetic',
-    category: 'Megaminx',
-    vendor_code: 'PW',
-    invoice_qty: 150,
-    unit_price: 85.00,
-    requested_by: 'Priya',
-    requested_at: '2026-04-13T08:45:00Z',
-    status: 'ACTION_REQ',
-    ee_done: true,
-    zoho_done: false,
-    shopify_done: false,
-    ee_po_updated: false,
-    ee_sku: 'CUBE-MGC-MEGA-004',
-    shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-005',
-    shipment_id: 'VS-QY260404-3',
-    item_name: 'QiYi X-Man Tornado V3 Pioneer',
-    category: '3x3',
-    vendor_code: 'QY',
-    invoice_qty: 300,
-    unit_price: 72.50,
-    requested_by: 'Arjun',
-    requested_at: '2026-04-14T10:20:00Z',
-    status: 'REJECTED',
-    ee_done: false,
-    zoho_done: false,
-    shopify_done: false,
-    ee_po_updated: false,
-    ee_sku: '',
-    shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-006',
-    shipment_id: 'VS-PW260405-1',
-    item_name: 'MoYu WeiLong WRM V10 MagLev',
-    category: '3x3',
-    vendor_code: 'PW',
-    invoice_qty: 250,
-    unit_price: 135.00,
-    requested_by: 'Nitesh',
-    requested_at: '2026-04-15T07:10:00Z',
-    status: 'PENDING',
-    ee_done: false,
-    zoho_done: false,
-    shopify_done: false,
-    ee_po_updated: false,
-    ee_sku: '',
-    shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-007',
-    shipment_id: '',
-    item_name: 'QiYi Clock Magnetic',
-    category: 'Clock',
-    vendor_code: 'QY',
-    invoice_qty: 120,
-    unit_price: 55.00,
-    requested_by: 'Priya',
-    requested_at: '2026-04-16T13:30:00Z',
-    status: 'IN_PROGRESS',
-    ee_done: true,
-    zoho_done: false,
-    shopify_done: false,
-    ee_po_updated: false,
-    ee_sku: 'CUBE-QY-CLK-007',
-    shopify_listing_url: '',
-  },
-  {
-    request_id: 'NSR-008',
-    shipment_id: 'VS-MY260406-5',
-    item_name: 'MoYu AoYan Skewb M',
-    category: 'Skewb',
-    vendor_code: 'MY',
-    invoice_qty: 180,
-    unit_price: 42.00,
-    requested_by: 'Arjun',
-    requested_at: '2026-04-17T06:00:00Z',
-    status: 'ACTION_REQ',
-    ee_done: true,
-    zoho_done: true,
-    shopify_done: true,
-    ee_po_updated: false,
-    ee_sku: 'CUBE-AOYAN-SKW-008',
-    shopify_listing_url: 'https://cubelelo.com/products/moyu-aoyan-skewb',
-  },
-];
 
 // ─────────────────────────────────────────
 // STATUS CONFIG
@@ -245,7 +95,9 @@ const formatCNY = (val: number): string => {
 // ─────────────────────────────────────────
 
 export const NewSkuDashboard: React.FC<{ onOpenDetail: (id: string) => void }> = ({ onOpenDetail }) => {
-  const [data] = useState<SkuRequest[]>(MOCK_SKU_REQUESTS);
+  const [data, setData] = useState<SkuRequest[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<SkuStatus | 'ALL'>('ALL');
   const [vendorFilter, setVendorFilter] = useState<string>('ALL');
   const [dateFrom, setDateFrom] = useState<string>('');
@@ -255,46 +107,60 @@ export const NewSkuDashboard: React.FC<{ onOpenDetail: (id: string) => void }> =
     () => localStorage.getItem('skuDebugMode') === 'true'
   );
 
+  const fetchRequests = async () => {
+    setIsLoading(true);
+    setFetchError(null);
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: API_ACTIONS.GET_NEW_SKU_REQUESTS,
+          filters: {
+            status:      statusFilter === 'ALL' ? null : statusFilter,
+            vendor_code: vendorFilter === 'ALL' ? null : vendorFilter,
+            date_from:   dateFrom || null,
+            date_to:     dateTo   || null,
+            search:      searchQuery || null,
+          }
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setData(result.data || []);
+      } else {
+        setFetchError(result.error || 'Failed to load requests');
+      }
+    } catch (err) {
+      setFetchError('Network error — could not reach server');
+      console.error('fetchRequests error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRequests();
+  }, [statusFilter, vendorFilter, dateFrom, dateTo]);
+
+  // Search is client-side only — no refetch needed for search
+
   // Derived: unique vendor codes
   const vendors = useMemo(() => {
     const codes = [...new Set(data.map(r => r.vendor_code).filter(v => v !== ''))];
     return codes.sort();
   }, [data]);
 
-  // Derived: filtered list
+  // Derived: filtered list (search only — other filters handled server-side)
   const filtered = useMemo(() => {
-    let result = data;
-
-    if (statusFilter !== 'ALL') {
-      result = result.filter(r => r.status === statusFilter);
-    }
-
-    if (vendorFilter !== 'ALL') {
-      result = result.filter(r => r.vendor_code === vendorFilter);
-    }
-
-    if (dateFrom) {
-      const from = new Date(dateFrom);
-      result = result.filter(r => new Date(r.requested_at) >= from);
-    }
-
-    if (dateTo) {
-      const to = new Date(dateTo);
-      to.setHours(23, 59, 59, 999);
-      result = result.filter(r => new Date(r.requested_at) <= to);
-    }
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(r =>
-        r.item_name.toLowerCase().includes(q) ||
-        r.request_id.toLowerCase().includes(q) ||
-        r.ee_sku.toLowerCase().includes(q)
-      );
-    }
-
-    return result;
-  }, [data, statusFilter, vendorFilter, dateFrom, dateTo, searchQuery]);
+    if (!searchQuery.trim()) return data;
+    const q = searchQuery.toLowerCase();
+    return data.filter(r =>
+      r.item_name.toLowerCase().includes(q) ||
+      r.request_id.toLowerCase().includes(q) ||
+      (r.ee_sku || '').toLowerCase().includes(q)
+    );
+  }, [data, searchQuery]);
 
   const toggleDebug = () => {
     setDebugMode(prev => {
@@ -436,7 +302,51 @@ export const NewSkuDashboard: React.FC<{ onOpenDetail: (id: string) => void }> =
               </tr>
             </thead>
             <tbody>
-              {filtered.length > 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={11}>
+                    <div className="py-16 text-center">
+                      <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent 
+                                      rounded-full animate-spin mx-auto mb-4" />
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        Loading requests...
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              ) : fetchError ? (
+                <tr>
+                  <td colSpan={11}>
+                    <div className="py-16 text-center">
+                      <ExclamationTriangleIcon className="w-8 h-8 text-red-400 mx-auto mb-3" />
+                      <p className="text-sm font-medium text-red-500">{fetchError}</p>
+                      <button
+                        onClick={fetchRequests}
+                        className="mt-3 text-xs text-blue-500 hover:text-blue-600 
+                                   underline underline-offset-2">
+                        Try again
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={11}>
+                    <div className="py-16 text-center">
+                      <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-700 
+                                      flex items-center justify-center mx-auto mb-4">
+                        <MagnifyingGlassIcon className="w-6 h-6 text-gray-400" />
+                      </div>
+                      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                        No SKU requests found
+                      </p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                        Try adjusting your filters
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
                 filtered.map(r => (
                   <tr
                     key={r.request_id}
@@ -526,22 +436,6 @@ export const NewSkuDashboard: React.FC<{ onOpenDetail: (id: string) => void }> =
                     </td>
                   </tr>
                 ))
-              ) : (
-                <tr>
-                  <td colSpan={11}>
-                    <div className="py-16 text-center">
-                      <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center mx-auto mb-4">
-                        <MagnifyingGlassIcon className="w-6 h-6 text-gray-400" />
-                      </div>
-                      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                        No SKU requests found
-                      </p>
-                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                        Try adjusting your filters
-                      </p>
-                    </div>
-                  </td>
-                </tr>
               )}
             </tbody>
           </table>
@@ -571,6 +465,12 @@ export const NewSkuDashboard: React.FC<{ onOpenDetail: (id: string) => void }> =
               <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-32">
                 {JSON.stringify(filtered.map(r => r.request_id), null, 2)}
               </pre>
+              <button
+                onClick={fetchRequests}
+                className="mt-2 px-3 py-1 bg-amber-500 text-white text-xs 
+                           rounded font-semibold hover:bg-amber-600">
+                Force Refresh
+              </button>
             </div>
           </div>
         </Card>
@@ -579,25 +479,4 @@ export const NewSkuDashboard: React.FC<{ onOpenDetail: (id: string) => void }> =
   );
 };
 
-/*
-  GAS INTEGRATION — TO IMPLEMENT IN PHASE 2
-  
-  Replace MOCK_SKU_REQUESTS with a real fetch:
-  
-  const GAS_URL = import.meta.env.VITE_GAS_URL;
-  
-  useEffect(() => {
-    fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'getNewSkuRequests', filters: { ... } })
-    })
-    .then(r => r.json())
-    .then(result => setData(result.data))
-    .catch(err => console.error('GAS fetch error:', err));
-  }, [statusFilter, vendorFilter, dateFrom, dateTo]);
-  
-  GAS function: getNewSkuRequests_(filters)
-  Sheet: New_SKU_Requests
-  Returns: array of SkuRequest objects
-*/
+

@@ -74,6 +74,20 @@ export const API_ACTIONS = {
     CONFIRM_AMAZON_SHIPMENT_PLAN: 'confirm_amazon_shipment_plan',
     GET_AMAZON_CONFIG:            'get_amazon_config',
     SAVE_AMAZON_CONFIG:           'save_amazon_config',
+
+    // New SKU Operations
+    GET_NEW_SKU_REQUESTS:    'getNewSkuRequests',
+    GET_NEW_SKU_REQUEST_BY_ID: 'getNewSkuRequestById',
+    SAVE_NEW_SKU_DRAFT:      'saveNewSkuDraft',
+    GET_NEXT_AVAILABLE_SKU:  'getNextAvailableSku',
+    GET_PRICING_CONFIG:      'getPricingConfig',
+    GET_TAGS_BY_CATEGORY:    'getTagsByCategory',
+    CREATE_SKU_ON_EE:        'createSkuOnEasyEcom',
+    CREATE_SKU_ON_ZOHO:      'createSkuOnZoho',
+    CREATE_SKU_ON_SHOPIFY:   'createSkuOnShopify',
+    UPDATE_EE_PO:            'updateEePurchaseOrder',
+    REJECT_SKU_REQUEST:      'rejectSkuRequest',
+    CREATE_MANUAL_SKU:       'createManualSkuRequest',
 };
 
 const App: React.FC = () => {
