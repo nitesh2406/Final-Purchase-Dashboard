@@ -294,6 +294,12 @@ export const NewSkuDetail: React.FC<{
     () => localStorage.getItem('skuDebugMode') === 'true'
   );
 
+  // Helper to update a form field and mark dirty
+  const updateField = (field: keyof FormData, value: any) => {
+    setForm(f => ({ ...f, [field]: value }));
+    setIsDirty(true);
+  };
+
   // ─── Derived pricing calculations ───
   const calcPricing = (rmbPrice: number, config: PricingConfig) => {
     if (!rmbPrice || !config) return null;
@@ -382,9 +388,9 @@ export const NewSkuDetail: React.FC<{
         const result = await response.json();
         if (result.success) {
           setParentSkuDetails(result.data);
-          if (!form.listing_name) {
-            updateField('listing_name', result.data.parent_product_name);
-          }
+          // Always fill listing_name from parent —
+          // for variants, name is always inherited from parent product
+          updateField('listing_name', result.data.parent_product_name);
         } else {
           setParentSkuError(result.error);
           setParentSkuDetails(null);
@@ -398,12 +404,6 @@ export const NewSkuDetail: React.FC<{
     const timer = setTimeout(fetchParent, 600);
     return () => clearTimeout(timer);
   }, [form.parent_sku, form.listing_type]);
-
-  // Helper to update a form field and mark dirty
-  const updateField = (field: keyof FormData, value: any) => {
-    setForm(f => ({ ...f, [field]: value }));
-    setIsDirty(true);
-  };
 
   // ─── HANDLERS ───
 

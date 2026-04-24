@@ -100,7 +100,7 @@ export const NewSkuDashboard: React.FC<{
   onDataLoaded: (data: any[]) => void;
   dataLoaded: boolean;
 }> = ({ onOpenDetail, cachedData, onDataLoaded, dataLoaded }) => {
-  const [data, setData] = useState<SkuRequest[]>(cachedData || []);
+  const [data, setData] = useState<SkuRequest[]>(() => cachedData || []);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<SkuStatus | 'ALL'>('ALL');
@@ -111,6 +111,13 @@ export const NewSkuDashboard: React.FC<{
   const [debugMode, setDebugMode] = useState<boolean>(
     () => localStorage.getItem('skuDebugMode') === 'true'
   );
+
+  // Sync cached data from App.tsx into local state on every mount
+  useEffect(() => {
+    if (cachedData && cachedData.length > 0) {
+      setData(cachedData);
+    }
+  }, [cachedData]);
 
   const fetchRequests = async () => {
     setIsLoading(true);
@@ -145,17 +152,19 @@ export const NewSkuDashboard: React.FC<{
     }
   };
 
-  useEffect(() => {
-    if (!dataLoaded) {
-      fetchRequests();
-    }
-  }, []); // only on mount if not loaded
+  const isFirstMount = React.useRef(true);
 
-  // Refetch whenever filters change
   useEffect(() => {
-    if (dataLoaded) {
-      fetchRequests();
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      // Only fetch on first ever mount — skip if App.tsx already has data
+      if (!dataLoaded) {
+        fetchRequests();
+      }
+      return;
     }
+    // Subsequent renders — only refetch when filters actually change
+    fetchRequests();
   }, [statusFilter, vendorFilter, dateFrom, dateTo]);
 
   // Search is client-side only — no refetch needed for search
