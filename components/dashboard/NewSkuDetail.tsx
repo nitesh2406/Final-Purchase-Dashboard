@@ -71,19 +71,122 @@ interface FormData {
 }
 
 interface PricingConfig {
-  cny_conv_rate:  number;
-  sea_multiplier: number;
-  air_multiplier: number;
-  pick_pack:      number;
-  min_margin_pct: number;
+  cny_conv_rate:      number;
+  sea_multiplier:     number;
+  air_multiplier:     number;
+  pick_pack:          number;
+  min_margin_pct:     number;
+  marketing_cost_pct: number;
 }
 
 const MOCK_PRICING_CONFIG: PricingConfig = {
-  cny_conv_rate:  12.5,
-  sea_multiplier: 1.33,
-  air_multiplier: 1.25,
-  pick_pack:      75,
-  min_margin_pct: 20,
+  cny_conv_rate:      12.5,
+  sea_multiplier:     1.33,
+  air_multiplier:     1.25,
+  pick_pack:          75,
+  min_margin_pct:     20,
+  marketing_cost_pct: 26,
+};
+
+interface ComboBoxProps {
+  value:       string;
+  onChange:    (val: string) => void;
+  options:     string[];
+  placeholder: string;
+  id:          string;
+}
+
+const ComboBox: React.FC<ComboBoxProps> = ({
+  value, onChange, options, placeholder, id
+}) => {
+  const [open, setOpen]   = useState(false);
+  const [query, setQuery] = useState('');
+  const containerRef      = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current &&
+          !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = query
+    ? options.filter(o => o.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="relative">
+        <input
+          id={id}
+          type="text"
+          value={open ? query : value}
+          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => { setOpen(true); setQuery(''); }}
+          placeholder={placeholder}
+          className="w-full text-sm bg-white dark:bg-gray-700
+                     border border-gray-200 dark:border-gray-600
+                     rounded-lg px-3 py-2 pr-8 text-gray-900
+                     dark:text-white focus:outline-none
+                     focus:ring-2 focus:ring-blue-500 transition-all" />
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          className="absolute right-2 top-2.5 text-gray-400
+                     hover:text-gray-600 dark:hover:text-gray-300">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24"
+               stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round"
+                  strokeWidth={2}
+                  d={open ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
+          </svg>
+        </button>
+      </div>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full max-h-52
+                        overflow-y-auto bg-white dark:bg-gray-800
+                        border border-gray-200 dark:border-gray-700
+                        rounded-lg shadow-lg">
+          {query && !options.find(
+            o => o.toLowerCase() === query.toLowerCase()
+          ) && (
+            <button
+              type="button"
+              onClick={() => { onChange(query); setOpen(false); setQuery(''); }}
+              className="w-full text-left px-3 py-2 text-sm
+                         text-blue-600 dark:text-blue-400
+                         hover:bg-gray-50 dark:hover:bg-gray-700
+                         border-b border-gray-100 dark:border-gray-700">
+              + Use "{query}"
+            </button>
+          )}
+          {filtered.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-gray-400">No options found</p>
+          ) : (
+            filtered.map(opt => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => { onChange(opt); setOpen(false); setQuery(''); }}
+                className={`w-full text-left px-3 py-2 text-sm transition-colors
+                            ${value === opt
+                              ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-semibold'
+                              : 'text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700'
+                            }`}>
+                {opt}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 };
 
 const CATEGORIES = [
@@ -299,6 +402,7 @@ export const NewSkuDetail: React.FC<{
   const [loading, setLoading] = useState({
     ee: false, zoho: false, shopify: false, ee_po: false, save: false,
   });
+  const [skuAssigning, setSkuAssigning] = useState(false);
 
   // Dirty flag
   const [isDirty, setIsDirty] = useState(false);
@@ -416,19 +520,30 @@ export const NewSkuDetail: React.FC<{
     }));
   }, [pricing]);
 
-  const currentSP      = Number(form.shopify_selling_price) || 0;
-  const currentMRP     = Number(form.mrp) || 0;
-  const profitPerUnit  = currentSP > 0
-    ? currentSP - (pricing?.landing || 0)
-    : 0;
+  const currentSP    = Number(form.shopify_selling_price) || 0;
+  const currentMRP   = Number(form.mrp) || 0;
+  const landedCost   = pricing?.landing || 0;
+  const marketingPct = pricingConfig.marketing_cost_pct || 26;
+  const pickPack     = pricingConfig.pick_pack || 75;
 
-  // Recalculate actual CM1 from user's actual SP (not suggested)
-  const actualCM1Live = currentSP > 0 && pricing
-    ? ((currentSP / 1.05 - pricing.landing) / (currentSP / 1.05)) * 100
-    : pricing?.actual_cm1 || 0;
+  // CM1 — Gross margin after landing cost (ex-GST)
+  const netSales      = currentSP > 0 ? currentSP / 1.05 : 0;
+  const cm1Profit     = netSales - landedCost;
+  const actualCM1Live = netSales > 0
+    ? (cm1Profit / netSales) * 100
+    : (pricing?.actual_cm1 || 0);
+
+  // CM2 — After marketing cost (% of Selling Price)
+  const marketingCost = currentSP * (marketingPct / 100);
+  const cm2Profit     = cm1Profit - marketingCost;
+  const actualCM2     = netSales > 0 ? (cm2Profit / netSales) * 100 : 0;
+
+  // CM3 — After pick & pack
+  const cm3Profit = cm2Profit - pickPack;
+  const actualCM3 = netSales > 0 ? (cm3Profit / netSales) * 100 : 0;
 
   const marginWarning = actualCM1Live > 0 &&
-    actualCM1Live < pricingConfig.min_margin_pct;
+    actualCM1Live < (pricingConfig.min_margin_pct || 20);
 
   const lastLookedUpSku = React.useRef<string>('');
 
@@ -487,6 +602,7 @@ export const NewSkuDetail: React.FC<{
 
   const handleAutoAssignSku = async () => {
     if (!form.category) return;
+    setSkuAssigning(true);
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
@@ -499,14 +615,15 @@ export const NewSkuDetail: React.FC<{
       const result = await response.json();
       if (result.success) {
         updateField('suggested_sku', result.data.suggested_sku);
-        if (result.data.warning) {
-          alert(result.data.warning);
-        }
+        if (result.data.warning) alert(result.data.warning);
       } else {
         alert('SKU assignment failed: ' + result.error);
       }
     } catch (err) {
       console.error('handleAutoAssignSku error:', err);
+      alert('Network error during SKU assignment');
+    } finally {
+      setSkuAssigning(false);
     }
   };
 
@@ -831,13 +948,30 @@ export const NewSkuDetail: React.FC<{
                     onChange={e => updateField('suggested_sku', e.target.value)}
                     placeholder="Auto-assigned or manual entry"
                   />
-                  <Button
-                    variant="secondary"
-                    className="text-xs whitespace-nowrap"
+                  <button
                     onClick={handleAutoAssignSku}
-                  >
-                    Auto-assign
-                  </Button>
+                    disabled={skuAssigning || !form.category}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold
+                                transition-all flex items-center gap-2
+                                ${skuAssigning || !form.category
+                                  ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
+                                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+                                }`}>
+                    {skuAssigning ? (
+                      <>
+                        <svg className="w-3.5 h-3.5 animate-spin"
+                             fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10"
+                                  stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Assigning...
+                      </>
+                    ) : (
+                      'Auto-assign'
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -880,23 +1014,12 @@ export const NewSkuDetail: React.FC<{
               </div>
               <div>
                 <FieldLabel>Brand</FieldLabel>
-                <div className="relative">
-                  <input
-                    list="brand-options"
-                    value={form.brand}
-                    onChange={e => updateField('brand', e.target.value)}
-                    placeholder="Select or type brand..."
-                    className="w-full text-sm bg-white dark:bg-gray-700
-                               border border-gray-200 dark:border-gray-600
-                               rounded-lg px-3 py-2 text-gray-900 dark:text-white
-                               focus:outline-none focus:ring-2 focus:ring-blue-500
-                               transition-all" />
-                  <datalist id="brand-options">
-                    {brandOptions.map(b => (
-                      <option key={b} value={b} />
-                    ))}
-                  </datalist>
-                </div>
+                <ComboBox
+                  id="brand-combobox"
+                  value={form.brand}
+                  onChange={val => updateField('brand', val)}
+                  options={brandOptions}
+                  placeholder="Select or type brand..." />
               </div>
 
               {/* Row 4: Listing Type + Variant */}
@@ -914,23 +1037,12 @@ export const NewSkuDetail: React.FC<{
               </div>
               <div>
                 <FieldLabel>Variant</FieldLabel>
-                <div className="relative">
-                  <input
-                    list="variant-options"
-                    value={form.variant}
-                    onChange={e => updateField('variant', e.target.value)}
-                    placeholder="Select or type variant..."
-                    className="w-full text-sm bg-white dark:bg-gray-700
-                               border border-gray-200 dark:border-gray-600
-                               rounded-lg px-3 py-2 text-gray-900 dark:text-white
-                               focus:outline-none focus:ring-2 focus:ring-blue-500
-                               transition-all" />
-                  <datalist id="variant-options">
-                    {variantOptions.map(v => (
-                      <option key={v} value={v} />
-                    ))}
-                  </datalist>
-                </div>
+                <ComboBox
+                  id="variant-combobox"
+                  value={form.variant}
+                  onChange={val => updateField('variant', val)}
+                  options={variantOptions}
+                  placeholder="Select or type variant..." />
               </div>
 
               {/* Row 5: Parent SKU (conditional) */}
@@ -1249,7 +1361,7 @@ export const NewSkuDetail: React.FC<{
                   </pre>
                   <p className="text-gray-500 dark:text-gray-400 mb-1 mt-2">Pricing:</p>
                   <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-24">
-                    {JSON.stringify({ pricing, profitPerUnit }, null, 2)}
+                    {JSON.stringify({ pricing, cm1Profit, cm2Profit, cm3Profit }, null, 2)}
                   </pre>
                 </div>
                 <div>
@@ -1348,29 +1460,79 @@ export const NewSkuDetail: React.FC<{
                   </span>
                 </div>
 
-                <div className="flex justify-between items-center py-2
-                                border-b border-gray-100 dark:border-gray-700">
-                  <span className="text-xs text-gray-500 dark:text-gray-400">Profit / Unit</span>
-                  <span className={`text-xs font-mono font-semibold ${
-                    profitPerUnit > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'
-                  }`}>
-                    ₹ {Math.round(profitPerUnit)}
-                  </span>
-                </div>
+                {/* CM Breakdown — 3 rows */}
+                {[
+                  {
+                    label:    'CM1 (Gross)',
+                    sublabel: 'Net Sales − Landing',
+                    value:    cm1Profit,
+                    pct:      actualCM1Live,
+                    color:    actualCM1Live >= (pricingConfig.min_margin_pct || 20)
+                                ? 'text-green-600 dark:text-green-400'
+                                : 'text-red-500',
+                  },
+                  {
+                    label:    'CM2 (After Mktg)',
+                    sublabel: `−${marketingPct}% of SP = ₹${Math.round(marketingCost)}`,
+                    value:    cm2Profit,
+                    pct:      actualCM2,
+                    color:    cm2Profit > 0
+                                ? 'text-blue-600 dark:text-blue-400'
+                                : 'text-red-500',
+                  },
+                  {
+                    label:    'CM3 (After P&P)',
+                    sublabel: `−₹${pickPack} pick & pack`,
+                    value:    cm3Profit,
+                    pct:      actualCM3,
+                    color:    cm3Profit > 0
+                                ? 'text-purple-600 dark:text-purple-400'
+                                : 'text-red-500',
+                  },
+                ].map(({ label, sublabel, value, pct, color }) => (
+                  <div key={label}
+                       className="flex justify-between items-center py-2
+                                  border-b border-gray-100 dark:border-gray-700/50
+                                  last:border-0">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-700
+                                    dark:text-gray-300">{label}</p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">{sublabel}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-sm font-bold font-mono ${color}`}>
+                        ₹{Math.round(value)}
+                      </p>
+                      <p className={`text-[10px] font-mono ${color}`}>
+                        {pct.toFixed(1)}%
+                      </p>
+                    </div>
+                  </div>
+                ))}
 
-                <div className={`mt-4 p-3 rounded-xl text-center ${
-                  marginWarning ? 'bg-red-50 dark:bg-red-900/20' : 'bg-green-50 dark:bg-green-900/20'
+                {/* Large CM3 display — final profit */}
+                <div className={`mt-3 p-3 rounded-xl text-center ${
+                  cm3Profit > 0
+                    ? 'bg-purple-50 dark:bg-purple-900/20'
+                    : 'bg-red-50 dark:bg-red-900/20'
                 }`}>
                   <p className={`text-3xl font-bold ${
-                    marginWarning ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'
+                    cm3Profit > 0
+                      ? 'text-purple-600 dark:text-purple-400'
+                      : 'text-red-500'
                   }`}>
-                    {actualCM1Live.toFixed(1)}%
+                    {actualCM3.toFixed(1)}%
                   </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Actual CM1</p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">Target: {pricing.cm1_target}%</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    CM3 — Actual Margin
+                  </p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">
+                    CM1: {actualCM1Live.toFixed(1)}%
+                    · CM2: {actualCM2.toFixed(1)}%
+                  </p>
                   {marginWarning && (
                     <p className="text-xs text-red-500 font-semibold mt-2">
-                      ⚠️ Below {pricingConfig.min_margin_pct}% minimum
+                      ⚠️ CM1 below {pricingConfig.min_margin_pct}% minimum
                     </p>
                   )}
                 </div>
