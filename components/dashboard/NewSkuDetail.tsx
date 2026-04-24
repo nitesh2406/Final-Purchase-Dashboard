@@ -144,6 +144,36 @@ export const NewSkuDetail: React.FC<{
   const [sourceData, setSourceData] = useState<Partial<SkuRequest>>({});
   const [isLoadingSource, setIsLoadingSource] = useState(!isNew);
 
+  // All editable form fields
+  const [form, setForm] = useState<FormData>({
+    suggested_sku: '',
+    listing_name: sourceData.item_name ?? '',
+    variant: '',
+    listing_type: '',
+    parent_sku: '',
+    category: sourceData.category ?? '',
+    brand: '',
+    mrp: '',
+    shopify_selling_price: '',
+    shopify_compare_price: '',
+    pkg_height_cm: '',
+    pkg_length_cm: '',
+    pkg_width_cm: '',
+    pkg_weight_gm: '',
+    product_dims_mm: '',
+    nw_gm: '',
+    lead_time: '',
+    moq: '',
+    threshold_qty: '',
+    supplier_code: '',
+    pack_size: '',
+    relevant_tags: '',
+    fnsku: '',
+    fnsku_status_ee: '',
+    remark: '',
+    notes: '',
+  });
+
   useEffect(() => {
     if (isNew) return;
     const fetchRequest = async () => {
@@ -206,36 +236,6 @@ export const NewSkuDetail: React.FC<{
     };
     fetchRequest();
   }, [requestId, isNew]);
-
-  // All editable form fields
-  const [form, setForm] = useState<FormData>({
-    suggested_sku: '',
-    listing_name: sourceData.item_name ?? '',
-    variant: '',
-    listing_type: '',
-    parent_sku: '',
-    category: sourceData.category ?? '',
-    brand: '',
-    mrp: '',
-    shopify_selling_price: '',
-    shopify_compare_price: '',
-    pkg_height_cm: '',
-    pkg_length_cm: '',
-    pkg_width_cm: '',
-    pkg_weight_gm: '',
-    product_dims_mm: '',
-    nw_gm: '',
-    lead_time: '',
-    moq: '',
-    threshold_qty: '',
-    supplier_code: '',
-    pack_size: '',
-    relevant_tags: '',
-    fnsku: '',
-    fnsku_status_ee: '',
-    remark: '',
-    notes: '',
-  });
 
   // Pricing config (fetched from GAS in production)
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>(MOCK_PRICING_CONFIG);
@@ -303,23 +303,38 @@ export const NewSkuDetail: React.FC<{
   // ─── Derived pricing calculations ───
   const calcPricing = (rmbPrice: number, config: PricingConfig) => {
     if (!rmbPrice || !config) return null;
+
+    // Guard — if config keys are missing return null not NaN
+    if (!config.sea_multiplier || !config.air_multiplier ||
+        !config.cny_conv_rate) return null;
+
+    // Step 1: Landing — SEA if RMB ≤ 30, AIR if RMB > 30
     const multiplier = rmbPrice <= 30
       ? config.sea_multiplier
       : config.air_multiplier;
-    const landing  = rmbPrice * config.cny_conv_rate * multiplier;
+    const landing = rmbPrice * config.cny_conv_rate * multiplier;
 
-    let cm1;
+    // Step 2: CM1 target based on landing price
+    let cm1: number;
     if      (landing <= 500)  cm1 = 0.50;
     else if (landing <= 1250) cm1 = 0.47;
     else if (landing <= 2000) cm1 = 0.44;
     else                      cm1 = 0.41;
 
-    const rawSP    = (landing / (1 - cm1)) * 1.05 + config.pick_pack;
-    const bucketSP = Math.round(rawSP / 100) * 100 - 1;
-    const floorSP  = (landing / 0.6) * 1.05 + config.pick_pack;
-    const finalSP  = Math.max(bucketSP, Math.ceil(floorSP));
+    // Step 3: Raw selling price
+    const rawSP = (landing / (1 - cm1)) * 1.05 + config.pick_pack;
 
-    let mrp;
+    // Step 4: Bucket SP — nearest ₹100 ending in 99
+    const bucketSP = Math.round(rawSP / 100) * 100 - 1;
+
+    // Step 5: Floor SP — minimum price at 40% CM1
+    const floorSP = (landing / 0.6) * 1.05 + config.pick_pack;
+
+    // Step 6: Final SP — max of bucket and floor
+    const finalSP = Math.max(bucketSP, Math.ceil(floorSP));
+
+    // Step 7: MRP from final SP using discount bracket logic
+    let mrp: number;
     if      (finalSP <= 500)  mrp = finalSP / 0.6;
     else if (finalSP <= 1000) mrp = finalSP / 0.65;
     else if (finalSP <= 1500) mrp = finalSP / 0.7;
@@ -327,8 +342,9 @@ export const NewSkuDetail: React.FC<{
     else                      mrp = finalSP / 0.8;
     mrp = Math.round(mrp);
 
+    // Step 8: Actual CM1
     const netSales  = finalSP / 1.05;
-    const actualCM1 = (netSales - landing) / netSales * 100;
+    const actualCM1 = ((netSales - landing) / netSales) * 100;
 
     return {
       landing:    Math.round(landing),
@@ -337,7 +353,7 @@ export const NewSkuDetail: React.FC<{
       bucket_sp:  Math.round(bucketSP),
       floor_sp:   Math.ceil(floorSP),
       final_sp:   Math.round(finalSP),
-      mrp:        mrp,
+      mrp,
       actual_cm1: Math.round(actualCM1 * 100) / 100,
       mode:       rmbPrice <= 30 ? 'SEA' : 'AIR',
     };
@@ -349,30 +365,52 @@ export const NewSkuDetail: React.FC<{
     [unitPrice, pricingConfig]
   );
 
-  // Auto-fill form when pricing is calculated and fields are empty
+  // Track whether we have auto-filled pricing already
+  const pricingAutoFilled = React.useRef(false);
+
   useEffect(() => {
     if (!pricing) return;
+    // Only auto-fill once — on first successful pricing calculation
+    // After that, user's manual overrides are preserved
+    if (pricingAutoFilled.current) return;
+    pricingAutoFilled.current = true;
     setForm(f => ({
       ...f,
-      mrp: f.mrp || pricing.mrp,
-      shopify_selling_price: f.shopify_selling_price || pricing.final_sp,
+      mrp:                   pricing.mrp,
+      shopify_selling_price: pricing.final_sp,
     }));
   }, [pricing]);
 
-  const currentSP     = Number(form.shopify_selling_price) || 0;
-  const currentMRP    = Number(form.mrp) || 0;
-  const profitPerUnit = currentSP - (pricing?.landing || 0);
-  const marginWarning = pricing
-    ? pricing.actual_cm1 < pricingConfig.min_margin_pct
-    : false;
+  const currentSP      = Number(form.shopify_selling_price) || 0;
+  const currentMRP     = Number(form.mrp) || 0;
+  const profitPerUnit  = currentSP > 0
+    ? currentSP - (pricing?.landing || 0)
+    : 0;
+
+  // Recalculate actual CM1 from user's actual SP (not suggested)
+  const actualCM1Live = currentSP > 0 && pricing
+    ? ((currentSP / 1.05 - pricing.landing) / (currentSP / 1.05)) * 100
+    : pricing?.actual_cm1 || 0;
+
+  const marginWarning = actualCM1Live > 0 &&
+    actualCM1Live < pricingConfig.min_margin_pct;
+
+  const lastLookedUpSku = React.useRef<string>('');
 
   useEffect(() => {
     const sku = form.parent_sku?.trim();
+
+    // Clear state if conditions not met
     if (!sku || form.listing_type !== 'Existing Variant') {
       setParentSkuDetails(null);
       setParentSkuError(null);
+      lastLookedUpSku.current = '';
       return;
     }
+
+    // Skip if we already looked up this exact SKU
+    if (lastLookedUpSku.current === sku) return;
+
     const fetchParent = async () => {
       setParentSkuLoading(true);
       setParentSkuError(null);
@@ -387,10 +425,14 @@ export const NewSkuDetail: React.FC<{
         });
         const result = await response.json();
         if (result.success) {
+          lastLookedUpSku.current = sku; // mark as looked up
           setParentSkuDetails(result.data);
-          // Always fill listing_name from parent —
-          // for variants, name is always inherited from parent product
-          updateField('listing_name', result.data.parent_product_name);
+          // Directly update form state — bypass updateField
+          // to avoid triggering isDirty on auto-fill
+          setForm(f => ({
+            ...f,
+            listing_name: result.data.parent_product_name
+          }));
         } else {
           setParentSkuError(result.error);
           setParentSkuDetails(null);
@@ -401,6 +443,7 @@ export const NewSkuDetail: React.FC<{
         setParentSkuLoading(false);
       }
     };
+
     const timer = setTimeout(fetchParent, 600);
     return () => clearTimeout(timer);
   }, [form.parent_sku, form.listing_type]);
@@ -905,9 +948,16 @@ export const NewSkuDetail: React.FC<{
                 />
               </div>
             </div>
-            <p className="text-[10px] text-gray-400 mt-3">
-              Based on ¥{unitPrice} × {pricingConfig.cny_conv_rate} × {pricingConfig.shipping_factor} × factor
-            </p>
+            {pricing && (
+              <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">
+                Based on ¥{unitPrice} × {pricingConfig.cny_conv_rate} conv rate
+                × {pricing.mode === 'SEA'
+                    ? pricingConfig.sea_multiplier + ' (SEA)'
+                    : pricingConfig.air_multiplier + ' (AIR)'
+                  } multiplier
+                = ₹{pricing.landing} landed cost
+              </p>
+            )}
           </Card>
 
           {/* ─── SECTION D: Physical Specs ─── */}
@@ -1169,19 +1219,41 @@ export const NewSkuDetail: React.FC<{
                   </div>
                 ))}
 
+                {/* Final SP — shows user's actual value vs suggested */}
                 <div className="flex justify-between items-center py-2
                                 border-b border-gray-100 dark:border-gray-700">
-                  <span className="text-sm font-bold text-gray-700 dark:text-gray-200">Final SP (Suggested)</span>
-                  <span className="text-sm font-bold font-mono text-blue-600 dark:text-blue-400">
-                    ₹ {pricing.final_sp}
+                  <div>
+                    <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
+                      Selling Price
+                    </p>
+                    {pricing && currentSP !== pricing.final_sp && (
+                      <p className="text-[10px] text-gray-400">
+                        Suggested: ₹{pricing.final_sp}
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-sm font-bold font-mono text-blue-600
+                                   dark:text-blue-400">
+                    ₹ {currentSP || pricing?.final_sp || '—'}
                   </span>
                 </div>
 
+                {/* MRP — shows user's actual value vs suggested */}
                 <div className="flex justify-between items-center py-2
                                 border-b border-gray-100 dark:border-gray-700">
-                  <span className="text-sm font-bold text-gray-700 dark:text-gray-200">MRP (Suggested)</span>
-                  <span className="text-sm font-bold font-mono text-gray-900 dark:text-white">
-                    ₹ {pricing.mrp}
+                  <div>
+                    <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
+                      MRP
+                    </p>
+                    {pricing && currentMRP !== pricing.mrp && (
+                      <p className="text-[10px] text-gray-400">
+                        Suggested: ₹{pricing.mrp}
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-sm font-bold font-mono
+                                   text-gray-900 dark:text-white">
+                    ₹ {currentMRP || pricing?.mrp || '—'}
                   </span>
                 </div>
 
@@ -1201,7 +1273,7 @@ export const NewSkuDetail: React.FC<{
                   <p className={`text-3xl font-bold ${
                     marginWarning ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'
                   }`}>
-                    {pricing.actual_cm1}%
+                    {actualCM1Live.toFixed(1)}%
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Actual CM1</p>
                   <p className="text-[10px] text-gray-400 mt-0.5">Target: {pricing.cm1_target}%</p>
