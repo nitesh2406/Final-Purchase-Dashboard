@@ -249,7 +249,11 @@ export const NewSkuDetail: React.FC<{
           body: JSON.stringify({ action: API_ACTIONS.GET_PRICING_CONFIG })
         });
         const result = await response.json();
-        if (result.success) setPricingConfig(result.data);
+        if (result.success) {
+          // Merge onto MOCK defaults — guards against GAS returning
+          // old key names (shipping_factor etc.) that would null out calcPricing
+          setPricingConfig({ ...MOCK_PRICING_CONFIG, ...result.data });
+        }
       } catch (err) {
         console.error('fetchPricingConfig error:', err);
       }
