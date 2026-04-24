@@ -262,6 +262,31 @@ export const NewSkuDetail: React.FC<{
     fetchPricingConfig();
   }, []);
 
+  useEffect(() => {
+    const fetchOptions = async () => {
+      try {
+        const bRes = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: API_ACTIONS.GET_BRANDS })
+        });
+        const bResult = await bRes.json();
+        if (bResult.success) setBrandOptions(bResult.data);
+
+        const vRes = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: API_ACTIONS.GET_VARIANTS })
+        });
+        const vResult = await vRes.json();
+        if (vResult.success) setVariantOptions(vResult.data);
+      } catch(err) {
+        console.error('fetchOptions error:', err);
+      }
+    };
+    fetchOptions();
+  }, []);
+
   // Platform creation status
   const [platformStatus, setPlatformStatus] = useState({
     ee: sourceData.ee_done ?? false,
@@ -293,6 +318,9 @@ export const NewSkuDetail: React.FC<{
   } | null>(null);
   const [parentSkuLoading, setParentSkuLoading] = useState(false);
   const [parentSkuError, setParentSkuError]     = useState<string | null>(null);
+
+  const [brandOptions, setBrandOptions]     = useState<string[]>([]);
+  const [variantOptions, setVariantOptions] = useState<string[]>([]);
 
   // Debug mode (same localStorage key as list view)
   const [debugMode] = useState(
@@ -852,12 +880,23 @@ export const NewSkuDetail: React.FC<{
               </div>
               <div>
                 <FieldLabel>Brand</FieldLabel>
-                <input
-                  className={inputClasses}
-                  value={form.brand}
-                  onChange={e => updateField('brand', e.target.value)}
-                  placeholder="e.g. MoYu, QiYi, GAN"
-                />
+                <div className="relative">
+                  <input
+                    list="brand-options"
+                    value={form.brand}
+                    onChange={e => updateField('brand', e.target.value)}
+                    placeholder="Select or type brand..."
+                    className="w-full text-sm bg-white dark:bg-gray-700
+                               border border-gray-200 dark:border-gray-600
+                               rounded-lg px-3 py-2 text-gray-900 dark:text-white
+                               focus:outline-none focus:ring-2 focus:ring-blue-500
+                               transition-all" />
+                  <datalist id="brand-options">
+                    {brandOptions.map(b => (
+                      <option key={b} value={b} />
+                    ))}
+                  </datalist>
+                </div>
               </div>
 
               {/* Row 4: Listing Type + Variant */}
@@ -875,12 +914,23 @@ export const NewSkuDetail: React.FC<{
               </div>
               <div>
                 <FieldLabel>Variant</FieldLabel>
-                <input
-                  className={inputClasses}
-                  value={form.variant}
-                  onChange={e => updateField('variant', e.target.value)}
-                  placeholder="e.g. Stickerless, Black, Magnetic"
-                />
+                <div className="relative">
+                  <input
+                    list="variant-options"
+                    value={form.variant}
+                    onChange={e => updateField('variant', e.target.value)}
+                    placeholder="Select or type variant..."
+                    className="w-full text-sm bg-white dark:bg-gray-700
+                               border border-gray-200 dark:border-gray-600
+                               rounded-lg px-3 py-2 text-gray-900 dark:text-white
+                               focus:outline-none focus:ring-2 focus:ring-blue-500
+                               transition-all" />
+                  <datalist id="variant-options">
+                    {variantOptions.map(v => (
+                      <option key={v} value={v} />
+                    ))}
+                  </datalist>
+                </div>
               </div>
 
               {/* Row 5: Parent SKU (conditional) */}

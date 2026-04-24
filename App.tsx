@@ -89,6 +89,8 @@ export const API_ACTIONS = {
     UPDATE_EE_PO:            'updateEePurchaseOrder',
     REJECT_SKU_REQUEST:      'rejectSkuRequest',
     CREATE_MANUAL_SKU:       'createManualSkuRequest',
+    GET_BRANDS:   'getBrands',
+    GET_VARIANTS: 'getVariants',
 };
 
 const App: React.FC = () => {
