@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { APPS_SCRIPT_URL, API_ACTIONS } from '../../App';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -71,11 +71,20 @@ interface FormData {
 }
 
 interface PricingConfig {
-  cny_conv_rate: number;
-  shipping_factor: number;
-  mrp_factor: number;
-  margin_factor: number;
+  cny_conv_rate:  number;
+  sea_multiplier: number;
+  air_multiplier: number;
+  pick_pack:      number;
+  min_margin_pct: number;
 }
+
+const MOCK_PRICING_CONFIG: PricingConfig = {
+  cny_conv_rate:  12.5,
+  sea_multiplier: 1.33,
+  air_multiplier: 1.25,
+  pick_pack:      75,
+  min_margin_pct: 20,
+};
 
 const CATEGORIES = [
   '2x2','3x3','4x4','5x5','6x6','7x7',
@@ -229,12 +238,7 @@ export const NewSkuDetail: React.FC<{
   });
 
   // Pricing config (fetched from GAS in production)
-  const [pricingConfig, setPricingConfig] = useState<PricingConfig>({
-    cny_conv_rate: 12.5,
-    shipping_factor: 1.18,
-    mrp_factor: 3.2,
-    margin_factor: 0.55,
-  });
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig>(MOCK_PRICING_CONFIG);
 
   useEffect(() => {
     const fetchPricingConfig = async () => {
@@ -277,35 +281,123 @@ export const NewSkuDetail: React.FC<{
   const [rejectRemark, setRejectRemark] = useState('');
   const [isRejected, setIsRejected] = useState(sourceData.status === 'REJECTED');
 
+  // Parent SKU lookup
+  const [parentSkuDetails, setParentSkuDetails] = useState<{
+    parent_product_name: string;
+    parent_product_id:   string;
+  } | null>(null);
+  const [parentSkuLoading, setParentSkuLoading] = useState(false);
+  const [parentSkuError, setParentSkuError]     = useState<string | null>(null);
+
   // Debug mode (same localStorage key as list view)
   const [debugMode] = useState(
     () => localStorage.getItem('skuDebugMode') === 'true'
   );
 
   // ─── Derived pricing calculations ───
+  const calcPricing = (rmbPrice: number, config: PricingConfig) => {
+    if (!rmbPrice || !config) return null;
+    const multiplier = rmbPrice <= 30
+      ? config.sea_multiplier
+      : config.air_multiplier;
+    const landing  = rmbPrice * config.cny_conv_rate * multiplier;
+
+    let cm1;
+    if      (landing <= 500)  cm1 = 0.50;
+    else if (landing <= 1250) cm1 = 0.47;
+    else if (landing <= 2000) cm1 = 0.44;
+    else                      cm1 = 0.41;
+
+    const rawSP    = (landing / (1 - cm1)) * 1.05 + config.pick_pack;
+    const bucketSP = Math.round(rawSP / 100) * 100 - 1;
+    const floorSP  = (landing / 0.6) * 1.05 + config.pick_pack;
+    const finalSP  = Math.max(bucketSP, Math.ceil(floorSP));
+
+    let mrp;
+    if      (finalSP <= 500)  mrp = finalSP / 0.6;
+    else if (finalSP <= 1000) mrp = finalSP / 0.65;
+    else if (finalSP <= 1500) mrp = finalSP / 0.7;
+    else if (finalSP <= 2000) mrp = finalSP / 0.75;
+    else                      mrp = finalSP / 0.8;
+    mrp = Math.round(mrp);
+
+    const netSales  = finalSP / 1.05;
+    const actualCM1 = (netSales - landing) / netSales * 100;
+
+    return {
+      landing:    Math.round(landing),
+      cm1_target: Math.round(cm1 * 100),
+      raw_sp:     Math.round(rawSP),
+      bucket_sp:  Math.round(bucketSP),
+      floor_sp:   Math.ceil(floorSP),
+      final_sp:   Math.round(finalSP),
+      mrp:        mrp,
+      actual_cm1: Math.round(actualCM1 * 100) / 100,
+      mode:       rmbPrice <= 30 ? 'SEA' : 'AIR',
+    };
+  };
+
   const unitPrice = Number(sourceData.unit_price) || 0;
-  const landedCost = +(unitPrice * pricingConfig.cny_conv_rate * pricingConfig.shipping_factor).toFixed(2);
-  const suggestedMrp = +(landedCost * pricingConfig.mrp_factor).toFixed(2);
-  const suggestedSelling = +(landedCost / pricingConfig.margin_factor).toFixed(2);
+  const pricing   = useMemo(
+    () => calcPricing(unitPrice, pricingConfig),
+    [unitPrice, pricingConfig]
+  );
 
-  const currentSelling = Number(form.shopify_selling_price) || 0;
-  const grossMarginPct = currentSelling > 0
-    ? +((currentSelling - landedCost) / currentSelling * 100).toFixed(1)
-    : 0;
-  const profitPerUnit = +(currentSelling - landedCost).toFixed(2);
-  const marginWarning = grossMarginPct > 0 && grossMarginPct < 20;
-
-  // Auto-fill pricing when component mounts
+  // Auto-fill form when pricing is calculated and fields are empty
   useEffect(() => {
-    if (!form.mrp && suggestedMrp > 0) {
-      setForm(f => ({
-        ...f,
-        mrp: suggestedMrp,
-        shopify_selling_price: suggestedSelling,
-      }));
+    if (!pricing) return;
+    setForm(f => ({
+      ...f,
+      mrp: f.mrp || pricing.mrp,
+      shopify_selling_price: f.shopify_selling_price || pricing.final_sp,
+    }));
+  }, [pricing]);
+
+  const currentSP     = Number(form.shopify_selling_price) || 0;
+  const currentMRP    = Number(form.mrp) || 0;
+  const profitPerUnit = currentSP - (pricing?.landing || 0);
+  const marginWarning = pricing
+    ? pricing.actual_cm1 < pricingConfig.min_margin_pct
+    : false;
+
+  useEffect(() => {
+    const sku = form.parent_sku?.trim();
+    if (!sku || form.listing_type !== 'Existing Variant') {
+      setParentSkuDetails(null);
+      setParentSkuError(null);
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suggestedMrp, suggestedSelling]);
+    const fetchParent = async () => {
+      setParentSkuLoading(true);
+      setParentSkuError(null);
+      try {
+        const response = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action:     API_ACTIONS.GET_PARENT_SKU_DETAILS,
+            parent_sku: sku
+          })
+        });
+        const result = await response.json();
+        if (result.success) {
+          setParentSkuDetails(result.data);
+          if (!form.listing_name) {
+            updateField('listing_name', result.data.parent_product_name);
+          }
+        } else {
+          setParentSkuError(result.error);
+          setParentSkuDetails(null);
+        }
+      } catch(err) {
+        setParentSkuError('Network error');
+      } finally {
+        setParentSkuLoading(false);
+      }
+    };
+    const timer = setTimeout(fetchParent, 600);
+    return () => clearTimeout(timer);
+  }, [form.parent_sku, form.listing_type]);
 
   // Helper to update a form field and mark dirty
   const updateField = (field: keyof FormData, value: any) => {
@@ -735,16 +827,44 @@ export const NewSkuDetail: React.FC<{
               {/* Row 5: Parent SKU (conditional) */}
               {form.listing_type === 'Existing Variant' && (
                 <div className="col-span-2">
-                  <FieldLabel>Parent SKU</FieldLabel>
+                  <label className="text-xs font-semibold text-gray-500
+                                    dark:text-gray-400 uppercase tracking-wider
+                                    mb-1 block">
+                    Parent SKU
+                  </label>
                   <input
-                    className={inputClasses}
                     value={form.parent_sku}
                     onChange={e => updateField('parent_sku', e.target.value)}
-                    placeholder="Enter parent SKU code"
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1">
-                    Listing name will be inherited from parent SKU. Changing it updates all variants on Shopify.
-                  </p>
+                    placeholder="e.g. 1030082"
+                    className="w-full text-sm bg-white dark:bg-gray-700
+                               border border-gray-200 dark:border-gray-600
+                               rounded-lg px-3 py-2 text-gray-900 dark:text-white
+                               focus:outline-none focus:ring-2 focus:ring-blue-500" />
+
+                  {parentSkuLoading && (
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      🔍 Looking up SKU...
+                    </p>
+                  )}
+                  {parentSkuDetails && !parentSkuLoading && (
+                    <div className="mt-1.5 px-3 py-2 bg-green-50 dark:bg-green-900/20
+                                    border border-green-200 dark:border-green-800
+                                    rounded-lg">
+                      <p className="text-[10px] font-semibold text-green-700
+                                    dark:text-green-400">
+                        ✓ Found: {parentSkuDetails.parent_product_name}
+                      </p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        Listing name will be inherited from this product.
+                        Changing it updates all variants on Shopify.
+                      </p>
+                    </div>
+                  )}
+                  {parentSkuError && !parentSkuLoading && (
+                    <p className="text-[10px] text-red-500 mt-1">
+                      ✗ {parentSkuError}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -988,7 +1108,7 @@ export const NewSkuDetail: React.FC<{
                   </pre>
                   <p className="text-gray-500 dark:text-gray-400 mb-1 mt-2">Pricing:</p>
                   <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-24">
-                    {JSON.stringify({ landedCost, suggestedMrp, suggestedSelling, grossMarginPct, profitPerUnit }, null, 2)}
+                    {JSON.stringify({ pricing, profitPerUnit }, null, 2)}
                   </pre>
                 </div>
                 <div>
@@ -1007,40 +1127,92 @@ export const NewSkuDetail: React.FC<{
 
           {/* ─── A: Margin Calculator ─── */}
           <Card>
-            <SectionHeader emoji="💹" title="Margin Calculator" />
-            <div className="space-y-0">
-              <div className="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700/50">
-                <span className="text-xs text-gray-500 dark:text-gray-400">Landed Cost (INR)</span>
-                <span className="text-sm font-mono text-gray-900 dark:text-white">₹{landedCost}</span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700/50">
-                <span className="text-xs text-gray-500 dark:text-gray-400">MRP</span>
-                <span className="text-sm font-mono text-gray-900 dark:text-white">₹{Number(form.mrp) || 0}</span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700/50">
-                <span className="text-xs text-gray-500 dark:text-gray-400">Selling Price</span>
-                <span className="text-sm font-mono text-gray-900 dark:text-white">₹{Number(form.shopify_selling_price) || 0}</span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700/50">
-                <span className="text-xs text-gray-500 dark:text-gray-400">Profit / Unit</span>
-                <span className={`text-sm font-mono font-semibold ${profitPerUnit > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
-                  ₹{profitPerUnit}
+            <div className="flex items-center gap-2 mb-4 pb-3
+                            border-b border-gray-100 dark:border-gray-700">
+              <span className="text-base">💹</span>
+              <h2 className="text-sm font-bold text-gray-800 dark:text-white
+                             uppercase tracking-wider">Margin Calculator</h2>
+              {pricing && (
+                <span className={`ml-auto text-xs font-mono px-2 py-0.5 rounded
+                                 ${pricing.mode === 'SEA'
+                                   ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                                   : 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+                                 }`}>
+                  {pricing.mode}
                 </span>
-              </div>
-            </div>
-
-            {/* Margin % display */}
-            <div className={`mt-4 p-3 rounded-xl text-center ${marginWarning ? 'bg-red-50 dark:bg-red-900/20' : 'bg-green-50 dark:bg-green-900/20'}`}>
-              <p className={`text-3xl font-bold ${marginWarning ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                {grossMarginPct}%
-              </p>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Gross Margin</p>
-              {marginWarning && (
-                <p className="text-xs text-red-500 font-semibold mt-2 flex items-center justify-center gap-1">
-                  <ExclamationTriangleIcon className="w-3 h-3" /> Below 20% minimum threshold
-                </p>
               )}
             </div>
+
+            {!pricing ? (
+              <p className="text-xs text-gray-400 text-center py-4">
+                Enter RMB cost to calculate pricing
+              </p>
+            ) : (
+              <>
+                {[
+                  { label: 'RMB Price',    value: `¥ ${unitPrice}`,             muted: true },
+                  { label: 'Landing Cost', value: `₹ ${pricing.landing}`,       muted: false },
+                  { label: 'CM1 Target',   value: `${pricing.cm1_target}%`,     muted: true },
+                  { label: 'Raw SP',       value: `₹ ${pricing.raw_sp}`,        muted: true },
+                  { label: 'Bucket SP',    value: `₹ ${pricing.bucket_sp}`,     muted: true },
+                  { label: 'Floor SP',     value: `₹ ${pricing.floor_sp}`,      muted: true },
+                ].map(({ label, value, muted }) => (
+                  <div key={label}
+                       className="flex justify-between items-center py-1.5
+                                  border-b border-gray-50 dark:border-gray-700/30">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{label}</span>
+                    <span className={`text-xs font-mono ${
+                      muted
+                        ? 'text-gray-500 dark:text-gray-400'
+                        : 'text-gray-900 dark:text-white font-semibold'
+                    }`}>{value}</span>
+                  </div>
+                ))}
+
+                <div className="flex justify-between items-center py-2
+                                border-b border-gray-100 dark:border-gray-700">
+                  <span className="text-sm font-bold text-gray-700 dark:text-gray-200">Final SP (Suggested)</span>
+                  <span className="text-sm font-bold font-mono text-blue-600 dark:text-blue-400">
+                    ₹ {pricing.final_sp}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center py-2
+                                border-b border-gray-100 dark:border-gray-700">
+                  <span className="text-sm font-bold text-gray-700 dark:text-gray-200">MRP (Suggested)</span>
+                  <span className="text-sm font-bold font-mono text-gray-900 dark:text-white">
+                    ₹ {pricing.mrp}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center py-2
+                                border-b border-gray-100 dark:border-gray-700">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">Profit / Unit</span>
+                  <span className={`text-xs font-mono font-semibold ${
+                    profitPerUnit > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'
+                  }`}>
+                    ₹ {Math.round(profitPerUnit)}
+                  </span>
+                </div>
+
+                <div className={`mt-4 p-3 rounded-xl text-center ${
+                  marginWarning ? 'bg-red-50 dark:bg-red-900/20' : 'bg-green-50 dark:bg-green-900/20'
+                }`}>
+                  <p className={`text-3xl font-bold ${
+                    marginWarning ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'
+                  }`}>
+                    {pricing.actual_cm1}%
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Actual CM1</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">Target: {pricing.cm1_target}%</p>
+                  {marginWarning && (
+                    <p className="text-xs text-red-500 font-semibold mt-2">
+                      ⚠️ Below {pricingConfig.min_margin_pct}% minimum
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
           </Card>
 
           {/* ─── B: Platform Status ─── */}

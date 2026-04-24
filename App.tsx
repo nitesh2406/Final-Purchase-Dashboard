@@ -84,6 +84,7 @@ export const API_ACTIONS = {
     GET_TAGS_BY_CATEGORY:    'getTagsByCategory',
     CREATE_SKU_ON_EE:        'createSkuOnEasyEcom',
     CREATE_SKU_ON_ZOHO:      'createSkuOnZoho',
+    GET_PARENT_SKU_DETAILS:  'getParentSkuDetails',
     CREATE_SKU_ON_SHOPIFY:   'createSkuOnShopify',
     UPDATE_EE_PO:            'updateEePurchaseOrder',
     REJECT_SKU_REQUEST:      'rejectSkuRequest',
@@ -96,6 +97,8 @@ const App: React.FC = () => {
     const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
     const [selectedFinanceBatchId, setSelectedFinanceBatchId] = useState<string | null>(null);
     const [selectedSkuRequestId, setSelectedSkuRequestId] = useState<string | null>(null);
+    const [skuRequests, setSkuRequests] = useState<any[]>([]);
+    const [skuRequestsLoaded, setSkuRequestsLoaded] = useState(false);
     const [highlightDraftId, setHighlightDraftId] = useState<string | null>(null);
     const [lastApiLog, setLastApiLog] = useState<{ action: string; status: number | string; timestamp: string } | null>(null);
     const [showGlobalDebug, setShowGlobalDebug] = useState(false);
@@ -394,20 +397,36 @@ const App: React.FC = () => {
                     onConfigUpdate={fetchAmazonConfig}
                 />;
             case 'Create SKU':
-                return <NewSkuDashboard onOpenDetail={(id) => {
-                    setSelectedSkuRequestId(id);
-                    setCurrentView('SKU Detail');
-                }} />;
+                return <NewSkuDashboard
+                    onOpenDetail={(id) => {
+                        setSelectedSkuRequestId(id);
+                        setCurrentView('SKU Detail');
+                    }}
+                    cachedData={skuRequests}
+                    onDataLoaded={(data) => {
+                        setSkuRequests(data);
+                        setSkuRequestsLoaded(true);
+                    }}
+                    dataLoaded={skuRequestsLoaded}
+                />;
             case 'SKU Detail':
                 return selectedSkuRequestId ? (
                     <NewSkuDetail
                         requestId={selectedSkuRequestId}
                         onBack={() => setCurrentView('Create SKU')}
                     />
-                ) : <NewSkuDashboard onOpenDetail={(id) => {
-                    setSelectedSkuRequestId(id);
-                    setCurrentView('SKU Detail');
-                }} />;
+                ) : <NewSkuDashboard
+                    onOpenDetail={(id) => {
+                        setSelectedSkuRequestId(id);
+                        setCurrentView('SKU Detail');
+                    }}
+                    cachedData={skuRequests}
+                    onDataLoaded={(data) => {
+                        setSkuRequests(data);
+                        setSkuRequestsLoaded(true);
+                    }}
+                    dataLoaded={skuRequestsLoaded}
+                />;
             case 'Settings':
                 return <Settings
                     config={forecastingConfig}
