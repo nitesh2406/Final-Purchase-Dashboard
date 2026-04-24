@@ -250,8 +250,9 @@ export const NewSkuDetail: React.FC<{
         });
         const result = await response.json();
         if (result.success) {
-          // Merge onto MOCK defaults — guards against GAS returning
-          // old key names (shipping_factor etc.) that would null out calcPricing
+          // Reset auto-fill flag so pricing recalculates
+          // with real config values from sheet
+          pricingAutoFilled.current = false;
           setPricingConfig({ ...MOCK_PRICING_CONFIG, ...result.data });
         }
       } catch (err) {
@@ -344,7 +345,9 @@ export const NewSkuDetail: React.FC<{
     else if (finalSP <= 1500) mrp = finalSP / 0.7;
     else if (finalSP <= 2000) mrp = finalSP / 0.75;
     else                      mrp = finalSP / 0.8;
-    mrp = Math.round(mrp);
+    // Round to nearest 50, subtract 1 → ends in 49 or 99
+    // Examples: 1383 → 1400-1 = 1399, 1325 → 1350-1 = 1349
+    mrp = Math.round(mrp / 50) * 50 - 1;
 
     // Step 8: Actual CM1
     const netSales  = finalSP / 1.05;
@@ -810,16 +813,25 @@ export const NewSkuDetail: React.FC<{
                 </div>
               </div>
 
-              {/* Row 2: Listing Name (full width) */}
-              <div className="col-span-2">
-                <FieldLabel>Listing Name</FieldLabel>
-                <input
-                  className={inputClasses}
-                  value={form.listing_name}
-                  onChange={e => updateField('listing_name', e.target.value)}
-                  placeholder="e.g. MoYu RS3M 2021 Stickerless"
-                />
-              </div>
+              {/* Row 2: Listing Name (full width) — hidden for Existing Variant when parent is found (shown below parent SKU instead) */}
+              {!(form.listing_type === 'Existing Variant' && parentSkuDetails) && (
+                <div className="col-span-2">
+                  <label className="text-xs font-semibold text-gray-500
+                                    dark:text-gray-400 uppercase tracking-wider
+                                    mb-1 block">
+                    Listing Name
+                  </label>
+                  <input
+                    value={form.listing_name}
+                    onChange={e => updateField('listing_name', e.target.value)}
+                    placeholder="e.g. MoYu RS3M 2021 Stickerless"
+                    className="w-full text-sm bg-white dark:bg-gray-700
+                               border border-gray-200 dark:border-gray-600
+                               rounded-lg px-3 py-2 text-gray-900 dark:text-white
+                               focus:outline-none focus:ring-2 focus:ring-blue-500
+                               transition-all" />
+                </div>
+              )}
 
               {/* Row 3: Category + Brand */}
               <div>
@@ -894,17 +906,42 @@ export const NewSkuDetail: React.FC<{
                     </p>
                   )}
                   {parentSkuDetails && !parentSkuLoading && (
-                    <div className="mt-1.5 px-3 py-2 bg-green-50 dark:bg-green-900/20
-                                    border border-green-200 dark:border-green-800
-                                    rounded-lg">
-                      <p className="text-[10px] font-semibold text-green-700
-                                    dark:text-green-400">
-                        ✓ Found: {parentSkuDetails.parent_product_name}
-                      </p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">
-                        Listing name will be inherited from this product.
-                        Changing it updates all variants on Shopify.
-                      </p>
+                    <div className="mt-2 space-y-2">
+                      {/* Confirmation badge */}
+                      <div className="px-3 py-2 bg-green-50 dark:bg-green-900/20
+                                      border border-green-200 dark:border-green-800
+                                      rounded-lg">
+                        <p className="text-[10px] font-semibold text-green-700
+                                      dark:text-green-400">
+                          ✓ Parent product found
+                        </p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">
+                          Changing the listing name below will affect
+                          all variants of this product on Shopify.
+                        </p>
+                      </div>
+
+                      {/* Editable Listing Name — shown here for variant context */}
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500
+                                          dark:text-gray-400 uppercase tracking-wider
+                                          mb-1 block">
+                          Listing Name
+                          <span className="ml-2 text-[10px] font-normal
+                                           text-amber-500 normal-case">
+                            Inherited from parent — editable
+                          </span>
+                        </label>
+                        <input
+                          value={form.listing_name}
+                          onChange={e => updateField('listing_name', e.target.value)}
+                          placeholder="Inherited from parent SKU"
+                          className="w-full text-sm bg-white dark:bg-gray-700
+                                     border border-amber-300 dark:border-amber-600
+                                     rounded-lg px-3 py-2 text-gray-900 dark:text-white
+                                     focus:outline-none focus:ring-2 focus:ring-amber-500
+                                     transition-all" />
+                      </div>
                     </div>
                   )}
                   {parentSkuError && !parentSkuLoading && (
