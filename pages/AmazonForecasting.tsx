@@ -16,10 +16,14 @@ const velocityColor = (band: string) => {
   return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
 };
 
-const docColor = (days: number) => {
-  if (days < 20) return 'text-red-500';
-  if (days < 50) return 'text-amber-400';
-  return 'text-green-400';
+const docColor = (days: number, config?: Record<string, number>) => {
+  const target    = config?.AMAZON_TARGET_DOC    ?? 57;
+  const threshold = config?.AMAZON_DOC_THRESHOLD ?? 50;
+  if (days === 999)           return 'text-blue-400';   // infinite — overstock
+  if (days > target + 7)     return 'text-blue-400';   // overstock
+  if (days >= threshold)     return 'text-green-400';  // optimal
+  if (days >= threshold - 7) return 'text-amber-500';  // normal reorder
+  return 'text-red-500';                                // urgent
 };
 
 const formatDoc = (days: number) =>
@@ -80,6 +84,15 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   // ── Sort state ──────────────────────────────────────────────────────────────
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'channelSKU', direction: 'asc' });
 
+  const [amazonConfig, setAmazonConfig] = useState<Record<string, number>>({
+    AMAZON_TARGET_DOC:    57,
+    AMAZON_DOC_THRESHOLD: 50,
+    ADS_WEIGHT_15D:       0.40,
+    ADS_WEIGHT_30D:       0.30,
+    ADS_WEIGHT_60D:       0.20,
+    ADS_WEIGHT_90D:       0.10,
+  });
+
   // ── Selection state ─────────────────────────────────────────────────────────
   const [selectedChannelSkus, setSelectedChannelSkus] = useState<Set<string>>(new Set());
 
@@ -119,6 +132,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
       _amazonCacheTime = new Date();
 
       setSkus(data.data);
+      if (data.config) setAmazonConfig(data.config);
       setLastRefreshed(_amazonCacheTime);
       // Reset selections and overrides on new fetch
       setSelectedChannelSkus(new Set());
@@ -189,6 +203,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
         case 'docDays':      return dir * (a.amazonInventory.docDays - b.amazonInventory.docDays);
         case 'fbaQty':       return dir * (a.amazonInventory.fbaQty - b.amazonInventory.fbaQty);
         case 'inbound':      return dir * (a.amazonInventory.inbound - b.amazonInventory.inbound);
+        case 'pending':      return dir * (a.amazonInventory.pending - b.amazonInventory.pending);
         case 'whAvail':      return dir * (a.warehouseCheck.availableQty - b.warehouseCheck.availableQty);
         case 'recommended':  return dir * (a.replenishment.recommendedQty - b.replenishment.recommendedQty);
         case 'shipQty':      return dir * (getShipQty(a) - getShipQty(b));
@@ -563,9 +578,14 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                 <SortableHeader label="FBA"         sortKey="fbaQty"      sortConfig={sortConfig} onSort={handleSort} right className="w-14"
                                 title="FBA Fulfillable + Reserved" />
                 <SortableHeader label="INBOUND"     sortKey="inbound"     sortConfig={sortConfig} onSort={handleSort} right className="w-14" />
-                <th className="px-2 py-2 w-14 text-right border-b border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500">
-                  <span className="text-[9px] font-semibold uppercase tracking-wider">PENDING</span>
-                </th>
+                <SortableHeader
+                  label="PENDING"
+                  sortKey="pending"
+                  sortConfig={sortConfig}
+                  onSort={handleSort}
+                  right
+                  className="w-14"
+                />
                 <SortableHeader label="EE AVAIL"    sortKey="whAvail"     sortConfig={sortConfig} onSort={handleSort} right className="w-16"
                                 title="EasyEcom warehouse stock after Shopify + YEIO reserve" />
                 <SortableHeader label="VELOCITY"    sortKey="velocityBand" sortConfig={sortConfig} onSort={handleSort} center className="w-20" />
@@ -623,8 +643,14 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                       {/* Urgency dot */}
                       <td className="px-1 py-1.5 text-center">
                         <span className={`inline-block w-2 h-2 rounded-full ${
-                          !item.needsReplenishment         ? 'bg-green-400' :
-                          item.amazonInventory.docDays < 20 ? 'bg-red-400'   : 'bg-amber-400'
+                          (() => {
+                          const d = item.amazonInventory.docDays;
+                          const threshold = amazonConfig.AMAZON_DOC_THRESHOLD ?? 50;
+                          if (!item.needsReplenishment) return 'bg-green-400';
+                          if (d < threshold - 7)        return 'bg-red-400';
+                          if (d < threshold)            return 'bg-amber-500';
+                          return 'bg-amber-400';
+                        })()
                         }`} />
                       </td>
 
@@ -681,7 +707,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
 
                       {/* DOC */}
                       <td className="px-3 py-1.5 text-right">
-                        <span className={`text-xs font-semibold ${docColor(item.amazonInventory.docDays)}`}>
+                        <span className={`text-xs font-semibold ${docColor(item.amazonInventory.docDays, amazonConfig)}`}>
                           {formatDoc(item.amazonInventory.docDays)}
                         </span>
                       </td>
@@ -787,6 +813,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
         <AmazonSkuModal
           sku={selectedSku}
           onClose={() => setSelectedSku(null)}
+          config={amazonConfig}
         />
       )}
     </div>

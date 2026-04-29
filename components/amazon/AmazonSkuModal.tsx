@@ -6,6 +6,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 interface AmazonSkuModalProps {
   sku: AmazonChannelSku;
   onClose: () => void;
+  config?: Record<string, number>;
 }
 
 const velocityColor = (band: string) => {
@@ -14,13 +15,16 @@ const velocityColor = (band: string) => {
   return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
 };
 
-const docColor = (days: number) => {
-  if (days < 20) return 'text-red-500';
-  if (days < 50) return 'text-amber-400';
-  return 'text-green-400';
-};
-
-export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
+export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose, config = {} as Record<string, number> }) => {
+  const docColor = (days: number) => {
+    const target    = config.AMAZON_TARGET_DOC    ?? 57;
+    const threshold = config.AMAZON_DOC_THRESHOLD ?? 50;
+    if (days === 999)           return 'text-blue-400';
+    if (days > target + 7)     return 'text-blue-400';
+    if (days >= threshold)     return 'text-green-400';
+    if (days >= threshold - 7) return 'text-amber-500';
+    return 'text-red-500';
+  };
   const [chartPeriod, setChartPeriod] = useState<'30' | '90'>('30');
   const [showDebug, setShowDebug] = useState(false);
   const [supplyChain, setSupplyChain] = useState<AmazonSupplyChain | null>(null);
@@ -175,10 +179,10 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
                     <span>Period</span><span>Units</span><span>Daily Rate</span><span>Weight</span>
                   </div>
                   {[
-                    { label: 'Last 15 days', units: sku.mma._buckets?.total15, ads: sku.mma._ads?.ads15, weight: '40%' },
-                    { label: 'Last 30 days', units: sku.mma._buckets?.total30, ads: sku.mma._ads?.ads30, weight: '30%' },
-                    { label: '30–60 days',   units: sku.mma._buckets?.total60, ads: sku.mma._ads?.ads60, weight: '20%' },
-                    { label: '60–90 days',   units: sku.mma._buckets?.total90, ads: sku.mma._ads?.ads90, weight: '10%' },
+                    { label: 'Last 15 days', units: sku.mma._buckets?.total15, ads: sku.mma._ads?.ads15, weight: `${Math.round((config.ADS_WEIGHT_15D ?? 0.40) * 100)}%` },
+                    { label: 'Last 30 days', units: sku.mma._buckets?.total30, ads: sku.mma._ads?.ads30, weight: `${Math.round((config.ADS_WEIGHT_30D ?? 0.30) * 100)}%` },
+                    { label: '30–60 days',   units: sku.mma._buckets?.total60, ads: sku.mma._ads?.ads60, weight: `${Math.round((config.ADS_WEIGHT_60D ?? 0.20) * 100)}%` },
+                    { label: '60–90 days',   units: sku.mma._buckets?.total90, ads: sku.mma._ads?.ads90, weight: `${Math.round((config.ADS_WEIGHT_90D ?? 0.10) * 100)}%` },
                   ].map(row => (
                     <div key={row.label} className="flex justify-between text-xs">
                       <span className="text-gray-500 dark:text-gray-400">{row.label}</span>
@@ -257,7 +261,9 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
                 <p className={`text-3xl font-bold ${docColor(sku.amazonInventory.docDays)}`}>
                   {sku.amazonInventory.docDays === 999 ? '∞' : `${sku.amazonInventory.docDays}d`}
                 </p>
-                <p className="text-xs text-gray-400 dark:text-gray-500">Target: 57 days</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">
+                  Target: {config.AMAZON_TARGET_DOC ?? 57} days
+                </p>
               </div>
             </div>
 
@@ -460,7 +466,7 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose }) => {
             ) : (
               <div className="space-y-2">
                 {[
-                  { label: 'Target DOC',       value: '57 days',                                      color: '' },
+                  { label: 'Target DOC',       value: `${config.AMAZON_TARGET_DOC ?? 57} days`,       color: '' },
                   { label: 'Current DOC',      value: `${sku.amazonInventory.docDays} days`,           color: docColor(sku.amazonInventory.docDays) },
                   { label: 'DOC Gap',          value: `${sku.replenishment.docGap} days`,              color: 'text-orange-400' },
                   { label: 'Calculated Qty',   value: `${sku.replenishment.calculatedQty} units (gap × MMA ÷ 30)`, color: '' },
