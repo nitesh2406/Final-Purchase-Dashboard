@@ -36,6 +36,11 @@ interface SkuRequest {
 }
 
 interface FormData {
+  // Source Info (manual entry)
+  ean:        string;
+  unit_price: number | '';
+  invoice_qty: number | '';
+  vendor_code: string;
   // Section B — Product Identity
   suggested_sku: string;
   listing_name: string;
@@ -249,6 +254,10 @@ export const NewSkuDetail: React.FC<{
 
   // All editable form fields
   const [form, setForm] = useState<FormData>({
+    ean:        '',
+    unit_price: '',
+    invoice_qty: '',
+    vendor_code: '',
     suggested_sku: '',
     listing_name: sourceData.item_name ?? '',
     variant: '',
@@ -498,7 +507,9 @@ export const NewSkuDetail: React.FC<{
     };
   };
 
-  const unitPrice = Number(sourceData.unit_price) || 0;
+  const unitPrice = isNew
+    ? Number(form.unit_price) || 0
+    : Number(sourceData.unit_price) || 0;
   const pricing   = useMemo(
     () => calcPricing(unitPrice, pricingConfig),
     [unitPrice, pricingConfig]
@@ -889,8 +900,9 @@ export const NewSkuDetail: React.FC<{
         {/* LEFT column — independently scrollable */}
         <div className="flex-1 overflow-y-auto pr-2 space-y-6 scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
 
-          {/* ─── SECTION A: Source Info (read-only) ─── */}
-          {!isNew && (
+          {/* ─── SECTION A: Source Info ─── */}
+          {!isNew ? (
+            // ── Shipment-based: read-only Source Info ──
             <Card>
               <SectionHeader emoji="📋" title="Source Info" />
               <div className="grid grid-cols-2 gap-4">
@@ -917,8 +929,14 @@ export const NewSkuDetail: React.FC<{
                 <div>
                   <FieldLabel>Cost (CNY)</FieldLabel>
                   <div className={readOnlyClasses}>
-                    {sourceData.unit_price ? `¥ ${Number(sourceData.unit_price).toFixed(2)}` : '—'}
+                    {sourceData.unit_price
+                      ? `¥ ${Number(sourceData.unit_price).toFixed(2)}`
+                      : '—'}
                   </div>
+                </div>
+                <div>
+                  <FieldLabel>EAN / UPC</FieldLabel>
+                  <div className={readOnlyClasses}>{sourceData.ean || '—'}</div>
                 </div>
                 <div>
                   <FieldLabel>Requested By</FieldLabel>
@@ -929,6 +947,67 @@ export const NewSkuDetail: React.FC<{
                   <div className={readOnlyClasses}>
                     {sourceData.requested_at ? formatDate(sourceData.requested_at) : '—'}
                   </div>
+                </div>
+              </div>
+            </Card>
+          ) : (
+            // ── Manual entry: editable Source Info ──
+            <Card>
+              <SectionHeader emoji="📋" title="Basic Info" />
+              <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">
+                Fill in the basic product details. These will be saved to the
+                SKU request sheet as a reference.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <FieldLabel>EAN / UPC</FieldLabel>
+                  <input
+                    type="text"
+                    className={inputClasses}
+                    value={form.ean}
+                    onChange={e => updateField('ean', e.target.value)}
+                    placeholder="e.g. 6954256109533"
+                  />
+                </div>
+                <div>
+                  <FieldLabel>Cost (RMB ¥)</FieldLabel>
+                  <input
+                    type="number"
+                    className={inputClasses}
+                    value={form.unit_price}
+                    onChange={e => updateField('unit_price',
+                      e.target.value ? Number(e.target.value) : ''
+                    )}
+                    placeholder="e.g. 48.50"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Used to calculate landing cost and suggested pricing
+                  </p>
+                </div>
+                <div>
+                  <FieldLabel>Invoice Qty</FieldLabel>
+                  <input
+                    type="number"
+                    className={inputClasses}
+                    value={form.invoice_qty ?? 0}
+                    onChange={e => updateField('invoice_qty',
+                      e.target.value ? Number(e.target.value) : 0
+                    )}
+                    placeholder="0"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Set to 0 if no shipment yet
+                  </p>
+                </div>
+                <div>
+                  <FieldLabel>Vendor (optional)</FieldLabel>
+                  <input
+                    type="text"
+                    className={inputClasses}
+                    value={form.vendor_code ?? ''}
+                    onChange={e => updateField('vendor_code', e.target.value)}
+                    placeholder="e.g. PW, QY, MY"
+                  />
                 </div>
               </div>
             </Card>
@@ -1166,60 +1245,69 @@ export const NewSkuDetail: React.FC<{
           {/* ─── SECTION D: Physical Specs ─── */}
           <Card>
             <SectionHeader emoji="📦" title="Physical Specs" />
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <FieldLabel>Pkg Height (cm)</FieldLabel>
-                <input
-                  type="number"
-                  className={inputClasses}
-                  value={form.pkg_height_cm}
-                  onChange={e => updateField('pkg_height_cm', e.target.value ? Number(e.target.value) : '')}
-                />
+            <div className="space-y-4">
+              {/* H / L / W in one row */}
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <FieldLabel>Pkg Height (cm)</FieldLabel>
+                  <input
+                    type="number"
+                    className={inputClasses}
+                    value={form.pkg_height_cm}
+                    onChange={e => updateField('pkg_height_cm', e.target.value ? Number(e.target.value) : '')}
+                  />
+                </div>
+                <div>
+                  <FieldLabel>Pkg Length (cm)</FieldLabel>
+                  <input
+                    type="number"
+                    className={inputClasses}
+                    value={form.pkg_length_cm}
+                    onChange={e => updateField('pkg_length_cm', e.target.value ? Number(e.target.value) : '')}
+                  />
+                </div>
+                <div>
+                  <FieldLabel>Pkg Width (cm)</FieldLabel>
+                  <input
+                    type="number"
+                    className={inputClasses}
+                    value={form.pkg_width_cm}
+                    onChange={e => updateField('pkg_width_cm', e.target.value ? Number(e.target.value) : '')}
+                  />
+                </div>
               </div>
-              <div>
-                <FieldLabel>Pkg Length (cm)</FieldLabel>
-                <input
-                  type="number"
-                  className={inputClasses}
-                  value={form.pkg_length_cm}
-                  onChange={e => updateField('pkg_length_cm', e.target.value ? Number(e.target.value) : '')}
-                />
+              {/* Weight + dims row */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <FieldLabel>Pkg Weight (gm)</FieldLabel>
+                  <input
+                    type="number"
+                    className={inputClasses}
+                    value={form.pkg_weight_gm}
+                    onChange={e => updateField('pkg_weight_gm', e.target.value ? Number(e.target.value) : '')}
+                  />
+                </div>
+                <div>
+                  <FieldLabel>Product Dims (mm)</FieldLabel>
+                  <input
+                    className={inputClasses}
+                    value={form.product_dims_mm}
+                    onChange={e => updateField('product_dims_mm', e.target.value)}
+                    placeholder="e.g. 56×56×56"
+                  />
+                </div>
               </div>
-              <div>
-                <FieldLabel>Pkg Width (cm)</FieldLabel>
-                <input
-                  type="number"
-                  className={inputClasses}
-                  value={form.pkg_width_cm}
-                  onChange={e => updateField('pkg_width_cm', e.target.value ? Number(e.target.value) : '')}
-                />
-              </div>
-              <div>
-                <FieldLabel>Pkg Weight (gm)</FieldLabel>
-                <input
-                  type="number"
-                  className={inputClasses}
-                  value={form.pkg_weight_gm}
-                  onChange={e => updateField('pkg_weight_gm', e.target.value ? Number(e.target.value) : '')}
-                />
-              </div>
-              <div>
-                <FieldLabel>Product Dims (mm)</FieldLabel>
-                <input
-                  className={inputClasses}
-                  value={form.product_dims_mm}
-                  onChange={e => updateField('product_dims_mm', e.target.value)}
-                  placeholder="e.g. 56×56×56"
-                />
-              </div>
-              <div>
-                <FieldLabel>Net Weight (gm)</FieldLabel>
-                <input
-                  type="number"
-                  className={inputClasses}
-                  value={form.nw_gm}
-                  onChange={e => updateField('nw_gm', e.target.value ? Number(e.target.value) : '')}
-                />
+              {/* Net weight */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <FieldLabel>Net Weight (gm)</FieldLabel>
+                  <input
+                    type="number"
+                    className={inputClasses}
+                    value={form.nw_gm}
+                    onChange={e => updateField('nw_gm', e.target.value ? Number(e.target.value) : '')}
+                  />
+                </div>
               </div>
             </div>
           </Card>
