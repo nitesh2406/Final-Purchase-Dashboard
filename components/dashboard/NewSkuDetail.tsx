@@ -41,6 +41,8 @@ interface FormData {
   unit_price: number | '';
   invoice_qty: number | '';
   vendor_code: string;
+  factory_code_other: string;  // Other Factory Item Code → AccountingSKU in EE
+  article_number:     string;  // Article Number → customFields in EE
   // Section B — Product Identity
   suggested_sku: string;
   listing_name: string;
@@ -258,6 +260,8 @@ export const NewSkuDetail: React.FC<{
     unit_price: '',
     invoice_qty: '',
     vendor_code: '',
+    factory_code_other: '',
+    article_number: '',
     suggested_sku: '',
     listing_name: sourceData.item_name ?? '',
     variant: '',
@@ -338,6 +342,13 @@ export const NewSkuDetail: React.FC<{
             threshold_qty:         result.data.threshold_qty        || '',
             supplier_code:         result.data.supplier_code        || '',
             pack_size:             result.data.pack_size            || '',
+            factory_code_other: result.data.factory_code
+              ? String(result.data.factory_code).split('|')[0].trim()
+              : '',
+            article_number: result.data.factory_code &&
+              String(result.data.factory_code).includes('|')
+              ? String(result.data.factory_code).split('|')[1].trim()
+              : '',
           }));
         }
       } catch (err) {
@@ -679,7 +690,17 @@ export const NewSkuDetail: React.FC<{
           action:     API_ACTIONS.SAVE_NEW_SKU_DRAFT,
           request_id: requestIdToUse,
           edited_by:  'user', // replace with user?.name if passed as prop
-          form,
+          form: {
+            ...form,
+            // Combine factory code fields into single pipe-separated value
+            // for storage in factory_code column of New_SKU_Requests sheet
+            // Split happens at EE creation time (before | = AccountingSKU,
+            // after | = Article Number)
+            factory_code: [
+              form.factory_code_other,
+              form.article_number
+            ].filter(Boolean).join('|'),
+          },
         })
       });
       const result = await response.json();
@@ -1008,6 +1029,32 @@ export const NewSkuDetail: React.FC<{
                     onChange={e => updateField('vendor_code', e.target.value)}
                     placeholder="e.g. PW, QY, MY"
                   />
+                </div>
+                <div>
+                  <FieldLabel>Other Factory Code</FieldLabel>
+                  <input
+                    type="text"
+                    className={inputClasses}
+                    value={form.factory_code_other}
+                    onChange={e => updateField('factory_code_other', e.target.value)}
+                    placeholder="e.g. DSYH009"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Maps to Accounting SKU in EasyEcom
+                  </p>
+                </div>
+                <div>
+                  <FieldLabel>Article Number</FieldLabel>
+                  <input
+                    type="text"
+                    className={inputClasses}
+                    value={form.article_number}
+                    onChange={e => updateField('article_number', e.target.value)}
+                    placeholder="e.g. T220031MS"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Maps to Article Number custom field in EasyEcom
+                  </p>
                 </div>
               </div>
             </Card>
