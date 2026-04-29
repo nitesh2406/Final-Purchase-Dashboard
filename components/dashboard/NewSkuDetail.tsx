@@ -429,6 +429,9 @@ export const NewSkuDetail: React.FC<{
 
   // Save feedback
   const [showSaved, setShowSaved] = useState(false);
+  const [savedRequestId, setSavedRequestId] = useState<string | null>(
+    isNew ? null : requestId
+  );
 
   // Reject UI
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
@@ -706,6 +709,11 @@ export const NewSkuDetail: React.FC<{
       const result = await response.json();
       if (result.success) {
         setIsDirty(false);
+        // Store the real request_id returned from GAS
+        // This unlocks platform creation buttons for manual entry
+        if (result.data?.request_id || result.data?.status) {
+          setSavedRequestId(requestIdToUse);
+        }
         console.log('Draft saved:', result.data);
         setShowSaved(true);
         setTimeout(() => setShowSaved(false), 2000);
@@ -751,7 +759,7 @@ export const NewSkuDetail: React.FC<{
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action:     API_ACTIONS.CREATE_SKU_ON_EE,
-          request_id: requestId
+          request_id: savedRequestId || requestId
         })
       });
       const result = await response.json();
@@ -779,7 +787,7 @@ export const NewSkuDetail: React.FC<{
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action:     API_ACTIONS.CREATE_SKU_ON_ZOHO,
-          request_id: requestId
+          request_id: savedRequestId || requestId
         })
       });
       const result = await response.json();
@@ -805,7 +813,7 @@ export const NewSkuDetail: React.FC<{
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action:     API_ACTIONS.CREATE_SKU_ON_SHOPIFY,
-          request_id: requestId
+          request_id: savedRequestId || requestId
         })
       });
       const result = await response.json();
@@ -837,7 +845,7 @@ export const NewSkuDetail: React.FC<{
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action:     API_ACTIONS.UPDATE_EE_PO,
-          request_id: requestId,
+          request_id: savedRequestId || requestId,
           updated_by: 'user'
         })
       });
@@ -883,12 +891,14 @@ export const NewSkuDetail: React.FC<{
   // Sequential lock check (debug mode overrides)
   const canDoStep = (step: 'ee' | 'zoho' | 'shopify' | 'ee_po'): boolean => {
     if (debugMode) return true;
+    // For manual entry — must save first to get a real request_id
+    if (isNew && !savedRequestId) return false;
     switch (step) {
-      case 'ee': return true;
-      case 'zoho': return platformStatus.ee;
+      case 'ee':      return true;
+      case 'zoho':    return platformStatus.ee;
       case 'shopify': return platformStatus.zoho;
-      case 'ee_po': return platformStatus.shopify;
-      default: return false;
+      case 'ee_po':   return platformStatus.shopify;
+      default:        return false;
     }
   };
 
@@ -1835,6 +1845,11 @@ export const NewSkuDetail: React.FC<{
                 {loading.save ? <Spinner /> : null}
                 {isDirty ? 'Save Draft' : 'No Changes'}
               </Button>
+              {isNew && !savedRequestId && (
+                <p className="text-xs text-amber-500 dark:text-amber-400 text-center mt-2">
+                  ⚠️ Save Draft first to enable SKU creation
+                </p>
+              )}
 
               {/* Reject Request */}
               {!isNew && !isRejected && sourceData.status !== 'REJECTED' && (
