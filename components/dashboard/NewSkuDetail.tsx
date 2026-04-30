@@ -101,10 +101,11 @@ interface ComboBoxProps {
   options:     string[];
   placeholder: string;
   id:          string;
+  onBlur?:     () => void;
 }
 
 const ComboBox: React.FC<ComboBoxProps> = ({
-  value, onChange, options, placeholder, id
+  value, onChange, options, placeholder, id, onBlur
 }) => {
   const [open, setOpen]   = useState(false);
   const [query, setQuery] = useState('');
@@ -165,7 +166,7 @@ const ComboBox: React.FC<ComboBoxProps> = ({
           ) && (
             <button
               type="button"
-              onClick={() => { onChange(query); setOpen(false); setQuery(''); }}
+              onClick={() => { onChange(query); setOpen(false); setQuery(''); onBlur?.(); }}
               className="w-full text-left px-3 py-2 text-sm
                          text-blue-600 dark:text-blue-400
                          hover:bg-gray-50 dark:hover:bg-gray-700
@@ -180,7 +181,7 @@ const ComboBox: React.FC<ComboBoxProps> = ({
               <button
                 key={opt}
                 type="button"
-                onClick={() => { onChange(opt); setOpen(false); setQuery(''); }}
+                onClick={() => { onChange(opt); setOpen(false); setQuery(''); onBlur?.(); }}
                 className={`w-full text-left px-3 py-2 text-sm transition-colors
                             ${value === opt
                               ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-semibold'
@@ -250,6 +251,19 @@ export const NewSkuDetail: React.FC<{
 }> = ({ requestId, onBack }) => {
   const isNew = requestId === 'NEW';
 
+  // Multi-listing (variant) support
+  // listings[0] = primary, listings[1+] = added variants
+  // Each listing has its own requestId and form state
+  interface ListingTab {
+    requestId: string;
+    label: string;  // e.g. "Listing 1", "Variant 2"
+  }
+  const [listingTabs, setListingTabs] = useState<ListingTab[]>([
+    { requestId: isNew ? 'NEW' : requestId, label: 'Listing 1' }
+  ]);
+  const [activeTab, setActiveTab] = useState(0);
+  const [addingVariant, setAddingVariant] = useState(false);
+
   // Source data (read-only, from sheet row or blank for manual)
   const [sourceData, setSourceData] = useState<Partial<SkuRequest>>({});
   const [isLoadingSource, setIsLoadingSource] = useState(!isNew);
@@ -316,6 +330,8 @@ export const NewSkuDetail: React.FC<{
           // Pre-fill editable form fields from saved data
           setForm(f => ({
             ...f,
+            ean:                   result.data.ean                  || '',
+            unit_price:            result.data.unit_price           || '',
             suggested_sku:         result.data.suggested_sku        || '',
             listing_name:          result.data.listing_name         || result.data.item_name || '',
             variant:               result.data.variant              || '',
@@ -429,6 +445,7 @@ export const NewSkuDetail: React.FC<{
 
   // Save feedback
   const [showSaved, setShowSaved] = useState(false);
+  const [savedToast, setSavedToast] = useState(false);
   const [savedRequestId, setSavedRequestId] = useState<string | null>(
     isNew ? null : requestId
   );
@@ -728,6 +745,85 @@ export const NewSkuDetail: React.FC<{
     }
   };
 
+  const handleBlurSave = async () => {
+    if (!isDirty || isNew || loading.save) return;
+    setLoading(l => ({ ...l, save: true }));
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: API_ACTIONS.SAVE_NEW_SKU_DRAFT,
+          request_id: requestId,
+          edited_by: 'user',
+          form: {
+            ...form,
+            factory_code: form.factory_code_other && form.article_number
+              ? `${form.factory_code_other}|${form.article_number}`
+              : form.factory_code_other || form.article_number || '',
+          }
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setIsDirty(false);
+        setSavedToast(true);
+        setTimeout(() => setSavedToast(false), 2000);
+      }
+    } catch(err) {
+      console.error('handleBlurSave error:', err);
+    } finally {
+      setLoading(l => ({ ...l, save: false }));
+    }
+  };
+
+  const handleAddVariant = async () => {
+    if (isNew || !savedRequestId && requestId === 'NEW') {
+      alert('Save the current listing as a draft first before adding a variant.');
+      return;
+    }
+    setAddingVariant(true);
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: API_ACTIONS.CREATE_MANUAL_SKU,
+          created_by: 'user',
+          form: {
+            listing_name:  form.listing_name,
+            category:      form.category,
+            brand:         form.brand,
+            vendor_code:   form.vendor_code,
+            unit_price:    form.unit_price,
+            invoice_qty:   form.invoice_qty,
+            listing_type:  'Existing Variant',
+            parent_sku:    form.suggested_sku,  // current listing's EE SKU as parent
+            // leave blank — must be set per variant
+            variant:       '',
+            ean:           '',
+            factory_code:  '',
+          }
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        const newTab: ListingTab = {
+          requestId: result.data.request_id,
+          label: `Variant ${listingTabs.length + 1}`,
+        };
+        setListingTabs(prev => [...prev, newTab]);
+        setActiveTab(listingTabs.length); // switch to new tab
+      } else {
+        alert('Failed to create variant: ' + result.error);
+      }
+    } catch(err) {
+      alert('Network error while adding variant');
+    } finally {
+      setAddingVariant(false);
+    }
+  };
+
   // Helper: create manual request first if this is a new entry
   const handleCreateManualFirst = async (): Promise<string | null> => {
     try {
@@ -812,8 +908,10 @@ export const NewSkuDetail: React.FC<{
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
-          action:     API_ACTIONS.CREATE_SKU_ON_SHOPIFY,
-          request_id: savedRequestId || requestId
+          action:       API_ACTIONS.CREATE_SKU_ON_SHOPIFY,
+          request_id:   savedRequestId || requestId,
+          parent_sku:   form.parent_sku   || '',
+          listing_type: form.listing_type || '',
         })
       });
       const result = await response.json();
@@ -904,6 +1002,39 @@ export const NewSkuDetail: React.FC<{
 
   return (
     <div className="max-w-[1600px] mx-auto p-6 flex flex-col h-screen overflow-hidden animate-in fade-in duration-500">
+
+      {/* ─── LISTING TABS ─── */}
+      {!isNew && (
+        <div className="flex items-center gap-2 mb-4 px-1">
+          {listingTabs.map((tab, idx) => (
+            <button
+              key={tab.requestId}
+              onClick={() => {
+                setActiveTab(idx);
+                // TODO: full tab switching requires onOpenDetail prop — wire in next session
+              }}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                activeTab === idx
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+          <button
+            onClick={handleAddVariant}
+            disabled={addingVariant}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 dark:bg-gray-700/60 text-gray-500 dark:text-gray-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-600 dark:hover:text-blue-400 border border-dashed border-gray-300 dark:border-gray-600 transition-all disabled:opacity-50"
+          >
+            {addingVariant
+              ? <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              : <span>+</span>
+            }
+            Add Variant
+          </button>
+        </div>
+      )}
 
       {/* ─── SECTION 3: PAGE HEADER ─── */}
       <div className="flex items-center gap-3 mb-6">
@@ -997,6 +1128,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.ean}
                     onChange={e => updateField('ean', e.target.value)}
+                    onBlur={handleBlurSave}
                     placeholder="e.g. 6954256109533"
                   />
                 </div>
@@ -1009,6 +1141,7 @@ export const NewSkuDetail: React.FC<{
                     onChange={e => updateField('unit_price',
                       e.target.value ? Number(e.target.value) : ''
                     )}
+                    onBlur={handleBlurSave}
                     placeholder="e.g. 48.50"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
@@ -1024,6 +1157,7 @@ export const NewSkuDetail: React.FC<{
                     onChange={e => updateField('invoice_qty',
                       e.target.value ? Number(e.target.value) : 0
                     )}
+                    onBlur={handleBlurSave}
                     placeholder="0"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
@@ -1037,6 +1171,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.vendor_code ?? ''}
                     onChange={e => updateField('vendor_code', e.target.value)}
+                    onBlur={handleBlurSave}
                     placeholder="e.g. PW, QY, MY"
                   />
                 </div>
@@ -1047,6 +1182,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.factory_code_other}
                     onChange={e => updateField('factory_code_other', e.target.value)}
+                    onBlur={handleBlurSave}
                     placeholder="e.g. DSYH009"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
@@ -1060,6 +1196,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.article_number}
                     onChange={e => updateField('article_number', e.target.value)}
+                    onBlur={handleBlurSave}
                     placeholder="e.g. T220031MS"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
@@ -1082,6 +1219,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.suggested_sku}
                     onChange={e => updateField('suggested_sku', e.target.value)}
+                    onBlur={handleBlurSave}
                     placeholder="Auto-assigned or manual entry"
                   />
                   <button
@@ -1122,6 +1260,7 @@ export const NewSkuDetail: React.FC<{
                   <input
                     value={form.listing_name}
                     onChange={e => updateField('listing_name', e.target.value)}
+                    onBlur={handleBlurSave}
                     placeholder="e.g. MoYu RS3M 2021 Stickerless"
                     className="w-full text-sm bg-white dark:bg-gray-700
                                border border-gray-200 dark:border-gray-600
@@ -1141,6 +1280,7 @@ export const NewSkuDetail: React.FC<{
                   onChange={e => {
                     updateField('category', e.target.value);
                   }}
+                  onBlur={handleBlurSave}
                 >
                   <option value="">Select category...</option>
                   {CATEGORIES.map(c => (
@@ -1154,6 +1294,7 @@ export const NewSkuDetail: React.FC<{
                   id="brand-combobox"
                   value={form.brand}
                   onChange={val => updateField('brand', val)}
+                  onBlur={handleBlurSave}
                   options={brandOptions}
                   placeholder="Select or type brand..." />
               </div>
@@ -1165,6 +1306,7 @@ export const NewSkuDetail: React.FC<{
                   className={inputClasses}
                   value={form.listing_type}
                   onChange={e => updateField('listing_type', e.target.value as any)}
+                  onBlur={handleBlurSave}
                 >
                   <option value="">Select...</option>
                   <option value="New Product">New Product</option>
@@ -1177,6 +1319,7 @@ export const NewSkuDetail: React.FC<{
                   id="variant-combobox"
                   value={form.variant}
                   onChange={val => updateField('variant', val)}
+                  onBlur={handleBlurSave}
                   options={variantOptions}
                   placeholder="Select or type variant..." />
               </div>
@@ -1192,6 +1335,7 @@ export const NewSkuDetail: React.FC<{
                   <input
                     value={form.parent_sku}
                     onChange={e => updateField('parent_sku', e.target.value)}
+                    onBlur={handleBlurSave}
                     placeholder="e.g. 1030082"
                     className="w-full text-sm bg-white dark:bg-gray-700
                                border border-gray-200 dark:border-gray-600
@@ -1233,6 +1377,7 @@ export const NewSkuDetail: React.FC<{
                         <input
                           value={form.listing_name}
                           onChange={e => updateField('listing_name', e.target.value)}
+                          onBlur={handleBlurSave}
                           placeholder="Inherited from parent SKU"
                           className="w-full text-sm bg-white dark:bg-gray-700
                                      border border-amber-300 dark:border-amber-600
@@ -1263,6 +1408,7 @@ export const NewSkuDetail: React.FC<{
                   className={inputClasses}
                   value={form.mrp}
                   onChange={e => updateField('mrp', e.target.value ? Number(e.target.value) : '')}
+                  onBlur={handleBlurSave}
                   placeholder="0.00"
                 />
               </div>
@@ -1273,6 +1419,7 @@ export const NewSkuDetail: React.FC<{
                   className={inputClasses}
                   value={form.shopify_selling_price}
                   onChange={e => updateField('shopify_selling_price', e.target.value ? Number(e.target.value) : '')}
+                  onBlur={handleBlurSave}
                   placeholder="0.00"
                 />
               </div>
@@ -1283,6 +1430,7 @@ export const NewSkuDetail: React.FC<{
                   className={inputClasses}
                   value={form.shopify_compare_price}
                   onChange={e => updateField('shopify_compare_price', e.target.value ? Number(e.target.value) : '')}
+                  onBlur={handleBlurSave}
                   placeholder="0.00"
                 />
               </div>
@@ -1312,6 +1460,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.pkg_height_cm}
                     onChange={e => updateField('pkg_height_cm', e.target.value ? Number(e.target.value) : '')}
+                    onBlur={handleBlurSave}
                   />
                 </div>
                 <div>
@@ -1321,6 +1470,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.pkg_length_cm}
                     onChange={e => updateField('pkg_length_cm', e.target.value ? Number(e.target.value) : '')}
+                    onBlur={handleBlurSave}
                   />
                 </div>
                 <div>
@@ -1330,6 +1480,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.pkg_width_cm}
                     onChange={e => updateField('pkg_width_cm', e.target.value ? Number(e.target.value) : '')}
+                    onBlur={handleBlurSave}
                   />
                 </div>
               </div>
@@ -1342,6 +1493,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.pkg_weight_gm}
                     onChange={e => updateField('pkg_weight_gm', e.target.value ? Number(e.target.value) : '')}
+                    onBlur={handleBlurSave}
                   />
                 </div>
                 <div>
@@ -1350,6 +1502,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.product_dims_mm}
                     onChange={e => updateField('product_dims_mm', e.target.value)}
+                    onBlur={handleBlurSave}
                     placeholder="e.g. 56×56×56"
                   />
                 </div>
@@ -1363,6 +1516,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.nw_gm}
                     onChange={e => updateField('nw_gm', e.target.value ? Number(e.target.value) : '')}
+                    onBlur={handleBlurSave}
                   />
                 </div>
               </div>
@@ -1380,6 +1534,7 @@ export const NewSkuDetail: React.FC<{
                   className={inputClasses}
                   value={form.lead_time}
                   onChange={e => updateField('lead_time', e.target.value ? Number(e.target.value) : '')}
+                  onBlur={handleBlurSave}
                 />
               </div>
               <div>
@@ -1389,6 +1544,7 @@ export const NewSkuDetail: React.FC<{
                   className={inputClasses}
                   value={form.moq}
                   onChange={e => updateField('moq', e.target.value ? Number(e.target.value) : '')}
+                  onBlur={handleBlurSave}
                 />
               </div>
               <div>
@@ -1398,6 +1554,7 @@ export const NewSkuDetail: React.FC<{
                   className={inputClasses}
                   value={form.threshold_qty}
                   onChange={e => updateField('threshold_qty', e.target.value ? Number(e.target.value) : '')}
+                  onBlur={handleBlurSave}
                 />
               </div>
               <div>
@@ -1406,6 +1563,7 @@ export const NewSkuDetail: React.FC<{
                   className={inputClasses}
                   value={form.supplier_code}
                   onChange={e => updateField('supplier_code', e.target.value)}
+                  onBlur={handleBlurSave}
                 />
               </div>
               <div>
@@ -1415,6 +1573,7 @@ export const NewSkuDetail: React.FC<{
                   className={inputClasses}
                   value={form.pack_size}
                   onChange={e => updateField('pack_size', e.target.value ? Number(e.target.value) : '')}
+                  onBlur={handleBlurSave}
                 />
               </div>
             </div>
@@ -1431,6 +1590,7 @@ export const NewSkuDetail: React.FC<{
                   rows={3}
                   value={form.relevant_tags}
                   onChange={e => updateField('relevant_tags', e.target.value)}
+                  onBlur={handleBlurSave}
                   placeholder="Tags auto-filled based on category. Edit as needed."
                 />
                 <p className="text-[10px] text-gray-400 mt-1">Separate with commas</p>
@@ -1442,6 +1602,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.fnsku}
                     onChange={e => updateField('fnsku', e.target.value)}
+                    onBlur={handleBlurSave}
                   />
                 </div>
                 <div>
@@ -1450,6 +1611,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.fnsku_status_ee}
                     onChange={e => updateField('fnsku_status_ee', e.target.value)}
+                    onBlur={handleBlurSave}
                   />
                 </div>
               </div>
@@ -1467,6 +1629,7 @@ export const NewSkuDetail: React.FC<{
                   rows={2}
                   value={form.remark}
                   onChange={e => updateField('remark', e.target.value)}
+                  onBlur={handleBlurSave}
                 />
               </div>
               <div>
@@ -1476,6 +1639,7 @@ export const NewSkuDetail: React.FC<{
                   rows={2}
                   value={form.notes}
                   onChange={e => updateField('notes', e.target.value)}
+                  onBlur={handleBlurSave}
                 />
               </div>
             </div>
@@ -1904,6 +2068,14 @@ export const NewSkuDetail: React.FC<{
           </Card>
         </div>
       </div>
+      {savedToast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 bg-gray-900 dark:bg-gray-800 text-white text-xs font-semibold rounded-xl shadow-xl border border-gray-700 animate-in slide-in-from-bottom-2 duration-200">
+          <svg className="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+          Saved
+        </div>
+      )}
     </div>
   );
 };

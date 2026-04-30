@@ -101,6 +101,10 @@ const App: React.FC = () => {
     const [selectedSkuRequestId, setSelectedSkuRequestId] = useState<string | null>(null);
     const [skuRequests, setSkuRequests] = useState<any[]>([]);
     const [skuRequestsLoaded, setSkuRequestsLoaded] = useState(false);
+    const [skuStatusFilter, setSkuStatusFilter] = useState<string>('PENDING');
+    const [skuVendorFilter, setSkuVendorFilter] = useState<string>('ALL');
+    const [skuDateFrom, setSkuDateFrom] = useState<string>('');
+    const [skuDateTo, setSkuDateTo] = useState<string>('');
     const [highlightDraftId, setHighlightDraftId] = useState<string | null>(null);
     const [lastApiLog, setLastApiLog] = useState<{ action: string; status: number | string; timestamp: string } | null>(null);
     const [showGlobalDebug, setShowGlobalDebug] = useState(false);
@@ -410,6 +414,14 @@ const App: React.FC = () => {
                         setSkuRequestsLoaded(true);
                     }}
                     dataLoaded={skuRequestsLoaded}
+                    statusFilter={skuStatusFilter}
+                    onStatusFilterChange={setSkuStatusFilter}
+                    vendorFilter={skuVendorFilter}
+                    onVendorFilterChange={setSkuVendorFilter}
+                    dateFrom={skuDateFrom}
+                    onDateFromChange={setSkuDateFrom}
+                    dateTo={skuDateTo}
+                    onDateToChange={setSkuDateTo}
                 />;
             case 'SKU Detail':
                 return selectedSkuRequestId ? (
@@ -428,6 +440,14 @@ const App: React.FC = () => {
                         setSkuRequestsLoaded(true);
                     }}
                     dataLoaded={skuRequestsLoaded}
+                    statusFilter={skuStatusFilter}
+                    onStatusFilterChange={setSkuStatusFilter}
+                    vendorFilter={skuVendorFilter}
+                    onVendorFilterChange={setSkuVendorFilter}
+                    dateFrom={skuDateFrom}
+                    onDateFromChange={setSkuDateFrom}
+                    dateTo={skuDateTo}
+                    onDateToChange={setSkuDateTo}
                 />;
             case 'Settings':
                 return <Settings

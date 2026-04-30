@@ -99,14 +99,22 @@ export const NewSkuDashboard: React.FC<{
   cachedData: any[];
   onDataLoaded: (data: any[]) => void;
   dataLoaded: boolean;
-}> = ({ onOpenDetail, cachedData, onDataLoaded, dataLoaded }) => {
+  statusFilter: string;
+  onStatusFilterChange: (v: string) => void;
+  vendorFilter: string;
+  onVendorFilterChange: (v: string) => void;
+  dateFrom: string;
+  onDateFromChange: (v: string) => void;
+  dateTo: string;
+  onDateToChange: (v: string) => void;
+}> = ({ onOpenDetail, cachedData, onDataLoaded, dataLoaded,
+        statusFilter, onStatusFilterChange,
+        vendorFilter, onVendorFilterChange,
+        dateFrom, onDateFromChange,
+        dateTo, onDateToChange }) => {
   const [data, setData] = useState<SkuRequest[]>(() => cachedData || []);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<SkuStatus | 'ALL'>('PENDING');
-  const [vendorFilter, setVendorFilter] = useState<string>('ALL');
-  const [dateFrom, setDateFrom] = useState<string>('');
-  const [dateTo, setDateTo] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debugMode, setDebugMode] = useState<boolean>(
     () => localStorage.getItem('skuDebugMode') === 'true'
@@ -225,7 +233,7 @@ export const NewSkuDashboard: React.FC<{
           {(['ALL', 'PENDING', 'IN_PROGRESS', 'ACTION_REQ', 'CREATED', 'REJECTED'] as const).map(s => (
             <button
               key={s}
-              onClick={() => setStatusFilter(s)}
+              onClick={() => onStatusFilterChange(s)}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all ${
                 statusFilter === s
                   ? 'bg-blue-600 text-white shadow-sm'
@@ -246,7 +254,7 @@ export const NewSkuDashboard: React.FC<{
           {/* Vendor */}
           <select
             value={vendorFilter}
-            onChange={e => setVendorFilter(e.target.value)}
+            onChange={e => onVendorFilterChange(e.target.value)}
             className="h-9 text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
           >
             <option value="ALL">All Vendors</option>
@@ -259,7 +267,7 @@ export const NewSkuDashboard: React.FC<{
             <input
               type="date"
               value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
+              onChange={e => onDateFromChange(e.target.value)}
               className="h-9 text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
           </div>
@@ -270,7 +278,7 @@ export const NewSkuDashboard: React.FC<{
             <input
               type="date"
               value={dateTo}
-              onChange={e => setDateTo(e.target.value)}
+              onChange={e => onDateToChange(e.target.value)}
               className="h-9 text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
           </div>
