@@ -103,7 +103,7 @@ export const NewSkuDashboard: React.FC<{
   const [data, setData] = useState<SkuRequest[]>(() => cachedData || []);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<SkuStatus | 'ALL'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<SkuStatus | 'ALL'>('PENDING');
   const [vendorFilter, setVendorFilter] = useState<string>('ALL');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
@@ -126,16 +126,7 @@ export const NewSkuDashboard: React.FC<{
       const response = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: API_ACTIONS.GET_NEW_SKU_REQUESTS,
-          filters: {
-            status:      statusFilter === 'ALL' ? null : statusFilter,
-            vendor_code: vendorFilter === 'ALL' ? null : vendorFilter,
-            date_from:   dateFrom || null,
-            date_to:     dateTo   || null,
-            search:      searchQuery || null,
-          }
-        })
+        body: JSON.stringify({ action: API_ACTIONS.GET_NEW_SKU_REQUESTS })
       });
       const result = await response.json();
       if (result.success) {
@@ -152,20 +143,11 @@ export const NewSkuDashboard: React.FC<{
     }
   };
 
-  const isFirstMount = React.useRef(true);
-
   useEffect(() => {
-    if (isFirstMount.current) {
-      isFirstMount.current = false;
-      // Only fetch on first ever mount — skip if App.tsx already has data
-      if (!dataLoaded) {
-        fetchRequests();
-      }
-      return;
+    if (!dataLoaded) {
+      fetchRequests();
     }
-    // Subsequent renders — only refetch when filters actually change
-    fetchRequests();
-  }, [statusFilter, vendorFilter, dateFrom, dateTo]);
+  }, []);
 
   // Search is client-side only — no refetch needed for search
 
@@ -175,16 +157,23 @@ export const NewSkuDashboard: React.FC<{
     return codes.sort();
   }, [data]);
 
-  // Derived: filtered list (search only — other filters handled server-side)
   const filtered = useMemo(() => {
-    if (!searchQuery.trim()) return data;
-    const q = searchQuery.toLowerCase();
-    return data.filter(r =>
-      r.item_name.toLowerCase().includes(q) ||
-      r.request_id.toLowerCase().includes(q) ||
-      (r.ee_sku || '').toLowerCase().includes(q)
-    );
-  }, [data, searchQuery]);
+    return data.filter(r => {
+      if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
+      if (vendorFilter !== 'ALL' && r.vendor_code !== vendorFilter) return false;
+      if (dateFrom && r.requested_at < dateFrom) return false;
+      if (dateTo && r.requested_at > dateTo) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (
+          r.item_name.toLowerCase().includes(q) ||
+          r.request_id.toLowerCase().includes(q) ||
+          (r.ee_sku || '').toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [data, statusFilter, vendorFilter, dateFrom, dateTo, searchQuery]);
 
   const toggleDebug = () => {
     setDebugMode(prev => {
