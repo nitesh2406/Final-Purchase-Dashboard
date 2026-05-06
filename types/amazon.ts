@@ -56,6 +56,7 @@ export interface AmazonChannelSku {
   channelSKU: string;
   channelItemCode: string;
   masterSKU: string;
+  alternateSku?: string;
   productName: string;
   packSize: number;
   isCombo: boolean;
