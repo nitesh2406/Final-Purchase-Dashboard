@@ -179,7 +179,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
         item.channelSKU.toLowerCase().includes(search.toLowerCase()) ||
         item.productName.toLowerCase().includes(search.toLowerCase()) ||
         item.masterSKU.toLowerCase().includes(search.toLowerCase()) ||
-        item.alternateSku?.toLowerCase().includes(search.toLowerCase());
+        item.alternateSKU?.toLowerCase().includes(search.toLowerCase());
 
       const matchFilter =
         activeFilter === 'All'        ? !item.isExcluded :
@@ -672,9 +672,9 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                         <span className="font-mono text-xs bg-gray-100 dark:bg-gray-700/60 px-1.5 py-0.5 rounded text-gray-600 dark:text-gray-400 truncate block">
                           {item.masterSKU}
                         </span>
-                        {item.alternateSku && (
+                        {item.alternateSKU && item.alternateSKU.trim() !== '' && (
                           <span className="font-mono text-[10px] text-gray-400 dark:text-gray-500 truncate block mt-0.5 px-1.5">
-                            alt: {item.alternateSku}
+                            alt: {item.alternateSKU}
                           </span>
                         )}
                       </td>
