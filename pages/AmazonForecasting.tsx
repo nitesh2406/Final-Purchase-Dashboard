@@ -321,7 +321,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
       if (result.status === 'success') {
         setConfirmResult({ success: true, message: result.message, poNumber: result.poNumber });
         setTimeout(() => setConfirmResult(null), 5000);
-        // Refresh?
+        fetchForecast(true); // Force refresh with latest inventory after confirm
       } else {
         throw new Error(result.message || 'Confirm failed');
       }
@@ -772,7 +772,6 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
                         <input
                           type="number"
                           min={0}
-                          max={item.warehouseCheck.availableQty}
                           value={getShipQty(item)}
                           onChange={e => updateShipQty(
                             item.channelSKU,
