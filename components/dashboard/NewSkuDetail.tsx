@@ -90,21 +90,6 @@ interface PricingConfig {
   compare_brackets: { floor: number; value: number }[];
 }
 
-const MOCK_PRICING_CONFIG: PricingConfig = {
-  cny_conv_rate:    14.36,
-  sea_multiplier:   1.35,
-  air_rate:         1.6,
-  threshold:        40,
-  pick_pack:        85,
-  shopify_cost_pct: 0.18,
-  min_margin_pct:   20,
-  cm1_brackets:     [{floor:0,value:47},{floor:500,value:45},{floor:1250,value:41},
-                     {floor:2000,value:39},{floor:4000,value:41},{floor:6000,value:35}],
-  mrp_brackets:     [{floor:0,value:0.6},{floor:1000,value:0.65},{floor:1500,value:0.7},
-                     {floor:2000,value:0.75},{floor:Infinity,value:0.8}],
-  compare_brackets: [{floor:0,value:15},{floor:1500,value:12},{floor:3000,value:10},
-                     {floor:5000,value:8},{floor:Infinity,value:6}],
-};
 
 interface ComboBoxProps {
   value:       string;
@@ -388,7 +373,9 @@ export const NewSkuDetail: React.FC<{
   }, [requestId, isNew]);
 
   // Pricing config (fetched from GAS in production)
-  const [pricingConfig, setPricingConfig] = useState<PricingConfig>(MOCK_PRICING_CONFIG);
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig | null>(null);
+  const [pricingConfigLoaded, setPricingConfigLoaded] = useState(false);
+  const [pricingConfigError, setPricingConfigError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchPricingConfig = async () => {
@@ -400,12 +387,48 @@ export const NewSkuDetail: React.FC<{
         });
         const result = await response.json();
         if (result.success) {
-          // Reset auto-fill flag so pricing recalculates
-          // with real config values from sheet
-          setPricingConfig({ ...MOCK_PRICING_CONFIG, ...result.data });
+          const d = result.data;
+
+          const parseBrackets = (prefix: string): { floor: number; value: number }[] => {
+            const brackets: { floor: number; value: number }[] = [];
+            Object.keys(d).forEach(key => {
+              if (!key.startsWith(prefix)) return;
+              const floorStr = key.replace(prefix, '');
+              const floor = floorStr === 'INF' ? 999999 : Number(floorStr);
+              brackets.push({ floor, value: Number(d[key]) });
+            });
+            return brackets.sort((a, b) => a.floor - b.floor);
+          };
+
+          const cm1Brackets     = parseBrackets('CM1_BRACKET_');
+          const mrpBrackets     = parseBrackets('MRP_BRACKET_');
+          const compareBrackets = parseBrackets('COMPARE_BRACKET_');
+
+          if (!cm1Brackets.length || !mrpBrackets.length || !compareBrackets.length) {
+            setPricingConfigError('Pricing brackets missing in SKU_Config sheet. Run seedPricingBrackets() in GAS.');
+            return;
+          }
+
+          setPricingConfig({
+            cny_conv_rate:    Number(d.CNY_CONV_RATE)   || 14.36,
+            sea_multiplier:   Number(d.SEA_MULTIPLIER)  || 1.35,
+            air_rate:         Number(d.AIR_RATE)         || 1.6,
+            threshold:        Number(d.THRESHOLD)        || 40,
+            pick_pack:        Number(d.PICK_PACK)        || 85,
+            shopify_cost_pct: Number(d.SHOPIFY_COST_PCT) || 0.18,
+            min_margin_pct:   Number(d.MIN_MARGIN_PCT)   || 20,
+            cm1_brackets:     cm1Brackets,
+            mrp_brackets:     mrpBrackets,
+            compare_brackets: compareBrackets,
+          });
+          setPricingConfigLoaded(true);
+          setPricingConfigError(null);
+        } else {
+          setPricingConfigError('Failed to load pricing config from server.');
         }
       } catch (err) {
         console.error('fetchPricingConfig error:', err);
+        setPricingConfigError('Network error loading pricing config.');
       }
     };
     fetchPricingConfig();
@@ -464,6 +487,7 @@ export const NewSkuDetail: React.FC<{
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
   const [rejectRemark, setRejectRemark] = useState('');
   const [isRejected, setIsRejected] = useState(sourceData.status === 'REJECTED');
+  const [showConfigPanel, setShowConfigPanel] = useState(false);
 
   // Parent SKU lookup
   const [parentSkuDetails, setParentSkuDetails] = useState<{
@@ -491,14 +515,14 @@ export const NewSkuDetail: React.FC<{
   const lookupBracket = (value: number, brackets: { floor: number; value: number }[]): number => {
     let result = brackets[0].value;
     for (const b of brackets) {
-      if (b.floor === Infinity) { result = b.value; break; }
+      if (b.floor >= 999999) { result = b.value; break; }
       if (value >= b.floor) result = b.value;
       else break;
     }
     return result;
   };
 
-  const calcPricing = (rmbPrice: number, weightGm: number, config: PricingConfig) => {
+  const calcPricing = (rmbPrice: number, weightGm: number, config: PricingConfig | null) => {
     if (!rmbPrice || !config) return null;
     if (!config.sea_multiplier || !config.air_rate || !config.cny_conv_rate) return null;
 
@@ -567,35 +591,35 @@ export const NewSkuDetail: React.FC<{
 
   useEffect(() => {
     if (!pricing || pricing.needsWeight) return;
+    if (!pricingConfigLoaded) return;
     if (pricingAutoFilled.current) return;
     pricingAutoFilled.current = true;
     setForm(f => ({
       ...f,
-      // Only auto-fill if field is still blank — never overwrite saved/user values
       mrp:                   f.mrp                   || pricing.mrp,
       shopify_selling_price: f.shopify_selling_price || pricing.suggested_sp,
       shopify_compare_price: f.shopify_compare_price || pricing.compare_at_price,
     }));
-  }, [pricing]);
+  }, [pricing, pricingConfigLoaded]);
 
   const currentSP    = Number(form.shopify_selling_price) || 0;
   const currentMRP   = Number(form.mrp) || 0;
   const landedCost   = pricing?.landing || 0;
-  const pickPack     = pricingConfig.pick_pack || 85;
+  const pickPack     = pricingConfig?.pick_pack || 85;
 
   // Discount simulation state
   const [discount, setDiscount] = useState(0);
 
   // CM1 & CM3 live — recalculated with discount
   const cm1Live     = (currentSP * (1 - discount/100) / 1.05) - landedCost;
-  const cm3Live     = cm1Live - (pricingConfig.shopify_cost_pct * currentSP) - pricingConfig.pick_pack;
+  const cm3Live     = cm1Live - ((pricingConfig?.shopify_cost_pct || 0.18) * currentSP) - (pricingConfig?.pick_pack || 85);
   const cm3PctLive  = currentSP > 0 ? (cm3Live / currentSP) * 100 : 0;
   const actualCM1Live = currentSP > 0
     ? (cm1Live / (currentSP * (1 - discount/100) / 1.05)) * 100
     : (pricing?.actual_cm1 || 0);
 
   const marginWarning = actualCM1Live > 0 &&
-    actualCM1Live < (pricingConfig.min_margin_pct || 20);
+    actualCM1Live < (pricingConfig?.min_margin_pct || 20);
 
   const lastLookedUpSku = React.useRef<string>('');
 
@@ -1447,10 +1471,10 @@ export const NewSkuDetail: React.FC<{
             </div>
             {pricing && !pricing.needsWeight && (
               <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">
-                Based on ¥{unitPrice} × {pricingConfig.cny_conv_rate} conv rate
+                Based on ¥{unitPrice} × {pricingConfig?.cny_conv_rate} conv rate
                 {pricing.mode === 'SEA'
-                  ? ` × ${pricingConfig.sea_multiplier} (SEA)`
-                  : ` + ${weightGm}g × ₹${pricingConfig.air_rate}/g (AIR)`
+                  ? ` × ${pricingConfig?.sea_multiplier} (SEA)`
+                  : ` + ${weightGm}g × ₹${pricingConfig?.air_rate}/g (AIR)`
                 }
                 = ₹{pricing.landing} landed cost
               </p>
@@ -1715,6 +1739,19 @@ export const NewSkuDetail: React.FC<{
               )}
             </div>
 
+            {pricingConfigError && (
+              <div className="mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
+                <span>⚠️</span>
+                <span>{pricingConfigError}</span>
+              </div>
+            )}
+            {!pricingConfigLoaded && !pricingConfigError && (
+              <div className="mb-3 px-3 py-2 rounded-lg bg-gray-500/10 border border-gray-500/20 text-gray-400 text-xs flex items-center gap-2">
+                <Spinner />
+                <span>Loading pricing config...</span>
+              </div>
+            )}
+
             {!pricing ? (
               <p className="text-xs text-gray-400 text-center py-4">
                 Enter RMB cost to calculate pricing
@@ -1810,13 +1847,13 @@ export const NewSkuDetail: React.FC<{
                         sublabel: 'Net Sales − Landing',
                         value:    cm1Live,
                         pct:      actualCM1Live,
-                        color:    actualCM1Live >= (pricingConfig.min_margin_pct || 20)
+                        color:    actualCM1Live >= (pricingConfig?.min_margin_pct || 20)
                                     ? 'text-green-600 dark:text-green-400'
                                     : 'text-red-500',
                       },
                       {
                         label:    'CM3 (Net)',
-                        sublabel: `−₹${pickPack} P&P − ${(pricingConfig.shopify_cost_pct * 100).toFixed(0)}% Shopify`,
+                        sublabel: `−₹${pickPack} P&P − ${((pricingConfig?.shopify_cost_pct || 0.18) * 100).toFixed(0)}% Shopify`,
                         value:    cm3Live,
                         pct:      cm3PctLive,
                         color:    cm3Live > 0
@@ -1865,7 +1902,7 @@ export const NewSkuDetail: React.FC<{
                       </p>
                       {marginWarning && (
                         <p className="text-xs text-red-500 font-semibold mt-2">
-                          ⚠️ CM1 below {pricingConfig.min_margin_pct}% minimum
+                          ⚠️ CM1 below {pricingConfig?.min_margin_pct || 20}% minimum
                         </p>
                       )}
                     </div>
@@ -1873,6 +1910,49 @@ export const NewSkuDetail: React.FC<{
                 )}
               </>
             )}
+
+            {/* ── Config in use ── */}
+            <div className="mt-4 border-t border-gray-700/50 pt-3">
+              <button
+                onClick={() => setShowConfigPanel(p => !p)}
+                className="w-full flex items-center justify-between text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                <span className="uppercase tracking-widest font-semibold">Config in use</span>
+                <svg className={`w-3 h-3 transition-transform ${showConfigPanel ? 'rotate-180' : ''}`}
+                     fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {showConfigPanel && (
+                <div className="mt-2 space-y-1.5">
+                  {pricingConfig ? (
+                    <>
+                      {[
+                        { label: 'CNY Rate',       value: pricingConfig.cny_conv_rate },
+                        { label: 'AIR Rate (₹/gm)',value: pricingConfig.air_rate },
+                        { label: 'SEA Multiplier', value: pricingConfig.sea_multiplier },
+                        { label: 'Threshold (¥)',  value: pricingConfig.threshold },
+                        { label: 'Pick & Pack',    value: `₹${pricingConfig.pick_pack}` },
+                        { label: 'Shopify Cost',   value: `${(pricingConfig.shopify_cost_pct * 100).toFixed(0)}%` },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="flex justify-between text-[10px]">
+                          <span className="text-gray-500">{label}</span>
+                          <span className="text-gray-300 font-medium">{value}</span>
+                        </div>
+                      ))}
+                      <div className="mt-1.5 pt-1.5 border-t border-gray-700/40 text-[9px] text-gray-600">
+                        CM1 brackets: {pricingConfig.cm1_brackets.map(b =>
+                          `₹${b.floor === 999999 ? '∞' : b.floor}→${b.value}%`
+                        ).join(' | ')}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-[10px] text-gray-600">Config not loaded yet.</p>
+                  )}
+                </div>
+              )}
+            </div>
           </Card>
 
           {/* ─── B: Platform Status ─── */}
