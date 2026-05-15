@@ -95,9 +95,39 @@ export const PricingConfig: React.FC = () => {
             });
             const result = await response.json();
             if (result.success) {
-                const merged = { ...DEFAULTS, ...result.data };
-                setConfig(merged);
-                setSavedConfig(merged);
+                const d = result.data;
+
+                // Map nested lowercase response → flat uppercase keys used by this component
+                const mapped: PricingConfigData = {
+                    CNY_CONV_RATE:      Number(d.cny_conv_rate)    || DEFAULTS.CNY_CONV_RATE,
+                    AIR_RATE:           Number(d.air_rate)          || DEFAULTS.AIR_RATE,
+                    SEA_MULTIPLIER:     Number(d.sea_multiplier)    || DEFAULTS.SEA_MULTIPLIER,
+                    THRESHOLD:          Number(d.threshold)         || DEFAULTS.THRESHOLD,
+                    PICK_PACK:          Number(d.pick_pack)         || DEFAULTS.PICK_PACK,
+                    SHOPIFY_COST_PCT:   Number(d.shopify_cost_pct)  || DEFAULTS.SHOPIFY_COST_PCT,
+                    // CM1 brackets — unpack array back to flat keys
+                    CM1_BRACKET_0:    d.cm1_brackets?.find((b: any) => b.floor === 0)?.value    ?? DEFAULTS.CM1_BRACKET_0,
+                    CM1_BRACKET_500:  d.cm1_brackets?.find((b: any) => b.floor === 500)?.value  ?? DEFAULTS.CM1_BRACKET_500,
+                    CM1_BRACKET_1250: d.cm1_brackets?.find((b: any) => b.floor === 1250)?.value ?? DEFAULTS.CM1_BRACKET_1250,
+                    CM1_BRACKET_2000: d.cm1_brackets?.find((b: any) => b.floor === 2000)?.value ?? DEFAULTS.CM1_BRACKET_2000,
+                    CM1_BRACKET_4000: d.cm1_brackets?.find((b: any) => b.floor === 4000)?.value ?? DEFAULTS.CM1_BRACKET_4000,
+                    CM1_BRACKET_6000: d.cm1_brackets?.find((b: any) => b.floor === 6000)?.value ?? DEFAULTS.CM1_BRACKET_6000,
+                    // MRP brackets
+                    MRP_BRACKET_0:    d.mrp_brackets?.find((b: any) => b.floor === 0)?.value       ?? DEFAULTS.MRP_BRACKET_0,
+                    MRP_BRACKET_1000: d.mrp_brackets?.find((b: any) => b.floor === 1000)?.value    ?? DEFAULTS.MRP_BRACKET_1000,
+                    MRP_BRACKET_1500: d.mrp_brackets?.find((b: any) => b.floor === 1500)?.value    ?? DEFAULTS.MRP_BRACKET_1500,
+                    MRP_BRACKET_2000: d.mrp_brackets?.find((b: any) => b.floor === 2000)?.value    ?? DEFAULTS.MRP_BRACKET_2000,
+                    MRP_BRACKET_INF:  d.mrp_brackets?.find((b: any) => b.floor === 999999)?.value  ?? DEFAULTS.MRP_BRACKET_INF,
+                    // Compare brackets
+                    COMPARE_BRACKET_0:    d.compare_brackets?.find((b: any) => b.floor === 0)?.value      ?? DEFAULTS.COMPARE_BRACKET_0,
+                    COMPARE_BRACKET_1500: d.compare_brackets?.find((b: any) => b.floor === 1500)?.value   ?? DEFAULTS.COMPARE_BRACKET_1500,
+                    COMPARE_BRACKET_3000: d.compare_brackets?.find((b: any) => b.floor === 3000)?.value   ?? DEFAULTS.COMPARE_BRACKET_3000,
+                    COMPARE_BRACKET_5000: d.compare_brackets?.find((b: any) => b.floor === 5000)?.value   ?? DEFAULTS.COMPARE_BRACKET_5000,
+                    COMPARE_BRACKET_INF:  d.compare_brackets?.find((b: any) => b.floor === 999999)?.value ?? DEFAULTS.COMPARE_BRACKET_INF,
+                };
+
+                setConfig(mapped);
+                setSavedConfig(mapped);
             }
         } catch (err) {
             console.error('fetchPricingConfig error:', err);
