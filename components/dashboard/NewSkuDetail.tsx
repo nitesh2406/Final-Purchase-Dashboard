@@ -402,7 +402,6 @@ export const NewSkuDetail: React.FC<{
         if (result.success) {
           // Reset auto-fill flag so pricing recalculates
           // with real config values from sheet
-          pricingAutoFilled.current = false;
           setPricingConfig({ ...MOCK_PRICING_CONFIG, ...result.data });
         }
       } catch (err) {
@@ -572,9 +571,10 @@ export const NewSkuDetail: React.FC<{
     pricingAutoFilled.current = true;
     setForm(f => ({
       ...f,
-      mrp:                   pricing.mrp,
-      shopify_selling_price: pricing.suggested_sp,
-      shopify_compare_price: pricing.compare_at_price,
+      // Only auto-fill if field is still blank — never overwrite saved/user values
+      mrp:                   f.mrp                   || pricing.mrp,
+      shopify_selling_price: f.shopify_selling_price || pricing.suggested_sp,
+      shopify_compare_price: f.shopify_compare_price || pricing.compare_at_price,
     }));
   }, [pricing]);
 
