@@ -388,38 +388,17 @@ export const NewSkuDetail: React.FC<{
         const result = await response.json();
         if (result.success) {
           const d = result.data;
-
-          const parseBrackets = (prefix: string): { floor: number; value: number }[] => {
-            const brackets: { floor: number; value: number }[] = [];
-            Object.keys(d).forEach(key => {
-              if (!key.startsWith(prefix)) return;
-              const floorStr = key.replace(prefix, '');
-              const floor = floorStr === 'INF' ? 999999 : Number(floorStr);
-              brackets.push({ floor, value: Number(d[key]) });
-            });
-            return brackets.sort((a, b) => a.floor - b.floor);
-          };
-
-          const cm1Brackets     = parseBrackets('CM1_BRACKET_');
-          const mrpBrackets     = parseBrackets('MRP_BRACKET_');
-          const compareBrackets = parseBrackets('COMPARE_BRACKET_');
-
-          if (!cm1Brackets.length || !mrpBrackets.length || !compareBrackets.length) {
-            setPricingConfigError('Pricing brackets missing in SKU_Config sheet. Run seedPricingBrackets() in GAS.');
-            return;
-          }
-
           setPricingConfig({
-            cny_conv_rate:    Number(d.CNY_CONV_RATE)   || 14.36,
-            sea_multiplier:   Number(d.SEA_MULTIPLIER)  || 1.35,
-            air_rate:         Number(d.AIR_RATE)         || 1.6,
-            threshold:        Number(d.THRESHOLD)        || 40,
-            pick_pack:        Number(d.PICK_PACK)        || 85,
-            shopify_cost_pct: Number(d.SHOPIFY_COST_PCT) || 0.18,
-            min_margin_pct:   Number(d.MIN_MARGIN_PCT)   || 20,
-            cm1_brackets:     cm1Brackets,
-            mrp_brackets:     mrpBrackets,
-            compare_brackets: compareBrackets,
+            cny_conv_rate:    Number(d.cny_conv_rate)    || 14.36,
+            sea_multiplier:   Number(d.sea_multiplier)   || 1.35,
+            air_rate:         Number(d.air_rate)          || 1.6,
+            threshold:        Number(d.threshold)         || 40,
+            pick_pack:        Number(d.pick_pack)         || 85,
+            shopify_cost_pct: Number(d.shopify_cost_pct)  || 0.18,
+            min_margin_pct:   Number(d.min_margin_pct)    || 20,
+            cm1_brackets:     d.cm1_brackets,
+            mrp_brackets:     d.mrp_brackets,
+            compare_brackets: d.compare_brackets,
           });
           setPricingConfigLoaded(true);
           setPricingConfigError(null);
