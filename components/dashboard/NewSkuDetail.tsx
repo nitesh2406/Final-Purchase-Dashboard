@@ -78,21 +78,32 @@ interface FormData {
 }
 
 interface PricingConfig {
-  cny_conv_rate:      number;
-  sea_multiplier:     number;
-  air_multiplier:     number;
-  pick_pack:          number;
-  min_margin_pct:     number;
-  marketing_cost_pct: number;
+  cny_conv_rate:    number;
+  sea_multiplier:   number;
+  air_rate:         number;
+  threshold:        number;
+  pick_pack:        number;
+  shopify_cost_pct: number;
+  min_margin_pct:   number;
+  cm1_brackets:     { floor: number; value: number }[];
+  mrp_brackets:     { floor: number; value: number }[];
+  compare_brackets: { floor: number; value: number }[];
 }
 
 const MOCK_PRICING_CONFIG: PricingConfig = {
-  cny_conv_rate:      12.5,
-  sea_multiplier:     1.33,
-  air_multiplier:     1.25,
-  pick_pack:          75,
-  min_margin_pct:     20,
-  marketing_cost_pct: 26,
+  cny_conv_rate:    14.36,
+  sea_multiplier:   1.35,
+  air_rate:         1.6,
+  threshold:        40,
+  pick_pack:        85,
+  shopify_cost_pct: 0.18,
+  min_margin_pct:   20,
+  cm1_brackets:     [{floor:0,value:47},{floor:500,value:45},{floor:1250,value:41},
+                     {floor:2000,value:39},{floor:4000,value:41},{floor:6000,value:35}],
+  mrp_brackets:     [{floor:0,value:0.6},{floor:1000,value:0.65},{floor:1500,value:0.7},
+                     {floor:2000,value:0.75},{floor:Infinity,value:0.8}],
+  compare_brackets: [{floor:0,value:15},{floor:1500,value:12},{floor:3000,value:10},
+                     {floor:5000,value:8},{floor:Infinity,value:6}],
 };
 
 interface ComboBoxProps {
@@ -478,111 +489,110 @@ export const NewSkuDetail: React.FC<{
   };
 
   // ─── Derived pricing calculations ───
-  const calcPricing = (rmbPrice: number, config: PricingConfig) => {
+  const lookupBracket = (value: number, brackets: { floor: number; value: number }[]): number => {
+    let result = brackets[0].value;
+    for (const b of brackets) {
+      if (b.floor === Infinity) { result = b.value; break; }
+      if (value >= b.floor) result = b.value;
+      else break;
+    }
+    return result;
+  };
+
+  const calcPricing = (rmbPrice: number, weightGm: number, config: PricingConfig) => {
     if (!rmbPrice || !config) return null;
+    if (!config.sea_multiplier || !config.air_rate || !config.cny_conv_rate) return null;
 
-    // Guard — if config keys are missing return null not NaN
-    if (!config.sea_multiplier || !config.air_multiplier ||
-        !config.cny_conv_rate) return null;
+    // Step 1: Landing
+    let landing: number, mode: string;
+    if (rmbPrice < config.threshold) {
+      mode    = 'SEA';
+      landing = rmbPrice * config.cny_conv_rate * config.sea_multiplier;
+    } else {
+      mode = 'AIR';
+      if (!weightGm || weightGm === 0) return { mode: 'AIR', needsWeight: true };
+      landing = (rmbPrice * config.cny_conv_rate) + (weightGm * config.air_rate);
+    }
+    landing = Math.round(landing);
 
-    // Step 1: Landing — SEA if RMB ≤ 30, AIR if RMB > 30
-    const multiplier = rmbPrice <= 30
-      ? config.sea_multiplier
-      : config.air_multiplier;
-    const landing = rmbPrice * config.cny_conv_rate * multiplier;
+    // Step 2: CM1 target by landing bracket
+    const cm1Pct = lookupBracket(landing, config.cm1_brackets) / 100;
 
-    // Step 2: CM1 target based on landing price
-    let cm1: number;
-    if      (landing <= 500)  cm1 = 0.50;
-    else if (landing <= 1250) cm1 = 0.47;
-    else if (landing <= 2000) cm1 = 0.44;
-    else                      cm1 = 0.41;
+    // Step 3: Raw SP
+    const rawSP = (landing / (1 - cm1Pct) + config.pick_pack) * 1.05;
 
-    // Step 3: Raw selling price
-    const rawSP = (landing / (1 - cm1)) * 1.05 + config.pick_pack;
+    // Step 4: Bucket SP — nearest ₹50 ending in 49 or 99
+    const suggestedSP = Math.round(rawSP / 50) * 50 - 1;
 
-    // Step 4: Bucket SP — nearest ₹100 ending in 99
-    const bucketSP = Math.round(rawSP / 100) * 100 - 1;
+    // Step 5: MRP
+    const mrpDivisor = lookupBracket(suggestedSP, config.mrp_brackets);
+    const mrp        = Math.round((suggestedSP / mrpDivisor) / 50) * 50 - 1;
 
-    // Step 5: Floor SP — minimum price at 40% CM1
-    const floorSP = (landing / 0.6) * 1.05 + config.pick_pack;
+    // Step 6: Compare At Price
+    const compareMarkup  = lookupBracket(suggestedSP, config.compare_brackets) / 100;
+    const rawCompare     = Math.min(suggestedSP * (1 + compareMarkup), mrp);
+    const compareAtPrice = Math.round(rawCompare / 50) * 50 - 1;
 
-    // Step 6: Final SP — max of bucket and floor
-    const finalSP = Math.max(bucketSP, Math.ceil(floorSP));
+    // Step 7: CM1 actual
+    const netSales  = suggestedSP / 1.05;
+    const cm1Profit = netSales - landing;
+    const actualCM1 = (cm1Profit / netSales) * 100;
 
-    // Step 7: MRP from final SP using discount bracket logic
-    let mrp: number;
-    if      (finalSP <= 500)  mrp = finalSP / 0.6;
-    else if (finalSP <= 1000) mrp = finalSP / 0.65;
-    else if (finalSP <= 1500) mrp = finalSP / 0.7;
-    else if (finalSP <= 2000) mrp = finalSP / 0.75;
-    else                      mrp = finalSP / 0.8;
-    // Round to nearest 50, subtract 1 → ends in 49 or 99
-    // Examples: 1383 → 1400-1 = 1399, 1325 → 1350-1 = 1349
-    mrp = Math.round(mrp / 50) * 50 - 1;
-
-    // Step 8: Actual CM1
-    const netSales  = finalSP / 1.05;
-    const actualCM1 = ((netSales - landing) / netSales) * 100;
+    // Step 8: CM3
+    const cm3Profit = cm1Profit - (config.shopify_cost_pct * suggestedSP) - config.pick_pack;
+    const actualCM3 = (cm3Profit / suggestedSP) * 100;
 
     return {
-      landing:    Math.round(landing),
-      cm1_target: Math.round(cm1 * 100),
-      raw_sp:     Math.round(rawSP),
-      bucket_sp:  Math.round(bucketSP),
-      floor_sp:   Math.ceil(floorSP),
-      final_sp:   Math.round(finalSP),
+      mode,
+      needsWeight:      false,
+      landing,
+      cm1_target:       Math.round(cm1Pct * 100),
+      suggested_sp:     suggestedSP,
       mrp,
-      actual_cm1: Math.round(actualCM1 * 100) / 100,
-      mode:       rmbPrice <= 30 ? 'SEA' : 'AIR',
+      compare_at_price: compareAtPrice,
+      actual_cm1:       Math.round(actualCM1 * 100) / 100,
+      cm3:              Math.round(cm3Profit),
+      actual_cm3:       Math.round(actualCM3 * 100) / 100,
     };
   };
 
-  const unitPrice = isNew
-    ? Number(form.unit_price) || 0
-    : Number(sourceData.unit_price) || 0;
+  const unitPrice = Number(form.unit_price) || 0;
+  const weightGm  = Number(form.pkg_weight_gm) || 0;
   const pricing   = useMemo(
-    () => calcPricing(unitPrice, pricingConfig),
-    [unitPrice, pricingConfig]
+    () => calcPricing(unitPrice, weightGm, pricingConfig),
+    [unitPrice, weightGm, pricingConfig]
   );
 
   // Track whether we have auto-filled pricing already
   const pricingAutoFilled = React.useRef(false);
 
   useEffect(() => {
-    if (!pricing) return;
-    // Only auto-fill once — on first successful pricing calculation
-    // After that, user's manual overrides are preserved
+    if (!pricing || pricing.needsWeight) return;
     if (pricingAutoFilled.current) return;
     pricingAutoFilled.current = true;
     setForm(f => ({
       ...f,
       mrp:                   pricing.mrp,
-      shopify_selling_price: pricing.final_sp,
+      shopify_selling_price: pricing.suggested_sp,
+      shopify_compare_price: pricing.compare_at_price,
     }));
   }, [pricing]);
 
   const currentSP    = Number(form.shopify_selling_price) || 0;
   const currentMRP   = Number(form.mrp) || 0;
   const landedCost   = pricing?.landing || 0;
-  const marketingPct = pricingConfig.marketing_cost_pct || 26;
-  const pickPack     = pricingConfig.pick_pack || 75;
+  const pickPack     = pricingConfig.pick_pack || 85;
 
-  // CM1 — Gross margin after landing cost (ex-GST)
-  const netSales      = currentSP > 0 ? currentSP / 1.05 : 0;
-  const cm1Profit     = netSales - landedCost;
-  const actualCM1Live = netSales > 0
-    ? (cm1Profit / netSales) * 100
+  // Discount simulation state
+  const [discount, setDiscount] = useState(0);
+
+  // CM1 & CM3 live — recalculated with discount
+  const cm1Live     = (currentSP * (1 - discount/100) / 1.05) - landedCost;
+  const cm3Live     = cm1Live - (pricingConfig.shopify_cost_pct * currentSP) - pricingConfig.pick_pack;
+  const cm3PctLive  = currentSP > 0 ? (cm3Live / currentSP) * 100 : 0;
+  const actualCM1Live = currentSP > 0
+    ? (cm1Live / (currentSP * (1 - discount/100) / 1.05)) * 100
     : (pricing?.actual_cm1 || 0);
-
-  // CM2 — After marketing cost (% of Selling Price)
-  const marketingCost = currentSP * (marketingPct / 100);
-  const cm2Profit     = cm1Profit - marketingCost;
-  const actualCM2     = netSales > 0 ? (cm2Profit / netSales) * 100 : 0;
-
-  // CM3 — After pick & pack
-  const cm3Profit = cm2Profit - pickPack;
-  const actualCM3 = netSales > 0 ? (cm3Profit / netSales) * 100 : 0;
 
   const marginWarning = actualCM1Live > 0 &&
     actualCM1Live < (pricingConfig.min_margin_pct || 20);
@@ -1435,13 +1445,13 @@ export const NewSkuDetail: React.FC<{
                 />
               </div>
             </div>
-            {pricing && (
+            {pricing && !pricing.needsWeight && (
               <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">
                 Based on ¥{unitPrice} × {pricingConfig.cny_conv_rate} conv rate
-                × {pricing.mode === 'SEA'
-                    ? pricingConfig.sea_multiplier + ' (SEA)'
-                    : pricingConfig.air_multiplier + ' (AIR)'
-                  } multiplier
+                {pricing.mode === 'SEA'
+                  ? ` × ${pricingConfig.sea_multiplier} (SEA)`
+                  : ` + ${weightGm}g × ₹${pricingConfig.air_rate}/g (AIR)`
+                }
                 = ₹{pricing.landing} landed cost
               </p>
             )}
@@ -1670,7 +1680,7 @@ export const NewSkuDetail: React.FC<{
                   </pre>
                   <p className="text-gray-500 dark:text-gray-400 mb-1 mt-2">Pricing:</p>
                   <pre className="bg-gray-100 dark:bg-gray-900 rounded p-2 text-gray-700 dark:text-gray-300 text-[10px] overflow-auto max-h-24">
-                    {JSON.stringify({ pricing, cm1Profit, cm2Profit, cm3Profit }, null, 2)}
+                    {JSON.stringify({ pricing, cm1Live, cm3Live }, null, 2)}
                   </pre>
                 </div>
                 <div>
@@ -1711,140 +1721,156 @@ export const NewSkuDetail: React.FC<{
               </p>
             ) : (
               <>
-                {[
-                  { label: 'RMB Price',    value: `¥ ${unitPrice}`,             muted: true },
-                  { label: 'Landing Cost', value: `₹ ${pricing.landing}`,       muted: false },
-                  { label: 'CM1 Target',   value: `${pricing.cm1_target}%`,     muted: true },
-                  { label: 'Raw SP',       value: `₹ ${pricing.raw_sp}`,        muted: true },
-                  { label: 'Bucket SP',    value: `₹ ${pricing.bucket_sp}`,     muted: true },
-                  { label: 'Floor SP',     value: `₹ ${pricing.floor_sp}`,      muted: true },
-                ].map(({ label, value, muted }) => (
-                  <div key={label}
-                       className="flex justify-between items-center py-1.5
-                                  border-b border-gray-50 dark:border-gray-700/30">
-                    <span className="text-xs text-gray-500 dark:text-gray-400">{label}</span>
-                    <span className={`text-xs font-mono ${
-                      muted
-                        ? 'text-gray-500 dark:text-gray-400'
-                        : 'text-gray-900 dark:text-white font-semibold'
-                    }`}>{value}</span>
+                {pricing?.needsWeight && (
+                  <div className="text-xs text-amber-500 flex items-center gap-1 mb-3">
+                    ⚠️ Enter package weight to calculate AIR landing price
                   </div>
-                ))}
+                )}
 
-                {/* Final SP — shows user's actual value vs suggested */}
-                <div className="flex justify-between items-center py-2
-                                border-b border-gray-100 dark:border-gray-700">
-                  <div>
-                    <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
-                      Selling Price
-                    </p>
-                    {pricing && currentSP !== pricing.final_sp && (
-                      <p className="text-[10px] text-gray-400">
-                        Suggested: ₹{pricing.final_sp}
-                      </p>
-                    )}
-                  </div>
-                  <span className="text-sm font-bold font-mono text-blue-600
-                                   dark:text-blue-400">
-                    ₹ {currentSP || pricing?.final_sp || '—'}
-                  </span>
-                </div>
+                {!pricing.needsWeight && (
+                  <>
+                    {[
+                      { label: 'RMB Price',    value: `¥ ${unitPrice}`,             muted: true },
+                      { label: 'Landing Cost', value: `₹ ${pricing.landing}`,       muted: false },
+                      { label: 'CM1 Target',   value: `${pricing.cm1_target}%`,     muted: true },
+                    ].map(({ label, value, muted }) => (
+                      <div key={label}
+                           className="flex justify-between items-center py-1.5
+                                      border-b border-gray-50 dark:border-gray-700/30">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">{label}</span>
+                        <span className={`text-xs font-mono ${
+                          muted
+                            ? 'text-gray-500 dark:text-gray-400'
+                            : 'text-gray-900 dark:text-white font-semibold'
+                        }`}>{value}</span>
+                      </div>
+                    ))}
 
-                {/* MRP — shows user's actual value vs suggested */}
-                <div className="flex justify-between items-center py-2
-                                border-b border-gray-100 dark:border-gray-700">
-                  <div>
-                    <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
-                      MRP
-                    </p>
-                    {pricing && currentMRP !== pricing.mrp && (
-                      <p className="text-[10px] text-gray-400">
-                        Suggested: ₹{pricing.mrp}
-                      </p>
-                    )}
-                  </div>
-                  <span className="text-sm font-bold font-mono
-                                   text-gray-900 dark:text-white">
-                    ₹ {currentMRP || pricing?.mrp || '—'}
-                  </span>
-                </div>
-
-                {/* CM Breakdown — 3 rows */}
-                {[
-                  {
-                    label:    'CM1 (Gross)',
-                    sublabel: 'Net Sales − Landing',
-                    value:    cm1Profit,
-                    pct:      actualCM1Live,
-                    color:    actualCM1Live >= (pricingConfig.min_margin_pct || 20)
-                                ? 'text-green-600 dark:text-green-400'
-                                : 'text-red-500',
-                  },
-                  {
-                    label:    'CM2 (After Mktg)',
-                    sublabel: `−${marketingPct}% of SP = ₹${Math.round(marketingCost)}`,
-                    value:    cm2Profit,
-                    pct:      actualCM2,
-                    color:    cm2Profit > 0
-                                ? 'text-blue-600 dark:text-blue-400'
-                                : 'text-red-500',
-                  },
-                  {
-                    label:    'CM3 (After P&P)',
-                    sublabel: `−₹${pickPack} pick & pack`,
-                    value:    cm3Profit,
-                    pct:      actualCM3,
-                    color:    cm3Profit > 0
-                                ? 'text-purple-600 dark:text-purple-400'
-                                : 'text-red-500',
-                  },
-                ].map(({ label, sublabel, value, pct, color }) => (
-                  <div key={label}
-                       className="flex justify-between items-center py-2
-                                  border-b border-gray-100 dark:border-gray-700/50
-                                  last:border-0">
-                    <div>
-                      <p className="text-xs font-semibold text-gray-700
-                                    dark:text-gray-300">{label}</p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">{sublabel}</p>
+                    {/* Selling Price — shows user's actual value vs suggested */}
+                    <div className="flex justify-between items-center py-2
+                                    border-b border-gray-100 dark:border-gray-700">
+                      <div>
+                        <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
+                          Selling Price
+                        </p>
+                        {pricing && currentSP !== pricing.suggested_sp && (
+                          <p className="text-[10px] text-gray-400">
+                            Suggested: ₹{pricing.suggested_sp}
+                          </p>
+                        )}
+                      </div>
+                      <span className="text-sm font-bold font-mono text-blue-600
+                                       dark:text-blue-400">
+                        ₹ {currentSP || pricing?.suggested_sp || '—'}
+                      </span>
                     </div>
-                    <div className="text-right">
-                      <p className={`text-sm font-bold font-mono ${color}`}>
-                        ₹{Math.round(value)}
-                      </p>
-                      <p className={`text-[10px] font-mono ${color}`}>
-                        {pct.toFixed(1)}%
-                      </p>
-                    </div>
-                  </div>
-                ))}
 
-                {/* Large CM3 display — final profit */}
-                <div className={`mt-3 p-3 rounded-xl text-center ${
-                  cm3Profit > 0
-                    ? 'bg-purple-50 dark:bg-purple-900/20'
-                    : 'bg-red-50 dark:bg-red-900/20'
-                }`}>
-                  <p className={`text-3xl font-bold ${
-                    cm3Profit > 0
-                      ? 'text-purple-600 dark:text-purple-400'
-                      : 'text-red-500'
-                  }`}>
-                    {actualCM3.toFixed(1)}%
-                  </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    CM3 — Actual Margin
-                  </p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">
-                    CM1: {actualCM1Live.toFixed(1)}%
-                    · CM2: {actualCM2.toFixed(1)}%
-                  </p>
-                  {marginWarning && (
-                    <p className="text-xs text-red-500 font-semibold mt-2">
-                      ⚠️ CM1 below {pricingConfig.min_margin_pct}% minimum
-                    </p>
-                  )}
-                </div>
+                    {/* MRP — shows user's actual value vs suggested */}
+                    <div className="flex justify-between items-center py-2
+                                    border-b border-gray-100 dark:border-gray-700">
+                      <div>
+                        <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
+                          MRP
+                        </p>
+                        {pricing && currentMRP !== pricing.mrp && (
+                          <p className="text-[10px] text-gray-400">
+                            Suggested: ₹{pricing.mrp}
+                          </p>
+                        )}
+                      </div>
+                      <span className="text-sm font-bold font-mono
+                                       text-gray-900 dark:text-white">
+                        ₹ {currentMRP || pricing?.mrp || '—'}
+                      </span>
+                    </div>
+
+                    {/* Discount simulation input */}
+                    <div className="flex justify-between items-center py-2
+                                    border-b border-gray-100 dark:border-gray-700">
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        Discount % (simulation)
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={discount}
+                        onChange={e => setDiscount(Number(e.target.value) || 0)}
+                        className="w-16 text-xs text-right font-mono bg-white dark:bg-gray-700
+                                   border border-gray-200 dark:border-gray-600
+                                   rounded px-2 py-1 text-gray-900 dark:text-white
+                                   focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    {/* CM Breakdown — CM1 + CM3 (no CM2) */}
+                    {[
+                      {
+                        label:    'CM1 (Gross)',
+                        sublabel: 'Net Sales − Landing',
+                        value:    cm1Live,
+                        pct:      actualCM1Live,
+                        color:    actualCM1Live >= (pricingConfig.min_margin_pct || 20)
+                                    ? 'text-green-600 dark:text-green-400'
+                                    : 'text-red-500',
+                      },
+                      {
+                        label:    'CM3 (Net)',
+                        sublabel: `−₹${pickPack} P&P − ${(pricingConfig.shopify_cost_pct * 100).toFixed(0)}% Shopify`,
+                        value:    cm3Live,
+                        pct:      cm3PctLive,
+                        color:    cm3Live > 0
+                                    ? 'text-purple-600 dark:text-purple-400'
+                                    : 'text-red-500',
+                      },
+                    ].map(({ label, sublabel, value, pct, color }) => (
+                      <div key={label}
+                           className="flex justify-between items-center py-2
+                                      border-b border-gray-100 dark:border-gray-700/50
+                                      last:border-0">
+                        <div>
+                          <p className="text-xs font-semibold text-gray-700
+                                        dark:text-gray-300">{label}</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">{sublabel}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-sm font-bold font-mono ${color}`}>
+                            ₹{Math.round(value)}
+                          </p>
+                          <p className={`text-[10px] font-mono ${color}`}>
+                            {pct.toFixed(1)}%
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Large CM3 display — final profit */}
+                    <div className={`mt-3 p-3 rounded-xl text-center ${
+                      cm3Live > 0
+                        ? 'bg-purple-50 dark:bg-purple-900/20'
+                        : 'bg-red-50 dark:bg-red-900/20'
+                    }`}>
+                      <p className={`text-3xl font-bold ${
+                        cm3Live > 0
+                          ? 'text-purple-600 dark:text-purple-400'
+                          : 'text-red-500'
+                      }`}>
+                        {cm3PctLive.toFixed(1)}%
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        CM3 — Actual Margin
+                      </p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        CM1: {actualCM1Live.toFixed(1)}%
+                      </p>
+                      {marginWarning && (
+                        <p className="text-xs text-red-500 font-semibold mt-2">
+                          ⚠️ CM1 below {pricingConfig.min_margin_pct}% minimum
+                        </p>
+                      )}
+                    </div>
+                  </>
+                )}
               </>
             )}
           </Card>

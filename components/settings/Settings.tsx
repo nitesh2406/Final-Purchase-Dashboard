@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ForecastingConfig } from './ForecastingConfig';
+import { PricingConfig } from './PricingConfig';
 import { SystemPreferences } from './SystemPreferences';
 import { ApprovalWorkflows } from './ApprovalWorkflows';
 import { TaxConfiguration } from './TaxConfiguration';
@@ -16,7 +17,7 @@ import {
     ShoppingCartIcon
 } from '../icons/Icons';
 
-type SettingsView = 'Forecasting Config' | 'System Preferences' | 'Approval Workflows' | 'Tax Configuration' | 'Freight Costing' | 'Payment Terms' | 'Amazon Config';
+type SettingsView = 'Forecasting Config' | 'Pricing Config' | 'System Preferences' | 'Approval Workflows' | 'Tax Configuration' | 'Freight Costing' | 'Payment Terms' | 'Amazon Config';
 
 interface NavItem {
     name: SettingsView;
@@ -31,6 +32,12 @@ const settingsNav: NavItem[] = [
         icon: <ChartBarIcon className="w-5 h-5" />,
         description: 'Transit times, buffers, and demand weights',
         isLive: true
+    },
+    {
+        name: 'Pricing Config',
+        icon: <BanknotesIcon className="w-5 h-5" />,
+        description: 'Landing cost, margins, MRP and Compare At Price rules',
+        isLive: true,
     },
     {
         name: 'System Preferences',
@@ -79,6 +86,8 @@ export const Settings: React.FC<{
         switch (activeView) {
             case 'Forecasting Config':
                 return <ForecastingConfig externalConfig={config} onRefreshExternal={onRefreshConfig} lastLoaded={lastLoaded} />;
+            case 'Pricing Config':
+                return <PricingConfig />;
             case 'System Preferences':
                 return <SystemPreferences />;
             case 'Approval Workflows':
