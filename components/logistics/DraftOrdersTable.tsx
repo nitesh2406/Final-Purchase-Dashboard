@@ -93,6 +93,10 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     const [isMutating, setIsMutating] = useState(false);
     const [isFetchingDetails, setIsFetchingDetails] = useState(false);
 
+    // BUG 1 FIX: Mode selection modal state for new draft creation
+    const [createModeModal, setCreateModeModal] = useState(false);
+    const [newDraftMode, setNewDraftMode] = useState<'SEA' | 'AIR'>('SEA');
+
     // ISSUE 7: Prefetch cache for DRAFT lines
     const [draftLinesCache, setDraftLinesCache] = useState<Map<string, any[]>>(new Map());
     const [lastPrefetchTime, setLastPrefetchTime] = useState<string>('');
@@ -317,7 +321,8 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     };
 
     const handleCreateNew = () => {
-        setView('create');
+        setNewDraftMode('SEA');
+        setCreateModeModal(true);
     };
 
     const handleDuplicate = async (draft: DraftOrder) => {
@@ -368,6 +373,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
         return (
             <DraftOrderEdit
                 draft={draft}
+                initialMode={view === 'create' ? newDraftMode : undefined}
                 onBack={() => setView('list')}
                 setDrafts={setDrafts}
                 onSave={async (updated) => {
@@ -375,9 +381,15 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                     try {
                         const isEdit = view === 'edit';
                         const action = isEdit ? API_ACTIONS.SAVE_DRAFT : API_ACTIONS.CREATE_DRAFT;
+                        // BUG 2 FIX: Use flat structure for create payload
                         const payload = isEdit
                             ? { action, draftId: updated.id, ...updated, lines: updated.items }
-                            : { action, draft: updated };
+                            : {
+                                action,
+                                mode: updated.mode || updated.planned_mode,
+                                lines: updated.items || [],
+                                ...updated
+                            };
 
                         const response = await fetch(APPS_SCRIPT_URL, {
                             method: 'POST',
@@ -613,6 +625,58 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                     <Button onClick={handleCreateNew} className="mt-8 bg-blue-600 hover:bg-blue-700 h-11 px-8 font-bold text-white shadow-xl shadow-blue-900/30 transition-all duration-150 active:scale-95" icon={<PlusIcon className="w-4 h-4" />}>
                         Create Draft PO
                     </Button>
+                </div>
+            )}
+
+            {/* BUG 1 FIX: Shipping Mode Selection Modal */}
+            {createModeModal && (
+                <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-200">
+                    <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-2xl p-6 w-full max-w-sm animate-in zoom-in-95 duration-200">
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-1">Select Shipping Mode</h3>
+                        <p className="text-xs text-gray-500 dark:text-slate-400 mb-5">Choose the shipping mode for this draft order.</p>
+                        <div className="flex gap-3 mb-6">
+                            <button
+                                onClick={() => setNewDraftMode('SEA')}
+                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 font-semibold text-sm transition-all ${
+                                    newDraftMode === 'SEA'
+                                        ? 'bg-blue-600/20 text-blue-400 border-blue-500 shadow-lg shadow-blue-900/20'
+                                        : 'bg-gray-50 dark:bg-slate-900/50 text-gray-400 dark:text-slate-500 border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
+                                }`}
+                            >
+                                <ShipIcon className="w-5 h-5" />
+                                SEA
+                            </button>
+                            <button
+                                onClick={() => setNewDraftMode('AIR')}
+                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 font-semibold text-sm transition-all ${
+                                    newDraftMode === 'AIR'
+                                        ? 'bg-sky-600/20 text-sky-400 border-sky-500 shadow-lg shadow-sky-900/20'
+                                        : 'bg-gray-50 dark:bg-slate-900/50 text-gray-400 dark:text-slate-500 border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
+                                }`}
+                            >
+                                <AirplaneIcon className="w-5 h-5" />
+                                AIR
+                            </button>
+                        </div>
+                        <div className="flex gap-3">
+                            <Button
+                                variant="secondary"
+                                onClick={() => setCreateModeModal(false)}
+                                className="flex-1 h-10 border-gray-200 dark:border-slate-700"
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                onClick={() => {
+                                    setCreateModeModal(false);
+                                    setView('create');
+                                }}
+                                className="flex-1 h-10 bg-blue-600 hover:bg-blue-700 font-bold shadow-lg shadow-blue-900/30"
+                            >
+                                Continue
+                            </Button>
+                        </div>
+                    </div>
                 </div>
             )}
 

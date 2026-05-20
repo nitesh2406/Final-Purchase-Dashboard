@@ -35,6 +35,7 @@ interface LineItem {
 
 interface DraftOrderEditProps {
     draft: DraftOrder | null;
+    initialMode?: 'SEA' | 'AIR';
     onBack: () => void;
     setDrafts: React.Dispatch<React.SetStateAction<DraftOrder[]>>;
     onSave: (updatedDraft: DraftOrder) => Promise<any>;
@@ -66,7 +67,7 @@ const ModeBadge: React.FC<{ mode?: string }> = ({ mode }) => {
     );
 };
 
-export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, setDrafts, onSave, onOrdersSubmitted, onRefreshPOs, existingPoCount = 0, skus, addSkuToCatalog, vendorMasters }) => {
+export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMode, onBack, setDrafts, onSave, onOrdersSubmitted, onRefreshPOs, existingPoCount = 0, skus, addSkuToCatalog, vendorMasters }) => {
     const isViewOnly = draft?.status === 'SUBMITTED' || draft?.status === 'CANCELLED';
     // ISSUE 3: Full read-only for submitted/order_placed drafts
     const isSubmittedReadOnly = draft?.status === 'SUBMITTED';
@@ -76,9 +77,9 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, onBack, s
     const todayStr = new Date().toISOString().split('T')[0];
     const [poDate, setPoDate] = useState(draft?.draft_date || draft?.created_at || todayStr);
     // Removed: expectedDelivery state (ISSUE 8 — field removed)
-    // ISSUE 8: shippingMode is now read-only, derived from draft.planned_mode
-    const shippingMode = (draft?.mode || draft?.planned_mode || '') as 'SEA' | 'AIR' | '';
-    const displayMode = String(draft?.planned_mode || draft?.mode || shippingMode || '').toUpperCase() as 'SEA' | 'AIR' | '';
+    // ISSUE 8: shippingMode is now read-only, derived from draft.planned_mode or initialMode for create
+    const shippingMode = (draft?.mode || draft?.planned_mode || initialMode || '') as 'SEA' | 'AIR' | '';
+    const displayMode = String(draft?.planned_mode || draft?.mode || initialMode || shippingMode || '').toUpperCase() as 'SEA' | 'AIR' | '';
 
     const [items, setItems] = useState<LineItem[]>(() => {
         if (!draft?.items) return [];
