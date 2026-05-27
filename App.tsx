@@ -41,6 +41,9 @@ export const API_ACTIONS = {
     // Purchase Order Operations
     GET_PURCHASE_ORDERS: 'get_pos',
     GET_PURCHASE_ORDER_DETAILS: 'get_purchase_order_details',
+    CLOSE_PO: 'close_po',
+    GET_PENDING_LINES: 'get_pending_lines',
+    GET_SKU_HISTORY: 'get_sku_history',
 
     // Catalog Operations
     SEARCH_SKU_CATALOG: 'search_sku_catalog',
