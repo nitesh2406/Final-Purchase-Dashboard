@@ -453,6 +453,10 @@ export interface ForecastingSku {
   stockoutGapDays: number;
   SS_BULK: number;
   kitStockContribution?: number;
+  rmb_price?: number | null;
+  rmb_price_missing?: boolean;
+  weight_gm?: number | null;
+  brand?: string;
 }
 
 // ==========================================

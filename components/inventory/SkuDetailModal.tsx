@@ -1,4 +1,5 @@
 
+// TODO: Add rmb_price, weight_gm, brand to ForecastingSku in types.ts
 import React, { FC, useMemo, useState } from 'react';
 import { ForecastingSku } from '../../types';
 import { Button } from '../ui/Button';
@@ -486,6 +487,45 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                                     <div className="flex justify-between">
                                         <span className="text-sm text-slate-400">Safety Stock</span>
                                         <span className="font-medium text-slate-200">{formatNumber(sku.businessRules?.safetyStock || 0)} units</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-sm text-slate-400">RMB Price</span>
+                                        <span className="font-medium text-slate-200">{sku?.rmb_price && sku?.rmb_price > 0 ? `¥${sku?.rmb_price?.toFixed(2)}` : '—'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                        <div className="flex items-center">
+                                            <span className="text-sm text-slate-400">Landing Price (INR)</span>
+                                            {sku?.rmb_price !== undefined && sku?.rmb_price !== null && sku?.rmb_price > 0 && (
+                                                (sku?.rmb_price ?? 0) < 40 ? (
+                                                    <span className="ml-1 text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400">SEA</span>
+                                                ) : (
+                                                    <span className="ml-1 text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">AIR</span>
+                                                )
+                                            )}
+                                        </div>
+                                        <span className="font-medium text-slate-200 text-right">
+                                            {(() => {
+                                                const rmbPrice = sku?.rmb_price || 0;
+                                                const weightGm = sku?.weight_gm || 0;
+                                                const isAir = rmbPrice >= 40;
+                                                const landingPrice = rmbPrice === 0
+                                                    ? null
+                                                    : isAir
+                                                        ? (rmbPrice * 14.36) + (weightGm * 1.6)
+                                                        : rmbPrice * 14.36 * 1.35;
+
+                                                if (rmbPrice === 0) return '—';
+                                                if (isAir && weightGm === 0) {
+                                                    return (
+                                                        <>
+                                                            ₹{Math.round(rmbPrice * 14.36).toLocaleString('en-IN')} + freight
+                                                            <span className="block text-xs text-slate-500 font-normal">(weight unavailable)</span>
+                                                        </>
+                                                    );
+                                                }
+                                                return `₹${Math.round(landingPrice || 0).toLocaleString('en-IN')}`;
+                                            })()}
+                                        </span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-sm text-slate-400">Unit Cost</span>

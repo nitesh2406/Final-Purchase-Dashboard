@@ -21,7 +21,6 @@ const formatLakhs = (amount: number) => {
 const forecastingCache: Record<string, ForecastingSku[]> = {};
 
 // Status and Color Logic
-// W2 FIX: Drive color from urgencyLevel to be consistent with status dot
 const getDaysOfCoverColor = (urgencyLevel: string) => {
     if (urgencyLevel === 'critical') return 'text-red-500';
     if (urgencyLevel === 'warning') return 'text-yellow-500';
@@ -57,11 +56,15 @@ interface DebugEntry {
     data: any;
 }
 
-// U1: Toast state type
 interface ToastState {
     message: string;
     draftId?: string;
     type: 'success' | 'error';
+}
+
+interface BrandFilterState {
+    tinkerbox: 'all' | 'hide' | 'only';
+    drift: 'all' | 'hide' | 'only';
 }
 
 interface InventoryForecastingProps {
@@ -84,16 +87,18 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     const [toast, setToast] = useState<ToastState | null>(null);
     const [activeMode, setActiveMode] = useState<'all' | 'sea' | 'air'>('all');
 
-    // Per-mode reorderQty overrides (ISSUE 1 fix)
-    // Stored separately from skus so switching modes doesn't lose edits
+    // Per-mode reorderQty overrides
     const [qtyOverrides, setQtyOverrides] = useState<{
         all: Record<string, number>;
         sea: Record<string, number>;
         air: Record<string, number>;
     }>({ all: {}, sea: {}, air: {} });
 
-    // Per-mode last manual refresh timestamp (ISSUE 9 debug)
+    // Per-mode last manual refresh timestamp
     const [lastManualRefresh, setLastManualRefresh] = useState<Record<string, string>>({ all: '', sea: '', air: '' });
+
+    // Collapsible status filters state
+    const [showStatusFilters, setShowStatusFilters] = useState(false);
 
     // Per-tab state — keyed by mode so switching tabs restores previous work
     type TabState = {
@@ -104,6 +109,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         showNeedsOrderOnly: boolean;
         editingQty: Record<string, string>;
         modalChartPeriod: '30' | '90';
+        brandFilter: BrandFilterState;
     };
     const defaultTabState = (): TabState => ({
         statusFilter: 'All',
@@ -113,6 +119,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         showNeedsOrderOnly: false,
         editingQty: {},
         modalChartPeriod: '30',
+        brandFilter: { tinkerbox: 'all', drift: 'all' }
     });
     const [tabStates, setTabStates] = useState<Record<string, TabState>>({
         all: defaultTabState(),
@@ -127,7 +134,8 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     const [selectedSkuIds, setSelectedSkuIdsRaw] = useState<string[]>([]);
     const [showNeedsOrderOnly, setShowNeedsOrderOnlyRaw] = useState(false);
     const [editingQty, setEditingQtyRaw] = useState<Record<string, string>>({});
-    const [modalChartPeriod, setModalChartPeriodRaw] = useState<'30' | '90'>('30');
+    const [modalChartPeriod, setModalChartPeriodRaw] = useState<'30' | '95'>('30');
+    const [brandFilter, setBrandFilterRaw] = useState<BrandFilterState>({ tinkerbox: 'all', drift: 'all' });
 
     // Wrapper setters that also persist to tabState
     const setStatusFilter = (val: StatusFilter) => {
@@ -164,8 +172,16 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         });
     };
     const setModalChartPeriod = (val: '30' | '90') => {
-        setModalChartPeriodRaw(val);
+        // Cast to '30' | '95' to match state if needed
+        setModalChartPeriodRaw(val as any);
         setTabStates(prev => ({ ...prev, [activeMode]: { ...prev[activeMode], modalChartPeriod: val } }));
+    };
+    const setBrandFilter = (val: React.SetStateAction<BrandFilterState>) => {
+        setBrandFilterRaw(prev => {
+            const next = typeof val === 'function' ? val(prev) : val;
+            setTabStates(ts => ({ ...ts, [activeMode]: { ...ts[activeMode], brandFilter: next } }));
+            return next;
+        });
     };
 
     const [stableSortedIds, setStableSortedIds] = useState<string[]>([]);
@@ -185,7 +201,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     }, []);
 
     const fetchForecastingData = useCallback(async (forceRefresh = false) => {
-        // Only trigger loading state if we are actually going to fetch
         if (!forceRefresh && forecastingCache[activeMode]) {
             setSkus(forecastingCache[activeMode]);
             setIsLoading(false);
@@ -200,7 +215,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         addDebugLog('req', { method: 'GET', url });
 
         try {
-            // REVERT: Using GET method as requested for the forecast data
             const response = await fetch(url);
 
             if (!response.ok) {
@@ -217,7 +231,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                 throw new Error("API returned invalid data format (expected an array).");
             }
 
-            // Update cache and state
             forecastingCache[activeMode] = data;
             if (latestModeRef.current === activeMode) {
                 setSkus(data);
@@ -236,10 +249,9 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     // Switch tab: restore persisted state for the newly selected tab
     const handleModeSwitch = (mode: 'all' | 'sea' | 'air') => {
         if (mode === activeMode) return;
-        // Save current state before switching
-        const currentState: TabState = { statusFilter, searchTerm, sortConfig, selectedSkuIds, showNeedsOrderOnly, editingQty, modalChartPeriod };
+        const currentState: TabState = { statusFilter, searchTerm, sortConfig, selectedSkuIds, showNeedsOrderOnly, editingQty, modalChartPeriod: modalChartPeriod as any, brandFilter };
         setTabStates(prev => ({ ...prev, [activeMode]: currentState }));
-        // Restore new tab state
+        
         const next = tabStates[mode];
         setStatusFilterRaw(next.statusFilter);
         setSearchTermRaw(next.searchTerm);
@@ -248,6 +260,12 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         setShowNeedsOrderOnlyRaw(next.showNeedsOrderOnly);
         setEditingQtyRaw(next.editingQty);
         setModalChartPeriodRaw(next.modalChartPeriod || '30');
+        
+        // Reset both brand filters to 'all' when mode tab switches
+        const resetBrandFilter: BrandFilterState = { tinkerbox: 'all', drift: 'all' };
+        setBrandFilterRaw(resetBrandFilter);
+        setTabStates(ts => ({ ...ts, [mode]: { ...ts[mode], brandFilter: resetBrandFilter } }));
+
         setStableSortedIds([]);
         setActiveMode(mode);
     };
@@ -257,12 +275,9 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         latestModeRef.current = activeMode;
         const modeChanged = prevModeRef.current !== activeMode;
 
-        // Only fetch if mode changed OR cache is completely missing
-        // This handles initial load and tab switches efficiently
         if (modeChanged || !forecastingCache[activeMode]) {
             fetchForecastingData(false);
         } else {
-            // Just update skus from cache if we already have it
             setSkus(forecastingCache[activeMode]);
             setIsLoading(false);
             setError(null);
@@ -292,21 +307,32 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
             .filter(sku =>
                 String(sku.masterSKU || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                 String(sku.productName || '').toLowerCase().includes(searchTerm.toLowerCase())
-            );
-    }, [skus, statusFilter, searchTerm, activeMode, showNeedsOrderOnly]);
+            )
+            // TinkerBox filter
+            .filter(sku => {
+                const isTB = sku.brand?.toUpperCase().startsWith('TB') || sku.masterSKU?.toUpperCase().startsWith('TB');
+                if (brandFilter.tinkerbox === 'hide') return !isTB;
+                if (brandFilter.tinkerbox === 'only') return isTB;
+                return true;
+            })
+            // Drift filter
+            .filter(sku => {
+                const isDrift = sku.brand?.toLowerCase() === 'drift';
+                if (brandFilter.drift === 'hide') return !isDrift;
+                if (brandFilter.drift === 'only') return isDrift;
+                return true;
+            });
+    }, [skus, statusFilter, searchTerm, activeMode, showNeedsOrderOnly, brandFilter]);
 
     const sortedSkus = useMemo(() => {
-        // Find skus based on stable IDs if we have them
         if (stableSortedIds.length > 0) {
             const skuMap = new Map(skus.map(s => [s.masterSKU, s]));
             return stableSortedIds
                 .map(id => skuMap.get(id))
                 .filter((s): s is ForecastingSku => s !== undefined)
-                // Also include any new SKUs not in stableSortedIds (e.g. if skus state changed from API)
                 .concat(skus.filter(s => !stableSortedIds.includes(s.masterSKU)));
         }
 
-        // Initial / Fallback sort
         return [...filteredSkus].sort((a, b) => {
             const aVal = a[sortConfig.key];
             const bVal = b[sortConfig.key];
@@ -338,6 +364,14 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         }, 0);
         return { count: selected.length, totalQty, totalValue };
     }, [selectedSkuIds, skus, qtyOverrides, activeMode]);
+
+    // Pre-calculate selected skus with quantity for CSV and summary modal
+    const selectedSkusWithQty = useMemo(() => {
+        const modeOverrides = qtyOverrides[activeMode];
+        return skus
+            .filter(s => selectedSkuIds.includes(s.masterSKU))
+            .filter(s => (modeOverrides[s.masterSKU] ?? s.reorderQty) > 0);
+    }, [skus, selectedSkuIds, qtyOverrides, activeMode]);
 
     const kpiData = useMemo(() => {
         const modeOverrides = qtyOverrides[activeMode];
@@ -373,7 +407,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     const handleReorderQtyChange = (skuId: string, value: string) => {
         const newValue = parseInt(value, 10);
         const finalQty = isNaN(newValue) || newValue < 0 ? 0 : newValue;
-        // ISSUE 1: Store in per-mode override map instead of mutating skus
         setQtyOverrides(prev => ({
             ...prev,
             [activeMode]: { ...prev[activeMode], [skuId]: finalQty }
@@ -381,7 +414,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     };
 
     const handleCreateDraft = () => {
-        // IMPROVEMENT 5: Warning if no checkbox selected
         if (selectedSkuIds.length === 0) {
             setToast({
                 message: "No SKUs selected. Use the checkboxes to select SKUs, or use Select All to select all visible rows.",
@@ -390,12 +422,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
             setTimeout(() => setToast(null), 5000);
             return;
         }
-
-        // IMPROVEMENT 4: Summary modal before draft creation — use effective qty from overrides
-        const modeOverrides = qtyOverrides[activeMode];
-        const selectedSkusWithQty = skus
-            .filter(s => selectedSkuIds.includes(s.masterSKU))
-            .filter(s => (modeOverrides[s.masterSKU] ?? s.reorderQty) > 0);
 
         if (selectedSkusWithQty.length === 0) {
             setToast({
@@ -409,12 +435,32 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         setShowSummaryModal(true);
     };
 
+    const handleDownloadCSV = () => {
+        const modeOverrides = qtyOverrides[activeMode];
+        const headers = ['SKU', 'Product Name', 'Supplier', 'Recommended Qty', 'Mode', 'RMB Price (¥)'];
+        const rows = selectedSkusWithQty.map(s => [
+            s.masterSKU,
+            `"${(s.productName || '').replace(/"/g, '""')}"`,
+            s.businessRules?.supplier || '',
+            modeOverrides[s.masterSKU] ?? s.reorderQty,
+            activeMode.toUpperCase(),
+            s.rmb_price || 0
+        ]);
+        const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `draft_order_${activeMode}_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
     const confirmCreateDraft = async () => {
         setIsCreatingDraft(true);
         setError(null);
         setShowSummaryModal(false);
 
-        // ISSUE 1: Apply qtyOverrides for current mode when building selectedRows
         const modeOverrides = qtyOverrides[activeMode];
         const selectedRows = skus
             .filter(s => selectedSkuIds.includes(s.masterSKU))
@@ -529,7 +575,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                         <SortableHeader label="30D Sale" sortKey="sale30Days" className="text-center" />
                         <SortableHeader label="90D Sale" sortKey="sale90Days" className="text-center" />
                         <SortableHeader label="MMA" sortKey="monthlyMovingAvg" className="text-center" />
-                        {/* U3 FIX: Renamed 'In Stock' to 'Available' (excludes inbound/shipped) */}
                         <SortableHeader label="Available" sortKey="inStock" className="text-center" />
                         <SortableHeader label="In-Transit" sortKey="inTransit" className="text-center" />
                         <SortableHeader label="Days of Cover" sortKey="daysOfCover" className="text-center" />
@@ -570,7 +615,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                             <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{formatNumber(sku.sale15Days)}</td>
                             <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{formatNumber(sku.sale30Days)}</td>
                             <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{formatNumber(sku.sale90Days)}</td>
-                            {/* U3 FIX: Math.round() instead of .toFixed(1) */}
                             <td className="px-3 py-3 whitespace-nowrap text-base text-gray-800 dark:text-white text-center">{Math.round(sku.monthlyMovingAvg)}</td>
                             <td className="px-3 py-3 whitespace-nowrap text-base font-semibold text-gray-800 dark:text-white text-center">{formatNumber(sku.inStock)}</td>
                             <td className="px-3 py-3 whitespace-nowrap text-sm text-center">
@@ -598,7 +642,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                 )}
                             </td>
                             <td className="px-3 py-3 whitespace-nowrap text-center">
-                                {/* W2 FIX: Color driven by urgencyLevel, not hardcoded day thresholds */}
                                 <div className={`text-base font-semibold ${getDaysOfCoverColor(sku.urgencyLevel)}`}>
                                     {isFinite(sku.daysOfCover) ? sku.daysOfCover.toFixed(0) : '∞'}
                                     {sku.stockoutGapDays > 0 && (
@@ -607,7 +650,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                         </span>
                                     )}
                                 </div>
-                                {/* Task 4: Show effectiveDaysOfCover if it's larger than on-hand */}
                                 {sku.effectiveDaysOfCover !== undefined && sku.effectiveDaysOfCover > sku.daysOfCover && sku.effectiveDaysOfCover < 999 && (
                                     <div className="text-xs text-slate-400 mt-0.5">
                                         ↑ {sku.effectiveDaysOfCover.toFixed(0)}d with inbound
@@ -624,7 +666,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                     </div>
                                 )}
                             </td>
-                            {/* ISSUE 1: REC QTY column — pre-MOQ recommendation */}
                             <td className="px-3 py-3 whitespace-nowrap text-right">
                                 {(() => {
                                     const raw = sku.rawReorderQty ?? 0;
@@ -675,11 +716,11 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
             <SkuDetailModal
                 sku={selectedSku}
                 onClose={() => setSelectedSku(null)}
-                chartPeriod={modalChartPeriod}
+                chartPeriod={modalChartPeriod as any}
                 onChartPeriodChange={setModalChartPeriod}
             />
 
-            {/* IMPROVEMENT 4: Summary Modal */}
+            {/* Summary Modal */}
             {showSummaryModal && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
@@ -698,13 +739,13 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                 <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
                                     <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Total SKUs</p>
                                     <p className="text-2xl font-black text-white">
-                                        {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && s.reorderQty > 0).length}
+                                        {selectedSkusWithQty.length}
                                     </p>
                                 </div>
                                 <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
                                     <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Total Units</p>
                                     <p className="text-2xl font-black text-blue-400">
-                                        {formatNumber(skus.filter(s => selectedSkuIds.includes(s.masterSKU) && (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty) > 0).reduce((sum, s) => sum + (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty), 0))}
+                                        {formatNumber(selectedSkusWithQty.reduce((sum, s) => sum + (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty), 0))}
                                     </p>
                                 </div>
                             </div>
@@ -715,45 +756,52 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                         <tr>
                                             <th className="px-4 py-3 border-b border-slate-800">SKU</th>
                                             <th className="px-4 py-3 border-b border-slate-800">Item Name</th>
-                                            <th className="px-4 py-3 border-b border-slate-800">Vendor</th>
+                                            <th className="px-4 py-3 border-b border-slate-800">Supplier</th>
                                             <th className="px-4 py-3 border-b border-slate-800 text-center">Qty</th>
                                             <th className="px-4 py-3 border-b border-slate-800 text-right">Unit Price</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-800 max-h-[400px]">
-                                        {skus
-                                            .filter(s => selectedSkuIds.includes(s.masterSKU) && (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty) > 0)
-                                            .map(item => {
-                                                const effectiveQty = qtyOverrides[activeMode][item.masterSKU] ?? item.reorderQty;
-                                                return (
-                                                <tr key={item.masterSKU} className="hover:bg-slate-800/30 transition-colors">
-                                                    <td className="px-4 py-3 font-mono text-xs text-slate-300">{item.masterSKU}</td>
-                                                    <td className="px-4 py-3 text-slate-100 font-medium truncate max-w-[200px]">{item.productName}</td>
-                                                    <td className="px-4 py-3 text-xs text-slate-400">{item.businessRules?.supplier || 'N/A'}</td>
-                                                    <td className="px-4 py-3 text-center font-bold text-blue-400">{effectiveQty}</td>
-                                                    <td className="px-4 py-3 text-right text-slate-300">₹{item.unitCost.toLocaleString()}</td>
-                                                </tr>
-                                                );
-                                            })}
+                                        {selectedSkusWithQty.map(item => {
+                                            const effectiveQty = qtyOverrides[activeMode][item.masterSKU] ?? item.reorderQty;
+                                            return (
+                                            <tr key={item.masterSKU} className="hover:bg-slate-800/30 transition-colors">
+                                                <td className="px-4 py-3 font-mono text-xs text-slate-300">{item.masterSKU}</td>
+                                                <td className="px-4 py-3 text-slate-100 font-medium truncate max-w-[200px]">{item.productName}</td>
+                                                <td className="px-4 py-3 text-xs text-slate-400">{item.businessRules?.supplier || 'N/A'}</td>
+                                                <td className="px-4 py-3 text-center font-bold text-blue-400">{effectiveQty}</td>
+                                                <td className="px-4 py-3 text-right text-slate-300">₹{item.unitCost.toLocaleString()}</td>
+                                            </tr>
+                                            );
+                                        })}
 
-                            {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty) === 0).length > 0 && (
-                                                <tr><td colSpan={5} className="px-4 py-2 text-xs text-slate-500 italic">
-                                                    * {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty) === 0).length} SKUs with 0 qty excluded
-                                                </td></tr>
-                                            )}
+                                        {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty) === 0).length > 0 && (
+                                            <tr><td colSpan={5} className="px-4 py-2 text-xs text-slate-500 italic">
+                                                * {skus.filter(s => selectedSkuIds.includes(s.masterSKU) && (qtyOverrides[activeMode][s.masterSKU] ?? s.reorderQty) === 0).length} SKUs with 0 qty excluded
+                                            </td></tr>
+                                        )}
                                     </tbody>
                                 </table>
                             </div>
                         </div>
 
                         <div className="p-6 border-t border-slate-800 flex justify-between gap-4 bg-slate-900/50">
-                            <Button
-                                variant="secondary"
-                                onClick={() => setShowSummaryModal(false)}
-                                className="px-8 border-slate-700 text-slate-300 hover:bg-slate-800"
-                            >
-                                Back
-                            </Button>
+                            <div className="flex gap-3">
+                                <Button
+                                    variant="secondary"
+                                    onClick={handleDownloadCSV}
+                                    className="px-6 border-slate-700 text-slate-300 hover:bg-slate-800"
+                                >
+                                    ⬇ Export CSV
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => setShowSummaryModal(false)}
+                                    className="px-8 border-slate-700 text-slate-300 hover:bg-slate-800"
+                                >
+                                    Back
+                                </Button>
+                            </div>
                             <Button
                                 onClick={confirmCreateDraft}
                                 disabled={isCreatingDraft}
@@ -766,7 +814,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                 </div>
             )}
 
-            {/* U1 FIX: Inline Toast notification */}
+            {/* Inline Toast notification */}
             {toast && (
                 <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-4 rounded-xl shadow-2xl text-white text-sm font-medium animate-in slide-in-from-bottom-4 duration-300 ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
                     }`}>
@@ -796,7 +844,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                     {/* Manual Sync Button */}
                     <button
                         onClick={() => {
-                            // ISSUE 9: Only manual refresh — record timestamp
                             setLastManualRefresh(prev => ({ ...prev, [activeMode]: new Date().toLocaleTimeString() }));
                             fetchForecastingData(true);
                         }}
@@ -861,7 +908,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                     <p className="text-[9px] text-slate-500 uppercase font-bold">Qty Overrides</p>
                                     <p className="text-sm font-mono text-purple-400">{Object.keys(editingQty).length} editing</p>
                                 </div>
-                                {/* ISSUE 1 + DEBUG: Per-mode qty override counts */}
                                 <div className="bg-slate-800 p-2 rounded">
                                     <p className="text-[9px] text-slate-500 uppercase font-bold">SEA Edits</p>
                                     <p className="text-sm font-mono text-teal-400">{Object.keys(qtyOverrides.sea).length}</p>
@@ -878,7 +924,6 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                     <p className="text-[9px] text-slate-500 uppercase font-bold">ALL Mode SKUs</p>
                                     <p className="text-sm font-mono text-cyan-400">{activeMode === 'all' ? skus.length : (forecastingCache['all']?.length ?? '—')}</p>
                                 </div>
-                                {/* ISSUE 9 + DEBUG: Auto-refresh status and last manual refresh */}
                                 <div className="bg-slate-800 p-2 rounded">
                                     <p className="text-[9px] text-slate-500 uppercase font-bold">Auto-Refresh</p>
                                     <p className="text-sm font-mono text-red-400">DISABLED</p>
@@ -951,10 +996,63 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                 </Button>
             </div>
 
-            <Card className="flex-grow flex flex-col overflow-hidden">
-                <div className="flex items-center justify-between mb-4">
-                    <p className="text-sm text-gray-500">{selectionData.count > 0 ? `${selectionData.count} items selected` : `${sortedSkus.length} results found for ${activeMode.toUpperCase()} mode`}</p>
-                    <div className="flex items-center gap-2 flex-wrap">
+            <Card className="flex-grow flex flex-col overflow-hidden p-4">
+                {/* Brand Filter Row */}
+                <div className="flex items-center gap-4 flex-wrap mb-2">
+                    <span className="text-slate-400 text-sm font-medium">Brand:</span>
+                    <div className="flex items-center gap-1">
+                        {(['all', 'hide', 'only'] as const).map(option => {
+                            const labels = { all: 'All TB', hide: 'Hide TB', only: 'TB Only' };
+                            const isSelected = brandFilter.tinkerbox === option;
+                            return (
+                                <button
+                                    key={option}
+                                    onClick={() => setBrandFilter(prev => ({ ...prev, tinkerbox: option }))}
+                                    className={`${
+                                        isSelected 
+                                            ? 'bg-blue-600 text-white shadow-sm' 
+                                            : 'bg-slate-700 text-slate-350 hover:bg-slate-600'
+                                    } text-xs px-3 py-1 rounded-full transition-all`}
+                                >
+                                    {labels[option]}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <div className="flex items-center gap-1">
+                        {(['all', 'hide', 'only'] as const).map(option => {
+                            const labels = { all: 'All Drift', hide: 'Hide Drift', only: 'Drift Only' };
+                            const isSelected = brandFilter.drift === option;
+                            return (
+                                <button
+                                    key={option}
+                                    onClick={() => setBrandFilter(prev => ({ ...prev, drift: option }))}
+                                    className={`${
+                                        isSelected 
+                                            ? 'bg-blue-600 text-white shadow-sm' 
+                                            : 'bg-slate-700 text-slate-350 hover:bg-slate-600'
+                                    } text-xs px-3 py-1 rounded-full transition-all`}
+                                >
+                                    {labels[option]}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Collapsible Toggle Link */}
+                <div className="text-left mb-3">
+                    <span 
+                        onClick={() => setShowStatusFilters(!showStatusFilters)} 
+                        className="text-xs text-slate-500 hover:text-slate-300 cursor-pointer select-none"
+                    >
+                        {showStatusFilters ? "▲ Hide status filters" : "▼ Status filters"}
+                    </span>
+                </div>
+
+                {/* Collapsible Status Pills Row */}
+                {showStatusFilters && (
+                    <div className="flex items-center gap-2 flex-wrap mb-4 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50 animate-in slide-in-from-top-1 duration-150">
                         <span className="text-sm font-medium">Status:</span>
                         {(['All', 'Urgent', 'Low Stock', 'Healthy', 'Awaiting Inbound', 'Stockout Gap'] as const).map(s => (
                             <Button
@@ -982,6 +1080,10 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                             {showNeedsOrderOnly ? '✓ Needs Order' : 'Reorder Only'}
                         </button>
                     </div>
+                )}
+
+                <div className="flex items-center justify-between mb-4">
+                    <p className="text-sm text-gray-500">{selectionData.count > 0 ? `${selectionData.count} items selected` : `${sortedSkus.length} results found for ${activeMode.toUpperCase()} mode`}</p>
                 </div>
 
                 <div className="flex-grow overflow-auto">

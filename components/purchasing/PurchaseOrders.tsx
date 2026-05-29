@@ -24,6 +24,12 @@ interface POLine {
     fulfilled_qty: number;
     status: 'PENDING' | 'PARTIAL' | 'FULFILLED';
     folder_link?: string;
+    sku_name?: string;
+    unit_price_rmb?: number;
+    custom_logo?: boolean;
+    custom_packaging?: boolean;
+    solving_manual?: boolean;
+    opp_wrap?: boolean;
 }
 
 interface PurchaseOrderUI {
@@ -212,6 +218,12 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
             fulfilled_qty: fulfilled,
             status,
             folder_link: l.customization_files || undefined,
+            sku_name: String(l.sku_name ?? l.name ?? ""),
+            unit_price_rmb: Number(l.unit_price_rmb ?? l.unit_price ?? 0),
+            custom_logo: Boolean(l.custom_logo ?? l.logo ?? false),
+            custom_packaging: Boolean(l.custom_packaging ?? l.packaging ?? false),
+            solving_manual: Boolean(l.solving_manual ?? l.manual ?? false),
+            opp_wrap: Boolean(l.opp_wrap ?? l.wrap ?? false),
         };
     };
 
@@ -422,6 +434,39 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
         }
     };
 
+    const handleDownloadPoCSV = () => {
+        if (!selectedPo) return;
+        const lines = poLinesCache.get(selectedPo.po_id) || selectedPo.lines || [];
+        
+        const headers = [
+            'PO ID', 'SKU', 'SKU Name', 'Ordered Qty', 'Fulfilled Qty',
+            'Pending Qty', 'Unit Price (RMB)', 'Logo', 'Packaging', 'Manual', 'OPP Wrap'
+        ];
+        
+        const rows = lines.map(line => [
+            selectedPo.po_id,
+            line.sku,
+            `"${(line.sku_name || '').replace(/"/g, '""')}"`,
+            line.ordered_qty,
+            line.fulfilled_qty || 0,
+            (line.ordered_qty || 0) - (line.fulfilled_qty || 0),
+            line.unit_price_rmb || 0,
+            line.custom_logo ? 'Yes' : 'No',
+            line.custom_packaging ? 'Yes' : 'No',
+            line.solving_manual ? 'Yes' : 'No',
+            line.opp_wrap ? 'Yes' : 'No'
+        ]);
+        
+        const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${selectedPo.po_id}_lines.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
     if (selectedPo || loadingDetails || detailsError) {
         return (
         <div className="flex flex-col h-full overflow-y-auto space-y-6 text-gray-900 dark:text-white p-6 bg-gray-50 dark:bg-[#0f172a] animate-in fade-in duration-300">
@@ -442,6 +487,16 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
+                        {selectedPo && (
+                            <button
+                                onClick={handleDownloadPoCSV}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
+                                           bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg
+                                           border border-slate-600 transition-colors"
+                            >
+                                ⬇ Download CSV
+                            </button>
+                        )}
                         <Button 
                             variant="secondary" 
                             onClick={() => { setSelectedPo(null); setDetailsError(null); }}
