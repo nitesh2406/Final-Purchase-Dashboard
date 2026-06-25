@@ -44,7 +44,7 @@ const inputFieldClasses = "block w-full bg-white dark:bg-gray-700 border border-
 export const CreateInvoiceModal: FC<CreateInvoiceModalProps> = ({ isOpen, onClose, onSave, vendors, purchaseOrders, shipments, invoiceCount }) => {
     const [invoiceData, setInvoiceData] = useState<Omit<Invoice, 'id'>>(defaultInvoiceData);
     
-    const newInvoiceId = useMemo(() => `INV-2024-${(invoiceCount + 1).toString().padStart(3, '0')}`, [invoiceCount]);
+    const newInvoiceId = useMemo(() => `INV-${new Date().getFullYear()}-${(invoiceCount + 1).toString().padStart(3, '0')}`, [invoiceCount]);
 
     useEffect(() => {
         const subtotal = invoiceData.lineItems.reduce((sum, item) => sum + item.amount, 0);

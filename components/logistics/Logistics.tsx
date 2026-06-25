@@ -41,7 +41,7 @@ const StatusUpdateModal: React.FC<{
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-in fade-in duration-200">
-            <div className="bg-[#1e293b] border border-slate-700 rounded-lg shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-150">
+            <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-2xl w-full max-w-md p-6 animate-in zoom-in-95 duration-150">
                 <div className="flex justify-between items-center mb-6">
                     <h3 className="text-xl font-semibold text-white">Update Status: {po.id}</h3>
                     <button onClick={onClose} className="text-slate-400 hover:text-white"><XMarkIcon className="w-5 h-5" /></button>
@@ -87,52 +87,52 @@ const PurchaseOrderDetail: React.FC<{
     onUpdateStatus: () => void;
 }> = ({ po, onBack, onUpdateStatus }) => {
     return (
-        <div className="flex flex-col space-y-6 animate-in fade-in duration-300">
+        <div className="flex flex-col space-y-6 animate-in fade-in duration-300 text-slate-800 dark:text-white">
             <div className="flex justify-between items-center px-1">
                 <div className="flex items-center gap-4">
-                    <button onClick={onBack} className="p-2 -ml-2 text-slate-400 hover:text-white transition-colors"><ArrowLeftIcon className="w-6 h-6" /></button>
+                    <button onClick={onBack} className="p-2 -ml-2 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-white transition-colors"><ArrowLeftIcon className="w-6 h-6" /></button>
                     <div>
                         <h2 className="text-xl font-semibold flex items-center gap-3">
-                            Purchase Order: <span className="font-mono text-blue-400">{po.id}</span>
+                            Purchase Order: <span className="font-mono text-blue-500 dark:text-blue-400">{po.id}</span>
                             <span className={`px-2 py-0.5 text-[10px] rounded uppercase tracking-wider ${statusColors[po.status]}`}>{po.status}</span>
                         </h2>
-                        <p className="text-sm text-slate-400 mt-1">Detailed breakdown of vendor items and customization</p>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Detailed breakdown of vendor items and customization</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
-                    <Button variant="secondary" onClick={onBack} className="h-9">Back to Orders</Button>
-                    <Button onClick={onUpdateStatus} className="bg-green-600 hover:bg-green-700 h-9 font-semibold">Mark as Dispatched</Button>
+                    <Button variant="secondary" onClick={onBack} className="h-9 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300">Back to Orders</Button>
+                    <Button onClick={onUpdateStatus} className="bg-green-600 hover:bg-green-700 h-9 font-semibold text-white">Mark as Dispatched</Button>
                 </div>
             </div>
 
-            <Card className="bg-slate-800/40 border-slate-700 p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <Card className="bg-white dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
                 <div className="space-y-1">
-                    <p className="text-xs font-bold text-slate-500 uppercase">PO Number</p>
-                    <p className="text-lg font-mono font-bold text-white">{po.id}</p>
+                    <p className="text-xs font-bold text-slate-450 dark:text-slate-500 uppercase">PO Number</p>
+                    <p className="text-lg font-mono font-bold text-slate-800 dark:text-white">{po.id}</p>
                 </div>
                 <div className="space-y-1">
-                    <p className="text-xs font-bold text-slate-500 uppercase">Vendor</p>
-                    <p className="text-lg text-white font-medium">{po.vendor}</p>
+                    <p className="text-xs font-bold text-slate-450 dark:text-slate-500 uppercase">Vendor</p>
+                    <p className="text-lg text-slate-800 dark:text-white font-medium">{po.vendor}</p>
                 </div>
                 <div className="space-y-1">
-                    <p className="text-xs font-bold text-slate-500 uppercase">PO Date</p>
-                    <p className="text-lg text-white">{formatDate(po.createdDate)}</p>
+                    <p className="text-xs font-bold text-slate-450 dark:text-slate-500 uppercase">PO Date</p>
+                    <p className="text-lg text-slate-800 dark:text-white">{formatDate(po.createdDate)}</p>
                 </div>
                 <div className="space-y-1">
-                    <p className="text-xs font-bold text-slate-500 uppercase">Expected Delivery</p>
-                    <p className="text-lg text-white">{formatDate(po.expectedDeliveryDate || '')}</p>
+                    <p className="text-xs font-bold text-slate-450 dark:text-slate-500 uppercase">Expected Delivery</p>
+                    <p className="text-lg text-slate-800 dark:text-white">{formatDate(po.expectedDeliveryDate || '')}</p>
                 </div>
             </Card>
 
-            <Card className="bg-slate-800/30 border-slate-700 p-0 overflow-hidden shadow-xl">
-                <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-900/40">
-                    <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest">Ordered Items</h3>
-                    <span className="text-xs text-slate-500">{po.items.length} SKUs included</span>
+            <Card className="bg-white dark:bg-slate-800/30 border border-slate-200 dark:border-slate-700 p-0 overflow-hidden shadow-xl">
+                <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50 dark:bg-slate-900/40">
+                    <h3 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Ordered Items</h3>
+                    <span className="text-xs text-slate-400 dark:text-slate-500">{po.items.length} SKUs included</span>
                 </div>
                 <div className="overflow-x-auto min-w-[1000px]">
                     <table className="w-full text-left text-sm border-collapse">
                         <thead>
-                            <tr className="bg-slate-900/20 text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-700/50">
+                            <tr className="bg-slate-50 dark:bg-slate-900/20 text-slate-500 dark:text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-200 dark:border-slate-700/50 block-row">
                                 <th className="px-6 py-3 font-medium">SKU</th>
                                 <th className="px-6 py-3 font-medium">Item Name</th>
                                 <th className="px-6 py-3 font-medium text-center">Qty</th>
@@ -141,32 +141,32 @@ const PurchaseOrderDetail: React.FC<{
                                 <th className="px-6 py-3 font-medium text-center">Customization</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-700/50">
+                        <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
                             {po.items.map((item, idx) => (
-                                <tr key={idx} className="hover:bg-slate-700/20 transition-colors duration-150">
-                                    <td className="px-6 py-4 font-mono text-blue-300">{item.skuId}</td>
-                                    <td className="px-6 py-4 text-white">Item Placeholder {idx + 1}</td>
-                                    <td className="px-6 py-4 text-center font-bold">{item.quantity}</td>
-                                    <td className="px-6 py-4 text-right text-slate-400">₹{item.unitCost.toLocaleString()}</td>
-                                    <td className="px-6 py-4 text-right font-bold text-white">₹{(item.quantity * item.unitCost).toLocaleString()}</td>
+                                <tr key={idx} className="hover:bg-slate-100 dark:hover:bg-slate-700/20 transition-colors duration-150">
+                                    <td className="px-6 py-4 font-mono text-blue-500 dark:text-blue-300">{item.skuId}</td>
+                                    <td className="px-6 py-4 text-slate-800 dark:text-white">Item Placeholder {idx + 1}</td>
+                                    <td className="px-6 py-4 text-center font-bold text-slate-800 dark:text-white">{item.quantity}</td>
+                                    <td className="px-6 py-4 text-right text-slate-500 dark:text-slate-400 font-medium">₹{item.unitCost.toLocaleString()}</td>
+                                    <td className="px-6 py-4 text-right font-bold text-slate-800 dark:text-white">₹{(item.quantity * item.unitCost).toLocaleString()}</td>
                                     <td className="px-6 py-4 text-center">
                                         {(po.customLogo || po.customPackaging) ? (
-                                            <button className="p-1.5 hover:bg-blue-600/20 rounded text-blue-400 transition-all"><PaperClipIcon className="w-4 h-4" /></button>
-                                        ) : <span className="text-slate-600">-</span>}
+                                            <button className="p-1.5 hover:bg-blue-600/20 rounded text-blue-500 dark:text-blue-400 transition-all"><PaperClipIcon className="w-4 h-4" /></button>
+                                        ) : <span className="text-slate-400">-</span>}
                                     </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 </div>
-                <div className="p-6 bg-slate-900/40 border-t border-slate-700 flex justify-end gap-12">
+                <div className="p-6 bg-slate-50 dark:bg-slate-900/40 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-12">
                     <div className="text-right">
-                        <p className="text-xs font-bold text-slate-500 uppercase mb-1">Total Quantity</p>
-                        <p className="text-2xl font-bold text-white">{po.totalQty}</p>
+                        <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase mb-1">Total Quantity</p>
+                        <p className="text-2xl font-bold text-slate-800 dark:text-white">{po.totalQty}</p>
                     </div>
                     <div className="text-right pr-4">
-                        <p className="text-xs font-bold text-slate-500 uppercase mb-1">Grand Total</p>
-                        <p className="text-2xl font-bold text-green-400">{formatCurrency(po.amount || 0)}</p>
+                        <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase mb-1">Grand Total</p>
+                        <p className="text-2xl font-bold text-green-600 dark:text-green-400">{formatCurrency(po.amount || 0)}</p>
                     </div>
                 </div>
             </Card>
@@ -207,7 +207,7 @@ export const Logistics: React.FC = () => {
 
     if (selectedPO) {
         return (
-            <div className="p-6 bg-[#0f172a] min-h-screen">
+            <div className="p-6 bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-white">
                 <PurchaseOrderDetail po={selectedPO} onBack={() => setSelectedPO(null)} onUpdateStatus={() => setStatusModalOpen(true)} />
                 <StatusUpdateModal isOpen={isStatusModalOpen} onClose={() => setStatusModalOpen(false)} po={selectedPO} onUpdate={handleUpdateStatus} />
             </div>
@@ -215,7 +215,7 @@ export const Logistics: React.FC = () => {
     }
 
     return (
-        <div className="flex flex-col h-full space-y-4 text-white p-6 bg-[#0f172a] min-h-screen relative">
+        <div className="flex flex-col h-full space-y-4 text-slate-800 dark:text-white p-6 bg-slate-50 dark:bg-slate-900 min-h-screen relative">
             {toast && (
                 <div className="fixed top-24 right-8 z-[150] animate-in slide-in-from-right-8 duration-300">
                     <div className="bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-2xl flex items-center gap-3 border border-emerald-500/50">
@@ -227,33 +227,33 @@ export const Logistics: React.FC = () => {
 
             <div className="flex justify-between items-center px-1">
                 <div>
-                    <h2 className="text-xl font-semibold">Purchase Orders</h2>
-                    <p className="text-sm text-slate-400 mt-1">Track and manage your submitted vendor orders</p>
+                    <h2 className="text-xl font-semibold text-slate-800 dark:text-white">Purchase Orders</h2>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Track and manage your submitted vendor orders</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button variant="secondary" icon={<FunnelIcon className="w-4 h-4"/>}>Filters</Button>
+                    <Button variant="secondary" className="border-slate-205 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300" icon={<FunnelIcon className="w-4 h-4"/>}>Filters</Button>
                 </div>
             </div>
 
             <div className="space-y-4">
                 <div className="relative">
-                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
                     <input 
                         type="text"
                         placeholder="Search by PO number, vendor, or item..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2.5 bg-slate-800/50 border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-slate-500 text-sm shadow-sm"
+                        className="w-full pl-9 pr-4 py-2.5 bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-slate-505 text-sm shadow-sm text-slate-850 dark:text-white"
                     />
                 </div>
 
-                <div className="flex gap-8 border-b border-slate-800 px-1">
+                <div className="flex gap-8 border-b border-slate-200 dark:border-slate-800 px-1">
                     {['All', 'Placed', 'Partially Dispatched', 'Fully Dispatched', 'Completed'].map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
                             className={`pb-3 text-sm font-medium transition-all relative ${
-                                activeTab === tab ? 'text-blue-500' : 'text-slate-500 hover:text-slate-300'
+                                activeTab === tab ? 'text-blue-500 font-semibold' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
                             }`}
                         >
                             {tab}
@@ -263,12 +263,12 @@ export const Logistics: React.FC = () => {
                 </div>
             </div>
 
-            <Card className="flex-grow overflow-hidden p-0 flex flex-col bg-slate-800/30 border-slate-700 shadow-xl">
+            <Card className="flex-grow overflow-hidden p-0 flex flex-col bg-white dark:bg-slate-800/30 border border-slate-200 dark:border-slate-700 shadow-xl">
                 <div className="overflow-x-auto min-w-[1100px]">
                     {filteredOrders.length > 0 ? (
                         <table className="w-full text-left text-sm border-collapse">
                             <thead>
-                                <tr className="bg-slate-900/50 text-slate-400 text-[11px] uppercase tracking-wider border-b border-slate-700">
+                                <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-550 dark:text-slate-400 text-[11px] uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
                                     <th className="px-6 py-3 font-medium">PO Number</th>
                                     <th className="px-6 py-3 font-medium">Vendor</th>
                                     <th className="px-6 py-3 font-medium">PO Date</th>
@@ -279,20 +279,20 @@ export const Logistics: React.FC = () => {
                                     <th className="px-6 py-3 font-medium text-right">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-700/50">
+                            <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
                                 {filteredOrders.map((o) => (
-                                    <tr key={o.id} onClick={() => setSelectedPO(o)} className="group hover:bg-slate-700/40 transition-colors duration-150 cursor-pointer">
-                                        <td className="px-6 py-4 font-mono font-bold text-blue-400">{o.id}</td>
-                                        <td className="px-6 py-4 text-slate-200">{o.vendor}</td>
-                                        <td className="px-6 py-4 text-slate-400 text-xs">{formatDate(o.createdDate)}</td>
-                                        <td className="px-6 py-4 text-slate-400 text-xs">{formatDate(o.expectedDeliveryDate || '')}</td>
+                                    <tr key={o.id} onClick={() => setSelectedPO(o)} className="group hover:bg-slate-100 dark:hover:bg-slate-700/40 transition-colors duration-150 cursor-pointer">
+                                        <td className="px-6 py-4 font-mono font-bold text-blue-500 dark:text-blue-400">{o.id}</td>
+                                        <td className="px-6 py-4 text-slate-700 dark:text-slate-200">{o.vendor}</td>
+                                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-xs">{formatDate(o.createdDate)}</td>
+                                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-xs">{formatDate(o.expectedDeliveryDate || '')}</td>
                                         <td className="px-6 py-4 text-center">
                                             <span className={`px-2 py-0.5 text-[10px] font-semibold rounded uppercase tracking-wider ${statusColors[o.status] || 'bg-slate-600'}`}>{o.status}</span>
                                         </td>
-                                        <td className="px-6 py-4 text-center text-slate-300">{o.totalQty}</td>
-                                        <td className="px-6 py-4 text-right font-medium text-white">{formatCurrency(o.amount || 0)}</td>
+                                        <td className="px-6 py-4 text-center text-slate-500 dark:text-slate-300">{o.totalQty}</td>
+                                        <td className="px-6 py-4 text-right font-medium text-slate-800 dark:text-white">{formatCurrency(o.amount || 0)}</td>
                                         <td className="px-6 py-4 text-right">
-                                            <button className="p-1.5 hover:bg-slate-600 rounded text-slate-400 hover:text-blue-400 transition-all"><EyeIcon className="w-4 h-4" /></button>
+                                            <button className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-600 rounded text-slate-450 hover:text-blue-500 dark:hover:text-blue-400 transition-all"><EyeIcon className="w-4 h-4" /></button>
                                         </td>
                                     </tr>
                                 ))}

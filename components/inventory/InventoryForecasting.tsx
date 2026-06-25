@@ -4,8 +4,8 @@ import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { ArrowsUpDownIcon, ArrowPathIcon, ShipIcon, AirplaneIcon, ClockIcon, PencilIcon, ExclamationTriangleIcon, ArrowPathIcon as RetryIcon, CheckBadgeIcon, XMarkIcon } from '../icons/Icons';
 import { SkuDetailModal } from './SkuDetailModal';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../App';
-import { ViewType } from '../../App';
+import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { ViewType } from '../../types';
 
 // Helper functions
 const formatNumber = (num: number) => new Intl.NumberFormat('en-IN').format(num);
@@ -134,7 +134,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     const [selectedSkuIds, setSelectedSkuIdsRaw] = useState<string[]>([]);
     const [showNeedsOrderOnly, setShowNeedsOrderOnlyRaw] = useState(false);
     const [editingQty, setEditingQtyRaw] = useState<Record<string, string>>({});
-    const [modalChartPeriod, setModalChartPeriodRaw] = useState<'30' | '95'>('30');
+    const [modalChartPeriod, setModalChartPeriodRaw] = useState<'30' | '90'>('30');
     const [brandFilter, setBrandFilterRaw] = useState<BrandFilterState>({ tinkerbox: 'all', drift: 'all' });
 
     // Wrapper setters that also persist to tabState
@@ -172,8 +172,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         });
     };
     const setModalChartPeriod = (val: '30' | '90') => {
-        // Cast to '30' | '95' to match state if needed
-        setModalChartPeriodRaw(val as any);
+        setModalChartPeriodRaw(val);
         setTabStates(prev => ({ ...prev, [activeMode]: { ...prev[activeMode], modalChartPeriod: val } }));
     };
     const setBrandFilter = (val: React.SetStateAction<BrandFilterState>) => {
@@ -227,13 +226,22 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                 throw new Error(data.error);
             }
 
-            if (!Array.isArray(data)) {
+            // Unwrap standard Apps Script response formats
+            const records: ForecastingSku[] = Array.isArray(data)
+                ? data
+                : Array.isArray(data.skus)     ? data.skus
+                : Array.isArray(data.records)   ? data.records
+                : Array.isArray(data.data)      ? data.data
+                : Array.isArray(data.items)     ? data.items
+                : null;
+
+            if (!records) {
                 throw new Error("API returned invalid data format (expected an array).");
             }
 
-            forecastingCache[activeMode] = data;
+            forecastingCache[activeMode] = records;
             if (latestModeRef.current === activeMode) {
-                setSkus(data);
+                setSkus(records);
             }
 
         } catch (e: any) {
@@ -251,7 +259,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         if (mode === activeMode) return;
         const currentState: TabState = { statusFilter, searchTerm, sortConfig, selectedSkuIds, showNeedsOrderOnly, editingQty, modalChartPeriod: modalChartPeriod as any, brandFilter };
         setTabStates(prev => ({ ...prev, [activeMode]: currentState }));
-        
+
         const next = tabStates[mode];
         setStatusFilterRaw(next.statusFilter);
         setSearchTermRaw(next.searchTerm);
@@ -260,7 +268,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         setShowNeedsOrderOnlyRaw(next.showNeedsOrderOnly);
         setEditingQtyRaw(next.editingQty);
         setModalChartPeriodRaw(next.modalChartPeriod || '30');
-        
+
         // Reset both brand filters to 'all' when mode tab switches
         const resetBrandFilter: BrandFilterState = { tinkerbox: 'all', drift: 'all' };
         setBrandFilterRaw(resetBrandFilter);
@@ -765,13 +773,13 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                         {selectedSkusWithQty.map(item => {
                                             const effectiveQty = qtyOverrides[activeMode][item.masterSKU] ?? item.reorderQty;
                                             return (
-                                            <tr key={item.masterSKU} className="hover:bg-slate-800/30 transition-colors">
-                                                <td className="px-4 py-3 font-mono text-xs text-slate-300">{item.masterSKU}</td>
-                                                <td className="px-4 py-3 text-slate-100 font-medium truncate max-w-[200px]">{item.productName}</td>
-                                                <td className="px-4 py-3 text-xs text-slate-400">{item.businessRules?.supplier || 'N/A'}</td>
-                                                <td className="px-4 py-3 text-center font-bold text-blue-400">{effectiveQty}</td>
-                                                <td className="px-4 py-3 text-right text-slate-300">₹{item.unitCost.toLocaleString()}</td>
-                                            </tr>
+                                                <tr key={item.masterSKU} className="hover:bg-slate-800/30 transition-colors">
+                                                    <td className="px-4 py-3 font-mono text-xs text-slate-300">{item.masterSKU}</td>
+                                                    <td className="px-4 py-3 text-slate-100 font-medium truncate max-w-[200px]">{item.productName}</td>
+                                                    <td className="px-4 py-3 text-xs text-slate-400">{item.businessRules?.supplier || 'N/A'}</td>
+                                                    <td className="px-4 py-3 text-center font-bold text-blue-400">{effectiveQty}</td>
+                                                    <td className="px-4 py-3 text-right text-slate-300">₹{item.unitCost.toLocaleString()}</td>
+                                                </tr>
                                             );
                                         })}
 
@@ -816,8 +824,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
 
             {/* Inline Toast notification */}
             {toast && (
-                <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-4 rounded-xl shadow-2xl text-white text-sm font-medium animate-in slide-in-from-bottom-4 duration-300 ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
-                    }`}>
+                <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-4 rounded-xl shadow-2xl text-white text-sm font-medium animate-in slide-in-from-bottom-4 duration-300 ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
                     <CheckBadgeIcon className="w-5 h-5 flex-shrink-0" />
                     <span>{toast.message}</span>
                     {toast.draftId && onNavigate && (
@@ -1009,8 +1016,8 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                     key={option}
                                     onClick={() => setBrandFilter(prev => ({ ...prev, tinkerbox: option }))}
                                     className={`${
-                                        isSelected 
-                                            ? 'bg-blue-600 text-white shadow-sm' 
+                                        isSelected
+                                            ? 'bg-blue-600 text-white shadow-sm'
                                             : 'bg-slate-700 text-slate-350 hover:bg-slate-600'
                                     } text-xs px-3 py-1 rounded-full transition-all`}
                                 >
@@ -1028,8 +1035,8 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
                                     key={option}
                                     onClick={() => setBrandFilter(prev => ({ ...prev, drift: option }))}
                                     className={`${
-                                        isSelected 
-                                            ? 'bg-blue-600 text-white shadow-sm' 
+                                        isSelected
+                                            ? 'bg-blue-600 text-white shadow-sm'
                                             : 'bg-slate-700 text-slate-350 hover:bg-slate-600'
                                     } text-xs px-3 py-1 rounded-full transition-all`}
                                 >
@@ -1042,8 +1049,8 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
 
                 {/* Collapsible Toggle Link */}
                 <div className="text-left mb-3">
-                    <span 
-                        onClick={() => setShowStatusFilters(!showStatusFilters)} 
+                    <span
+                        onClick={() => setShowStatusFilters(!showStatusFilters)}
                         className="text-xs text-slate-500 hover:text-slate-300 cursor-pointer select-none"
                     >
                         {showStatusFilters ? "▲ Hide status filters" : "▼ Status filters"}

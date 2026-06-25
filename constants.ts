@@ -1,6 +1,76 @@
 
 import { Sku, PurchaseOrder, Shipment, Invoice, Vendor, TaxSlab, HsnCode, FreightAgent, FreightRate, AdditionalCharge, PaymentTerm, ApprovalRule, User, Role, NotificationRule, VendorReportData, Notification, ForecastingSku } from './types';
 
+export const APPS_SCRIPT_URL = (import.meta as any).env.VITE_APPS_SCRIPT_URL;
+
+export const API_ACTIONS = {
+    // Draft Operations
+    GET_DRAFTS: 'get_drafts',
+    GET_DRAFT_BY_ID: 'get_draft_by_id',
+    CREATE_DRAFT_FROM_FORECAST: 'create_draft_from_forecast',
+    SAVE_DRAFT: 'save_draft',
+    CREATE_DRAFT: 'create_draft',
+    SUBMIT_DRAFT: 'submit_draft',
+    CANCEL_DRAFT: 'cancel_draft',
+    DUPLICATE_DRAFT: 'duplicate_draft',
+    SAVE_CUSTOMIZATION: 'save_customization',
+    // Purchase Order Operations
+    GET_PURCHASE_ORDERS: 'get_pos',
+    GET_PURCHASE_ORDER_DETAILS: 'get_purchase_order_details',
+    CLOSE_PO: 'close_po',
+    GET_PENDING_LINES: 'get_pending_lines',
+    GET_SKU_HISTORY: 'get_sku_history',
+    // Catalog Operations
+    SEARCH_SKU_CATALOG: 'search_sku_catalog',
+    ADD_SKU: 'add_sku',
+    // Vendor Operations
+    GET_VENDOR_MASTERS: 'get_vendor_masters',
+    // Shipment Operations
+    UPLOAD_SHIPMENT_DOCS: 'upload_shipment_docs',
+    SHIPMENT_RERUN_MATCHING: 'shipment_rerun_matching',
+    SHIPMENT_GET_ALLOCATION: 'shipment_get_allocation',
+    SHIPMENT_CREATE: 'shipment_create',
+    GET_OPEN_BATCHES: 'get_open_batches',
+    // Finance Operations
+    GET_BATCHES_FINANCE: 'get_batches_finance',
+    GET_BATCH_FINANCE_DETAIL: 'get_batch_finance_detail',
+    UPDATE_BATCH_TRACKING: 'update_batch_tracking',
+    UPDATE_SHIPMENT_FINANCE: 'update_shipment_finance',
+    UPDATE_BATCH_CURRENCY: 'update_batch_currency',
+    GET_FX_RATES: 'get_fx_rates',
+    GET_VENDOR_ACCOUNTS: 'get_vendor_accounts',
+    LOG_PAYMENT: 'log_payment',
+    GET_PAYMENTS: 'get_payments',
+    GET_AGENT_INVOICES: 'get_agent_invoices',
+    LOG_AGENT_INVOICE: 'log_agent_invoice',
+    MAP_INVOICE_SHIPMENTS: 'map_invoice_shipments',
+    GET_PURCHASE_INVOICES: 'get_purchase_invoices',
+    GET_PAYMENT_LOGS: 'get_payment_logs',
+    GET_SETTLEMENT_LEDGER: 'get_settlement_ledger',
+    GET_VENDOR_LEDGER: 'get_vendor_ledger',
+    // Amazon Operations
+    GET_AMAZON_FORECAST:          'get_amazon_forecast',
+    CONFIRM_AMAZON_SHIPMENT_PLAN: 'confirm_amazon_shipment_plan',
+    GET_AMAZON_CONFIG:            'get_amazon_config',
+    SAVE_AMAZON_CONFIG:           'save_amazon_config',
+    // New SKU Operations
+    GET_NEW_SKU_REQUESTS:      'getNewSkuRequests',
+    GET_NEW_SKU_REQUEST_BY_ID: 'getNewSkuRequestById',
+    SAVE_NEW_SKU_DRAFT:        'saveNewSkuDraft',
+    GET_NEXT_AVAILABLE_SKU:    'getNextAvailableSku',
+    GET_PRICING_CONFIG:        'getPricingConfig',
+    GET_TAGS_BY_CATEGORY:      'getTagsByCategory',
+    CREATE_SKU_ON_EE:          'createSkuOnEasyEcom',
+    CREATE_SKU_ON_ZOHO:        'createSkuOnZoho',
+    GET_PARENT_SKU_DETAILS:    'getParentSkuDetails',
+    CREATE_SKU_ON_SHOPIFY:     'createSkuOnShopify',
+    UPDATE_EE_PO:              'updateEePurchaseOrder',
+    REJECT_SKU_REQUEST:        'rejectSkuRequest',
+    CREATE_MANUAL_SKU:         'createManualSkuRequest',
+    GET_BRANDS:                'getBrands',
+    GET_VARIANTS:              'getVariants',
+};
+
 export const MOCK_SKUS: Sku[] = [
   { id: 'SKU-001', name: 'GAN 11 M Pro', finalItemName: 'GAN 11 M Pro 3x3 Magnetic Speed Cube', category: '3x3 Cubes', supplier: 'GAN Cubes', ean: '1234567890123', cost: 25.50, mrp: 4500, shopifyPrice: 4200, stockOnHand: 150, stockInTransit: 50, stockOnOrder: 100, salesVelocity: 10.5, taxRate: 18, hsnCode: '950300' },
   { id: 'SKU-002', name: 'MoYu RS3M 2020', finalItemName: 'MoYu RS3M 2020 3x3 Magnetic Speed Cube', category: '3x3 Cubes', supplier: 'MoYu', ean: '2345678901234', cost: 8.00, mrp: 900, shopifyPrice: 850, stockOnHand: 300, stockInTransit: 100, stockOnOrder: 200, salesVelocity: 25.2, taxRate: 18, hsnCode: '950300' },

@@ -44,16 +44,16 @@ export const Finance: FC<FinanceProps> = (props) => {
 
     return (
         <div className="flex flex-col h-full">
-            <div className="flex-shrink-0 border-b-2 border-gray-200 dark:border-gray-700">
-                <nav className="-mb-0.5 flex space-x-6">
+            <div className="flex-shrink-0 border-b border-slate-200 dark:border-slate-700">
+                <nav className="-mb-px flex space-x-6">
                     {financeNav.map(item => (
                          <button
                             key={item.name}
                             onClick={() => setActiveView(item.name)}
                             className={`py-3 px-1 inline-flex items-center gap-2 text-sm whitespace-nowrap font-medium transition-colors focus:outline-none ${
                                 activeView === item.name
-                                ? 'border-b-2 border-primary-500 text-primary-600 dark:text-primary-400'
-                                : 'border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                                ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
+                                : 'border-b-2 border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
                             }`}
                         >
                             {item.icon}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../App';
+import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import {

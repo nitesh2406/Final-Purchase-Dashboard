@@ -30,10 +30,10 @@ const timeSince = (date: Date): string => {
 const NotificationIcon: FC<{type: Notification['type']}> = ({type}) => {
     const iconClass = "w-6 h-6 rounded-full p-1";
     switch(type) {
-        case 'overdue': return <ExclamationTriangleIcon className={`${iconClass} bg-red-100 text-red-600`} />;
-        case 'due_soon': return <CalendarDaysIcon className={`${iconClass} bg-yellow-100 text-yellow-600`} />;
-        case 'payment_success': return <CheckBadgeIcon className={`${iconClass} bg-green-100 text-green-600`} />;
-        default: return <BellIcon className={`${iconClass} bg-gray-100 text-gray-600`} />;
+        case 'overdue': return <ExclamationTriangleIcon className={`${iconClass} bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400`} />;
+        case 'due_soon': return <CalendarDaysIcon className={`${iconClass} bg-yellow-100 dark:bg-yellow-500/20 text-yellow-600 dark:text-yellow-400`} />;
+        case 'payment_success': return <CheckBadgeIcon className={`${iconClass} bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400`} />;
+        default: return <BellIcon className={`${iconClass} bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400`} />;
     }
 }
 
@@ -64,81 +64,79 @@ export const Header: React.FC<HeaderProps> = ({ currentView, notifications, setN
 
     const handleNotificationClick = (id: string) => {
         setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-        // In a real app, you would navigate to the related item
-        // e.g., setView('Finance'); and pass the relatedId
     };
-    
+
   return (
-    <header className="flex items-center justify-between h-20 px-4 sm:px-6 lg:px-8 bg-white dark:bg-gray-800 border-b dark:border-gray-700 flex-shrink-0">
-      <h2 className="text-2xl font-semibold text-gray-800 dark:text-white">{currentView}</h2>
+    <header className="flex items-center justify-between h-20 px-4 sm:px-6 lg:px-8 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-shrink-0">
+      <h2 className="text-2xl font-semibold text-slate-800 dark:text-white">{currentView}</h2>
       <div className="flex items-center space-x-4">
         <div className="relative">
-            <button 
+            <button
                 ref={bellRef}
                 onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                className="relative p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500">
+                className="relative p-2 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-900 focus:ring-blue-500 transition-colors">
                 <BellIcon className="w-6 h-6" />
                 {unreadCount > 0 && (
-                    <span className="absolute top-0 right-0 h-5 w-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center border-2 border-white dark:border-gray-800">
+                    <span className="absolute top-0 right-0 h-5 w-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900">
                         {unreadCount}
                     </span>
                 )}
             </button>
             {isDropdownOpen && (
-                <div 
+                <div
                     ref={dropdownRef}
-                    className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-gray-800 rounded-lg shadow-xl border dark:border-gray-700 z-50 overflow-hidden flex flex-col"
+                    className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden flex flex-col"
                 >
-                    <div className="flex justify-between items-center p-3 border-b dark:border-gray-700">
-                        <h4 className="font-semibold">Notifications ({unreadCount})</h4>
-                        {unreadCount > 0 && <button onClick={handleMarkAllRead} className="text-xs text-primary-500 hover:underline">Mark all as read</button>}
+                    <div className="flex justify-between items-center p-3 border-b border-slate-200 dark:border-slate-700">
+                        <h4 className="font-semibold text-slate-800 dark:text-white">Notifications ({unreadCount})</h4>
+                        {unreadCount > 0 && <button onClick={handleMarkAllRead} className="text-xs text-blue-500 hover:underline">Mark all as read</button>}
                     </div>
-                    <ul className="max-h-96 overflow-y-auto divide-y dark:divide-gray-700">
+                    <ul className="max-h-96 overflow-y-auto divide-y divide-slate-200 dark:divide-slate-700">
                         {notifications.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map(notification => (
-                            <li 
-                                key={notification.id} 
+                            <li
+                                key={notification.id}
                                 onClick={() => handleNotificationClick(notification.id)}
-                                className={`flex items-start gap-3 p-3 cursor-pointer transition-colors ${!notification.read ? 'bg-primary-50 dark:bg-primary-900/30' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
+                                className={`flex items-start gap-3 p-3 cursor-pointer transition-colors ${!notification.read ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
                             >
-                                {!notification.read && <div className="w-2.5 h-2.5 bg-primary-500 rounded-full mt-2 flex-shrink-0"></div>}
+                                {!notification.read && <div className="w-2.5 h-2.5 bg-blue-500 rounded-full mt-2 flex-shrink-0"></div>}
                                 <div className={`flex-shrink-0 ${notification.read ? 'ml-[14px]' : ''}`}>
                                     <NotificationIcon type={notification.type} />
                                 </div>
                                 <div className="flex-grow">
-                                    <p className="text-sm font-medium text-gray-900 dark:text-white">{notification.message}</p>
-                                    {notification.amount && <p className="text-sm font-semibold">{formatCurrency(notification.amount)}</p>}
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{timeSince(new Date(notification.timestamp))}</p>
+                                    <p className="text-sm font-medium text-slate-900 dark:text-white">{notification.message}</p>
+                                    {notification.amount && <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">{formatCurrency(notification.amount)}</p>}
+                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{timeSince(new Date(notification.timestamp))}</p>
                                 </div>
                             </li>
                         ))}
                     </ul>
-                    <div className="p-2 border-t dark:border-gray-700 text-center">
-                        <button className="text-sm font-medium text-primary-500 hover:underline">View All Notifications</button>
+                    <div className="p-2 border-t border-slate-200 dark:border-slate-700 text-center">
+                        <button className="text-sm font-medium text-blue-500 hover:underline">View All Notifications</button>
                     </div>
                 </div>
             )}
         </div>
-        <div className="flex items-center ml-4 border-l dark:border-gray-700 pl-4">
+        <div className="flex items-center ml-4 border-l border-slate-200 dark:border-slate-700 pl-4">
             {user ? (
                 <div className="flex items-center gap-3">
                     <div className="hidden sm:flex flex-col items-end">
                         <div className="flex items-center gap-2">
-                            <p className="text-sm font-bold text-gray-800 dark:text-white leading-none">{user.name}</p>
+                            <p className="text-sm font-bold text-slate-800 dark:text-white leading-none">{user.name}</p>
                             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
                                 user.role === 'ADMIN' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400' :
                                 user.role === 'BUYER' ? 'bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-400' :
-                                'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+                                'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400'
                             }`}>
                                 {user.role}
                             </span>
                         </div>
                     </div>
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-emerald-400 flex items-center justify-center text-white font-bold text-lg shadow-sm border-2 border-white dark:border-gray-800">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-emerald-400 flex items-center justify-center text-white font-bold text-lg shadow-sm border-2 border-white dark:border-slate-800">
                         {user.name?.charAt(0).toUpperCase() || 'U'}
                     </div>
-                    <button 
+                    <button
                         onClick={onLogout}
-                        className="ml-2 text-xs font-medium text-gray-500 hover:text-red-500 transition-colors"
+                        className="ml-2 text-xs font-medium text-slate-500 hover:text-red-500 transition-colors"
                         title="Sign Out"
                     >
                         Logout
@@ -146,9 +144,9 @@ export const Header: React.FC<HeaderProps> = ({ currentView, notifications, setN
                 </div>
             ) : (
                 <div className="flex items-center">
-                    <UserCircleIcon className="w-10 h-10 text-gray-400"/>
+                    <UserCircleIcon className="w-10 h-10 text-slate-400"/>
                     <div className="ml-2 hidden sm:block">
-                        <p className="text-sm font-medium text-gray-800 dark:text-white">Guest</p>
+                        <p className="text-sm font-medium text-slate-800 dark:text-white">Guest</p>
                     </div>
                 </div>
             )}

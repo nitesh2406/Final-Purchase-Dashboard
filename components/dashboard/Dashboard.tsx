@@ -38,16 +38,16 @@ const MetricCard: React.FC<{ title: string; value: string; change?: string; chan
     <Card className="relative overflow-hidden group">
         <div className="flex justify-between items-start">
             <div>
-                <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate uppercase tracking-wider">{title}</h3>
-                <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-white">{value}</p>
+                <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400 truncate uppercase tracking-wider">{title}</h3>
+                <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">{value}</p>
                 {change && (
-                    <p className={`mt-2 text-xs font-semibold flex items-center ${changeType === 'increase' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    <p className={`mt-2 text-xs font-semibold flex items-center ${changeType === 'increase' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                         {changeType === 'increase' ? '▲' : '▼'} {change}
-                        <span className="text-gray-400 font-normal ml-1">vs last month</span>
+                        <span className="text-slate-400 font-normal ml-1">vs last month</span>
                     </p>
                 )}
             </div>
-            {icon && <div className="p-3 bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 rounded-xl group-hover:scale-110 transition-transform">{icon}</div>}
+            {icon && <div className="p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-xl group-hover:scale-110 transition-transform">{icon}</div>}
         </div>
     </Card>
 );
@@ -57,7 +57,7 @@ const QuickAction: React.FC<{ label: string; icon: React.ReactNode; color: strin
         <div className={`w-14 h-14 rounded-2xl ${color} flex items-center justify-center text-white shadow-lg group-hover:-translate-y-1 transition-all group-active:scale-95`}>
             {icon}
         </div>
-        <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 group-hover:text-primary-500">{label}</span>
+        <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 group-hover:text-blue-500">{label}</span>
     </button>
 );
 
@@ -102,13 +102,13 @@ export const Dashboard: React.FC = () => {
             <Card>
                 <div className="flex justify-between items-center mb-6">
                     <div>
-                        <h3 className="font-bold text-lg text-gray-800 dark:text-white">Revenue & Procurement Trends</h3>
-                        <p className="text-xs text-gray-500">Monthly overview of sales vs supply spend</p>
+                        <h3 className="font-bold text-lg text-slate-800 dark:text-white">Revenue & Procurement Trends</h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Monthly overview of sales vs supply spend</p>
                     </div>
                     <div className="flex gap-2">
-                        <div className="flex items-center gap-2 px-3 py-1 bg-primary-50 dark:bg-primary-900/30 rounded-lg">
-                            <div className="w-2 h-2 rounded-full bg-primary-500"></div>
-                            <span className="text-[10px] font-bold text-primary-700 dark:text-primary-300">SALES</span>
+                        <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
+                            <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                            <span className="text-[10px] font-bold text-blue-700 dark:text-blue-300">SALES</span>
                         </div>
                         <div className="flex items-center gap-2 px-3 py-1 bg-purple-50 dark:bg-purple-900/30 rounded-lg">
                             <div className="w-2 h-2 rounded-full bg-purple-500"></div>
@@ -142,31 +142,30 @@ export const Dashboard: React.FC = () => {
                  {/* Ongoing Imports Card */}
                 <Card>
                     <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-bold text-base text-gray-800 dark:text-white flex items-center gap-2">
-                            <TruckIcon className="w-5 h-5 text-primary-500" /> Ongoing Imports
+                        <h3 className="font-bold text-base text-slate-800 dark:text-white flex items-center gap-2">
+                            <TruckIcon className="w-5 h-5 text-blue-500" /> Ongoing Imports
                         </h3>
                         <Button variant="secondary" className="text-[10px] py-1 h-auto">View All</Button>
                     </div>
                     <div className="space-y-3">
                         {ongoingShipments.length > 0 ? ongoingShipments.map(s => (
-                            <div key={s.id} className="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-900/40 border border-transparent hover:border-primary-500/30 transition-all cursor-pointer">
+                            <div key={s.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-transparent hover:border-blue-500/30 transition-all cursor-pointer">
                                 <div className="flex items-center gap-3">
-                                    <div className={`p-2 rounded-lg ${s.mode === 'Air' ? 'bg-sky-100 text-sky-600' : 'bg-blue-100 text-blue-600'}`}>
-                                        {/* FIX: Correctly used AirplaneIcon and ShipIcon now that they are imported. */}
+                                    <div className={`p-2 rounded-lg ${s.mode === 'Air' ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'}`}>
                                         {s.mode === 'Air' ? <AirplaneIcon className="w-4 h-4"/> : <ShipIcon className="w-4 h-4"/>}
                                     </div>
                                     <div>
-                                        <p className="text-xs font-bold text-gray-900 dark:text-white">{s.id}</p>
-                                        <p className="text-[10px] text-gray-500">{s.carrier} • {s.origin}</p>
+                                        <p className="text-xs font-bold text-slate-900 dark:text-white">{s.id}</p>
+                                        <p className="text-[10px] text-slate-500 dark:text-slate-400">{s.carrier} • {s.origin}</p>
                                     </div>
                                 </div>
                                 <div className="text-right">
-                                    <p className="text-[10px] font-bold text-primary-600 dark:text-primary-400">{s.status}</p>
-                                    <p className="text-[10px] text-gray-500">ETA: {s.edd}</p>
+                                    <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400">{s.status}</p>
+                                    <p className="text-[10px] text-slate-500 dark:text-slate-400">ETA: {s.edd}</p>
                                 </div>
                             </div>
                         )) : (
-                            <div className="py-8 text-center text-gray-500 text-xs italic">No active shipments in transit</div>
+                            <div className="py-8 text-center text-slate-500 dark:text-slate-400 text-xs italic">No active shipments in transit</div>
                         )}
                     </div>
                 </Card>
@@ -174,27 +173,27 @@ export const Dashboard: React.FC = () => {
                 {/* Top SKUs */}
                 <Card>
                     <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-bold text-base text-gray-800 dark:text-white flex items-center gap-2">
+                        <h3 className="font-bold text-base text-slate-800 dark:text-white flex items-center gap-2">
                             <ShoppingCartIcon className="w-5 h-5 text-emerald-500" /> Hot Selling Items
                         </h3>
-                        <span className="text-[10px] text-gray-400">Last 30 Days</span>
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500">Last 30 Days</span>
                     </div>
                     <div className="space-y-4">
                         {topSellingItems.map(item => (
                             <div key={item.id} className="flex items-center gap-4">
-                                <div className="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center font-bold text-gray-400 text-xs">
+                                <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center font-bold text-slate-400 text-xs">
                                     {item.name.charAt(0)}
                                 </div>
                                 <div className="flex-grow">
-                                    <p className="text-xs font-bold text-gray-900 dark:text-white truncate max-w-[150px]">{item.name}</p>
+                                    <p className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-[150px]">{item.name}</p>
                                     <div className="flex items-center gap-2 mt-0.5">
-                                        <div className="flex-grow bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden">
-                                            <div 
-                                                className="bg-primary-500 h-full rounded-full" 
+                                        <div className="flex-grow bg-slate-200 dark:bg-slate-700 h-1 rounded-full overflow-hidden">
+                                            <div
+                                                className="bg-blue-500 h-full rounded-full"
                                                 style={{ width: `${(item.salesVelocity / 30) * 100}%` }}
                                             />
                                         </div>
-                                        <span className="text-[10px] font-mono font-bold text-gray-500">{item.salesVelocity.toFixed(1)}/d</span>
+                                        <span className="text-[10px] font-mono font-bold text-slate-500 dark:text-slate-400">{item.salesVelocity.toFixed(1)}/d</span>
                                     </div>
                                 </div>
                             </div>
@@ -207,14 +206,14 @@ export const Dashboard: React.FC = () => {
         {/* Sidebar Column */}
         <div className="lg:col-span-4 space-y-6">
             {/* Quick Actions Panel */}
-            <Card className="bg-gradient-to-br from-primary-600 to-primary-800 border-none shadow-xl shadow-primary-500/20">
-                <h3 className="font-bold text-white mb-6 text-sm flex items-center gap-2">
-                    <ClockIcon className="w-4 h-4" /> Quick Command Hub
+            <Card className="bg-white dark:bg-gradient-to-br dark:from-blue-700 dark:to-blue-900 border border-slate-200 dark:border-none shadow-xl">
+                <h3 className="font-bold text-slate-800 dark:text-white mb-6 text-sm flex items-center gap-2">
+                    <ClockIcon className="w-4 h-4 text-blue-500 dark:text-white/70" /> Quick Command Hub
                 </h3>
-                <div className="grid grid-cols-3 gap-4">
-                    <QuickAction label="New PO" icon={<PlusIcon className="w-6 h-6"/>} color="bg-white/20 hover:bg-white/30" />
-                    <QuickAction label="Import Doc" icon={<ArrowUpTrayIcon_Local className="w-6 h-6"/>} color="bg-white/20 hover:bg-white/30" />
-                    <QuickAction label="Forecasting" icon={<BarChart className="w-6 h-6"/>} color="bg-white/20 hover:bg-white/30" />
+                <div className="grid grid-cols-3 gap-4 font-bold">
+                    <QuickAction label="New PO" icon={<PlusIcon className="w-6 h-6"/>} color="bg-blue-600 dark:bg-white/20 hover:bg-blue-700 dark:hover:bg-white/30 text-white" />
+                    <QuickAction label="Import Doc" icon={<ArrowUpTrayIcon_Local className="w-6 h-6"/>} color="bg-indigo-600 dark:bg-white/20 hover:bg-indigo-700 dark:hover:bg-white/30 text-white" />
+                    <QuickAction label="Forecasting" icon={<BarChart className="w-6 h-6"/>} color="bg-purple-600 dark:bg-white/20 hover:bg-purple-700 dark:hover:bg-white/30 text-white" />
                 </div>
             </Card>
 
@@ -222,7 +221,7 @@ export const Dashboard: React.FC = () => {
 
             {/* Notifications & Action Items */}
             <Card>
-                <h3 className="font-bold text-base text-gray-800 dark:text-white mb-4">Pending Tasks</h3>
+                <h3 className="font-bold text-base text-slate-800 dark:text-white mb-4">Pending Tasks</h3>
                 <div className="space-y-3">
                     <div className="group flex items-start gap-3 p-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200/50 dark:border-amber-800/30 transition-all hover:bg-amber-100 dark:hover:bg-amber-900/40 cursor-pointer">
                         <ExclamationTriangleIcon className="w-5 h-5 text-amber-500 mt-0.5" />

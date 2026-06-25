@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Finance ERP — Design Token Reference</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #1e293b; background: #f8fafc; padding: 40px; }
+  h1 { font-size: 26px; font-weight: 800; color: #0f172a; margin-bottom: 4px; }
+  .subtitle { color: #64748b; font-size: 13px; margin-bottom: 40px; }
+  h2 { font-size: 16px; font-weight: 700; color: #0f172a; margin: 36px 0 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+  h3 { font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.08em; margin: 24px 0 10px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th { background: #f1f5f9; text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid #e2e8f0; }
+  td { padding: 9px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  .token { font-family: 'Consolas', 'Courier New', monospace; font-size: 11px; background: #f1f5f9; color: #334155; padding: 3px 7px; border-radius: 4px; white-space: nowrap; }
+  .token-dark { font-family: 'Consolas', 'Courier New', monospace; font-size: 11px; background: #1e293b; color: #94a3b8; padding: 3px 7px; border-radius: 4px; white-space: nowrap; }
+  .swatch { display: inline-block; width: 20px; height: 20px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.12); vertical-align: middle; margin-right: 8px; flex-shrink: 0; }
+  .flex { display: flex; align-items: center; }
+  .desc { color: #64748b; font-size: 12px; }
+  .section-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+  .panel { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 24px; margin-bottom: 24px; }
+  .panel-dark { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 24px; margin-bottom: 24px; }
+  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; border: 1px solid; margin-right: 4px; }
+  .badge-success { background: rgba(16,185,129,0.1); color: #059669; border-color: rgba(16,185,129,0.2); }
+  .badge-error { background: rgba(239,68,68,0.1); color: #dc2626; border-color: rgba(239,68,68,0.2); }
+  .badge-warning { background: rgba(234,179,8,0.1); color: #ca8a04; border-color: rgba(234,179,8,0.2); }
+  .badge-info { background: rgba(59,130,246,0.1); color: #2563eb; border-color: rgba(59,130,246,0.2); }
+  .badge-dk-success { background: rgba(16,185,129,0.1); color: #34d399; border-color: rgba(16,185,129,0.2); }
+  .badge-dk-error { background: rgba(239,68,68,0.1); color: #f87171; border-color: rgba(239,68,68,0.2); }
+  .badge-dk-warning { background: rgba(234,179,8,0.1); color: #facc15; border-color: rgba(234,179,8,0.2); }
+  .badge-dk-info { background: rgba(59,130,246,0.1); color: #60a5fa; border-color: rgba(59,130,246,0.2); }
+  .rule { background: #fef9c3; border-left: 3px solid #eab308; padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 12px; color: #713f12; }
+  .component-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #94a3b8; margin-bottom: 8px; }
+  /* Light preview elements */
+  .lm-card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+  .lm-input { background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 12px; color: #0f172a; font-size: 12px; width: 100%; margin-bottom: 8px; outline: none; }
+  .lm-th { background: #f1f5f9; color: #64748b; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 10px; text-align: left; }
+  .lm-td { color: #1e293b; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid #f1f5f9; }
+  .lm-td-secondary { color: #64748b; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid #f1f5f9; }
+  .lm-btn-primary { background: #2563eb; color: white; border: none; border-radius: 6px; padding: 7px 16px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .lm-btn-secondary { background: #f1f5f9; color: #334155; border: none; border-radius: 6px; padding: 7px 16px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .lm-btn-danger { background: #dc2626; color: white; border: none; border-radius: 6px; padding: 7px 16px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  /* Dark preview elements */
+  .dm-card { background: rgba(30,41,59,0.5); border: 1px solid #334155; border-radius: 12px; padding: 16px; }
+  .dm-input { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 8px 12px; color: white; font-size: 12px; width: 100%; margin-bottom: 8px; outline: none; }
+  .dm-th { background: #0f172a; color: #94a3b8; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 10px; text-align: left; }
+  .dm-td { color: white; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid rgba(51,65,85,0.5); }
+  .dm-td-secondary { color: #94a3b8; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid rgba(51,65,85,0.5); }
+  .dm-btn-primary { background: #2563eb; color: white; border: none; border-radius: 6px; padding: 7px 16px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .dm-btn-secondary { background: #334155; color: #e2e8f0; border: none; border-radius: 6px; padding: 7px 16px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .lm-nav-active { border-bottom: 2px solid #3b82f6; color: #2563eb; padding: 8px 4px; font-size: 12px; font-weight: 600; display: inline-block; }
+  .lm-nav-inactive { border-bottom: 2px solid transparent; color: #64748b; padding: 8px 4px; font-size: 12px; font-weight: 500; display: inline-block; margin-left: 20px; }
+  .dm-nav-active { border-bottom: 2px solid #3b82f6; color: #60a5fa; padding: 8px 4px; font-size: 12px; font-weight: 600; display: inline-block; }
+  .dm-nav-inactive { border-bottom: 2px solid transparent; color: #94a3b8; padding: 8px 4px; font-size: 12px; font-weight: 500; display: inline-block; margin-left: 20px; }
+  .lm-sidebar-active { background: #eff6ff; color: #1d4ed8; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px; }
+  .lm-sidebar-inactive { color: #475569; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 500; display: block; margin-bottom: 4px; }
+  .dm-sidebar-active { background: rgba(37,99,235,0.2); color: #60a5fa; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px; }
+  .dm-sidebar-inactive { color: #94a3b8; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 500; display: block; margin-bottom: 4px; }
+  @media print {
+    body { background: white; padding: 20px; }
+    .panel-dark { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Finance ERP — Design Token Reference</h1>
+<p class="subtitle">Canonical Tailwind CSS classes for every reusable UI element · Last updated 2026-06-19</p>
+
+<div class="rule">
+  <strong>Golden rule:</strong> The app uses two scales — <code>slate-*</code> for neutrals (backgrounds, borders, text) and <code>blue-*</code> for interactive/brand. Status colours (emerald / red / yellow) are semantic and do not follow theme. Never use <code>gray-*</code> or <code>primary-*</code> classes anywhere in this project.
+</div>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>1. Page &amp; Layout Backgrounds</h2>
+<table>
+  <tr><th>Element</th><th>Light Mode</th><th>Dark Mode</th><th>Notes</th></tr>
+  <tr>
+    <td>Body / page root</td>
+    <td><span class="token">bg-slate-100</span></td>
+    <td><span class="token-dark">dark:bg-slate-950</span></td>
+    <td class="desc">Set in index.css on <code>body</code></td>
+  </tr>
+  <tr>
+    <td>Sidebar &amp; Header shell</td>
+    <td><span class="token">bg-white</span></td>
+    <td><span class="token-dark">dark:bg-slate-900</span></td>
+    <td class="desc">1px border-r / border-b using border token below</td>
+  </tr>
+  <tr>
+    <td>Card surface</td>
+    <td><span class="token">bg-white</span></td>
+    <td><span class="token-dark">dark:bg-slate-800/50</span></td>
+    <td class="desc">Defined in Card.tsx; don't override unless nesting</td>
+  </tr>
+  <tr>
+    <td>Card inner panel / nested surface</td>
+    <td><span class="token">bg-slate-50</span></td>
+    <td><span class="token-dark">dark:bg-slate-900</span></td>
+    <td class="desc">For panels <em>inside</em> a Card (e.g. batch-ID preview box)</td>
+  </tr>
+  <tr>
+    <td>Table header row</td>
+    <td><span class="token">bg-slate-100</span></td>
+    <td><span class="token-dark">dark:bg-slate-900</span></td>
+    <td class="desc">Use <code>sticky top-0 z-10</code> on thead for long tables</td>
+  </tr>
+  <tr>
+    <td>Table data rows</td>
+    <td><span class="token">bg-white</span></td>
+    <td><span class="token-dark">dark:bg-transparent</span></td>
+    <td class="desc">Row hover: <code>hover:bg-slate-50 dark:hover:bg-slate-700/20</code></td>
+  </tr>
+  <tr>
+    <td>Modal / overlay backdrop</td>
+    <td colspan="2" style="text-align:center"><span class="token">bg-black/50</span></td>
+    <td class="desc">Same in both modes</td>
+  </tr>
+  <tr>
+    <td>Modal card</td>
+    <td><span class="token">bg-white</span></td>
+    <td><span class="token-dark">dark:bg-slate-900</span></td>
+    <td class="desc"></td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>2. Borders</h2>
+<table>
+  <tr><th>Use</th><th>Light</th><th>Dark</th></tr>
+  <tr>
+    <td>Default border (cards, panels, modals)</td>
+    <td><span class="token">border-slate-200</span></td>
+    <td><span class="token-dark">dark:border-slate-700</span></td>
+  </tr>
+  <tr>
+    <td>Subtle border (sidebar/header dividers)</td>
+    <td><span class="token">border-slate-200</span></td>
+    <td><span class="token-dark">dark:border-slate-800</span></td>
+  </tr>
+  <tr>
+    <td>Table row dividers</td>
+    <td><span class="token">divide-slate-200</span></td>
+    <td><span class="token-dark">dark:divide-slate-700</span></td>
+  </tr>
+  <tr>
+    <td>Focus ring (interactive elements)</td>
+    <td colspan="2" style="text-align:center"><span class="token">focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-900</span></td>
+  </tr>
+  <tr>
+    <td>Drop zone (upload area)</td>
+    <td><span class="token">border-slate-300 hover:border-slate-400</span></td>
+    <td><span class="token-dark">dark:border-slate-700 dark:hover:border-slate-500</span></td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>3. Typography</h2>
+<table>
+  <tr><th>Role</th><th>Light</th><th>Dark</th><th>Usage</th></tr>
+  <tr>
+    <td>Page heading / H2</td>
+    <td><span class="token">text-slate-800</span></td>
+    <td><span class="token-dark">dark:text-white</span></td>
+    <td class="desc">e.g. Header page title, card section titles</td>
+  </tr>
+  <tr>
+    <td>Primary / strong value</td>
+    <td><span class="token">text-slate-900</span></td>
+    <td><span class="token-dark">dark:text-white</span></td>
+    <td class="desc">Metric values, table primary cells, modal titles</td>
+  </tr>
+  <tr>
+    <td>Body / supporting text</td>
+    <td><span class="token">text-slate-700</span></td>
+    <td><span class="token-dark">dark:text-slate-200</span></td>
+    <td class="desc">Paragraph descriptions under headings</td>
+  </tr>
+  <tr>
+    <td>Secondary / metadata</td>
+    <td><span class="token">text-slate-600</span></td>
+    <td><span class="token-dark">dark:text-slate-400</span></td>
+    <td class="desc">Table secondary cells, sub-labels, carrier info</td>
+  </tr>
+  <tr>
+    <td>Muted / captions / labels</td>
+    <td><span class="token">text-slate-500</span></td>
+    <td><span class="token-dark">dark:text-slate-500</span></td>
+    <td class="desc">Column header labels (UPPERCASE), timestamps, "Last 30 Days"</td>
+  </tr>
+  <tr>
+    <td>Disabled / placeholder</td>
+    <td><span class="token">text-slate-400 placeholder:text-slate-400</span></td>
+    <td><span class="token-dark">dark:text-slate-600 dark:placeholder:text-slate-500</span></td>
+    <td class="desc"></td>
+  </tr>
+  <tr>
+    <td>Brand / active / link</td>
+    <td><span class="token">text-blue-600</span></td>
+    <td><span class="token-dark">dark:text-blue-400</span></td>
+    <td class="desc">Active tab text, status text, "Mark all as read"</td>
+  </tr>
+  <tr>
+    <td>Table column header</td>
+    <td><span class="token">text-slate-500 text-xs font-bold uppercase tracking-wider</span></td>
+    <td><span class="token-dark">dark:text-slate-400</span></td>
+    <td class="desc">Consistent across all tables</td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>4. Form Inputs &amp; Selects</h2>
+<table>
+  <tr><th>Property</th><th>Light</th><th>Dark</th></tr>
+  <tr>
+    <td>Background</td>
+    <td><span class="token">bg-slate-100</span></td>
+    <td><span class="token-dark">dark:bg-slate-900</span></td>
+  </tr>
+  <tr>
+    <td>Border</td>
+    <td><span class="token">border border-slate-300</span></td>
+    <td><span class="token-dark">dark:border-slate-700</span></td>
+  </tr>
+  <tr>
+    <td>Text</td>
+    <td><span class="token">text-slate-900</span></td>
+    <td><span class="token-dark">dark:text-white</span></td>
+  </tr>
+  <tr>
+    <td>Placeholder</td>
+    <td><span class="token">placeholder:text-slate-400</span></td>
+    <td><span class="token-dark">dark:placeholder:text-slate-500</span></td>
+  </tr>
+  <tr>
+    <td>Focus</td>
+    <td colspan="2" style="text-align:center"><span class="token">focus:ring-2 focus:ring-blue-500 outline-none</span></td>
+  </tr>
+  <tr>
+    <td>Shape</td>
+    <td colspan="2" style="text-align:center"><span class="token">rounded-lg</span> (large inputs) · <span class="token">rounded-md</span> (small/inline)</td>
+  </tr>
+  <tr>
+    <td>Padding (large)</td>
+    <td colspan="2" style="text-align:center"><span class="token">px-4 py-3</span></td>
+  </tr>
+  <tr>
+    <td>Padding (small/table)</td>
+    <td colspan="2" style="text-align:center"><span class="token">px-2 py-1.5</span></td>
+  </tr>
+  <tr>
+    <td>Full class (large input)</td>
+    <td colspan="2"><span class="token">w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-3 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-2 focus:ring-blue-500 outline-none</span></td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>5. Buttons</h2>
+<table>
+  <tr><th>Variant</th><th>Classes</th><th>Use case</th></tr>
+  <tr>
+    <td>Primary</td>
+    <td><span class="token">bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500</span></td>
+    <td class="desc">Main CTA — "Validate", "Create Shipment"</td>
+  </tr>
+  <tr>
+    <td>Secondary</td>
+    <td><span class="token">bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 focus:ring-slate-400</span></td>
+    <td class="desc">Back buttons, "View All", export</td>
+  </tr>
+  <tr>
+    <td>Danger</td>
+    <td><span class="token">bg-red-600 text-white hover:bg-red-700 focus:ring-red-500</span></td>
+    <td class="desc">Destructive actions — delete, cancel</td>
+  </tr>
+  <tr>
+    <td>Ghost / text link</td>
+    <td><span class="token">text-blue-500 hover:underline</span></td>
+    <td class="desc">"Mark all as read", "View All Notifications"</td>
+  </tr>
+  <tr>
+    <td>Base classes (all variants)</td>
+    <td colspan="2"><span class="token">inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-semibold shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed</span></td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>6. Navigation Tabs (sub-page tabs)</h2>
+<table>
+  <tr><th>State</th><th>Classes</th></tr>
+  <tr>
+    <td>Active tab</td>
+    <td><span class="token">border-b-2 border-blue-500 text-blue-600 dark:text-blue-400</span></td>
+  </tr>
+  <tr>
+    <td>Inactive tab</td>
+    <td><span class="token">border-b-2 border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300</span></td>
+  </tr>
+  <tr>
+    <td>Tab bar container</td>
+    <td><span class="token">border-b border-slate-200 dark:border-slate-700</span> (use <span class="token">-mb-px</span> on nav)</td>
+  </tr>
+  <tr>
+    <td>Tab common classes</td>
+    <td><span class="token">py-3 px-1 inline-flex items-center gap-2 text-sm whitespace-nowrap font-medium transition-colors focus:outline-none</span></td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>7. Sidebar Navigation Items</h2>
+<table>
+  <tr><th>State</th><th>Light</th><th>Dark</th></tr>
+  <tr>
+    <td>Active item</td>
+    <td><span class="token">bg-blue-50 text-blue-700</span></td>
+    <td><span class="token-dark">dark:bg-blue-900/30 dark:text-blue-400</span></td>
+  </tr>
+  <tr>
+    <td>Inactive item</td>
+    <td><span class="token">text-slate-600 hover:bg-slate-100</span></td>
+    <td><span class="token-dark">dark:text-slate-400 dark:hover:bg-slate-800</span></td>
+  </tr>
+  <tr>
+    <td>Common shape</td>
+    <td colspan="2"><span class="token">w-full flex items-center p-2.5 text-sm font-medium rounded-lg transition-colors</span></td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>8. Status Badges</h2>
+<p class="desc" style="margin-bottom:12px">All badges use <code>bg-*/10</code> fill, explicit text colour per mode, and <code>border-*/20</code>. Text sizes are <code>text-[10px]</code> or <code>text-xs</code> with <code>font-bold uppercase tracking-wider</code>.</p>
+<table>
+  <tr><th>Semantic</th><th>Light text</th><th>Dark text</th><th>Background</th><th>Border</th></tr>
+  <tr>
+    <td><span class="badge badge-success">✓ Match / Success</span></td>
+    <td><span class="token">text-emerald-600</span></td>
+    <td><span class="token-dark">dark:text-emerald-400</span></td>
+    <td><span class="token">bg-emerald-500/10</span></td>
+    <td><span class="token">border-emerald-500/20</span></td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-error">✗ Error / Unmatched</span></td>
+    <td><span class="token">text-red-600</span></td>
+    <td><span class="token-dark">dark:text-red-400</span></td>
+    <td><span class="token">bg-red-500/10</span></td>
+    <td><span class="token">border-red-500/20</span></td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-warning">⚠ Warning / Flagged</span></td>
+    <td><span class="token">text-yellow-600</span></td>
+    <td><span class="token-dark">dark:text-yellow-400</span></td>
+    <td><span class="token">bg-yellow-500/10</span></td>
+    <td><span class="token">border-yellow-500/20</span></td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-info">ℹ Info / Partial</span></td>
+    <td><span class="token">text-blue-600</span></td>
+    <td><span class="token-dark">dark:text-blue-400</span></td>
+    <td><span class="token">bg-blue-500/10</span></td>
+    <td><span class="token">border-blue-500/20</span></td>
+  </tr>
+  <tr>
+    <td>Default (neutral)</td>
+    <td><span class="token">text-slate-700</span></td>
+    <td><span class="token-dark">dark:text-slate-100</span></td>
+    <td><span class="token">bg-slate-700</span></td>
+    <td><span class="token">border-transparent</span></td>
+  </tr>
+  <tr>
+    <td>Outline (code/SKU pill)</td>
+    <td><span class="token">text-slate-500</span></td>
+    <td><span class="token-dark">dark:text-slate-400</span></td>
+    <td><span class="token">bg-transparent</span></td>
+    <td><span class="token">border-slate-300 dark:border-slate-600/50</span></td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>9. Semantic Colour Tokens (Status &amp; Alerts)</h2>
+<table>
+  <tr><th>Situation</th><th>Light text</th><th>Dark text</th><th>bg fill</th><th>Border</th></tr>
+  <tr>
+    <td>Critical / blocking alert banner</td>
+    <td><span class="token">text-red-600</span></td>
+    <td><span class="token-dark">dark:text-red-400</span></td>
+    <td><span class="token">bg-red-500/10</span></td>
+    <td><span class="token">border-red-500/30</span></td>
+  </tr>
+  <tr>
+    <td>Warning / advisory banner</td>
+    <td><span class="token">text-yellow-700</span></td>
+    <td><span class="token-dark">dark:text-yellow-400</span></td>
+    <td><span class="token">bg-yellow-500/10</span></td>
+    <td><span class="token">border-yellow-500/20</span></td>
+  </tr>
+  <tr>
+    <td>Info / auto-fill notice</td>
+    <td><span class="token">text-blue-700</span></td>
+    <td><span class="token-dark">dark:text-blue-300</span></td>
+    <td><span class="token">bg-blue-500/10</span></td>
+    <td><span class="token">border-blue-500/20</span></td>
+  </tr>
+  <tr>
+    <td>Success / confirmation</td>
+    <td><span class="token">text-emerald-700</span></td>
+    <td><span class="token-dark">dark:text-emerald-400</span></td>
+    <td><span class="token">bg-emerald-500/5</span></td>
+    <td><span class="token">border-emerald-500/20</span></td>
+  </tr>
+  <tr>
+    <td>Pending task (amber)</td>
+    <td><span class="token">text-amber-900 bg-amber-50 border-amber-200/50</span></td>
+    <td><span class="token-dark">dark:text-amber-200 dark:bg-amber-900/20 dark:border-amber-800/30</span></td>
+    <td colspan="2" class="desc">Used in Dashboard "Pending Tasks"</td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>10. Notification Icons (Header dropdown)</h2>
+<table>
+  <tr><th>Type</th><th>Light</th><th>Dark</th></tr>
+  <tr>
+    <td>Overdue</td>
+    <td><span class="token">bg-red-100 text-red-600</span></td>
+    <td><span class="token-dark">dark:bg-red-500/20 dark:text-red-400</span></td>
+  </tr>
+  <tr>
+    <td>Due Soon</td>
+    <td><span class="token">bg-yellow-100 text-yellow-600</span></td>
+    <td><span class="token-dark">dark:bg-yellow-500/20 dark:text-yellow-400</span></td>
+  </tr>
+  <tr>
+    <td>Payment Success</td>
+    <td><span class="token">bg-emerald-100 text-emerald-600</span></td>
+    <td><span class="token-dark">dark:bg-emerald-500/20 dark:text-emerald-400</span></td>
+  </tr>
+  <tr>
+    <td>Default</td>
+    <td><span class="token">bg-slate-100 text-slate-600</span></td>
+    <td><span class="token-dark">dark:bg-slate-700 dark:text-slate-400</span></td>
+  </tr>
+  <tr>
+    <td>Unread dot</td>
+    <td colspan="2"><span class="token">bg-blue-500</span> (same both modes)</td>
+  </tr>
+  <tr>
+    <td>Unread item row bg</td>
+    <td><span class="token">bg-blue-50</span></td>
+    <td><span class="token-dark">dark:bg-blue-900/20</span></td>
+  </tr>
+  <tr>
+    <td>Read item hover</td>
+    <td><span class="token">hover:bg-slate-50</span></td>
+    <td><span class="token-dark">dark:hover:bg-slate-800/50</span></td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>11. Price / Financial Colour Semantics</h2>
+<table>
+  <tr><th>Value meaning</th><th>Light</th><th>Dark</th></tr>
+  <tr>
+    <td>Positive / favourable (under budget, surplus)</td>
+    <td><span class="token">text-emerald-600</span></td>
+    <td><span class="token-dark">dark:text-emerald-400</span></td>
+  </tr>
+  <tr>
+    <td>Negative / unfavourable (over budget)</td>
+    <td><span class="token">text-red-600</span></td>
+    <td><span class="token-dark">dark:text-red-400</span></td>
+  </tr>
+  <tr>
+    <td>Neutral / calculated value</td>
+    <td><span class="token">text-blue-600</span></td>
+    <td><span class="token-dark">dark:text-blue-400</span></td>
+  </tr>
+  <tr>
+    <td>Increase metric</td>
+    <td><span class="token">text-emerald-600</span></td>
+    <td><span class="token-dark">dark:text-emerald-400</span></td>
+  </tr>
+  <tr>
+    <td>Decrease metric</td>
+    <td><span class="token">text-rose-600</span></td>
+    <td><span class="token-dark">dark:text-rose-400</span></td>
+  </tr>
+  <tr>
+    <td>Total Amount input (special)</td>
+    <td><span class="token">text-emerald-600</span></td>
+    <td><span class="token-dark">dark:text-emerald-400</span></td>
+  </tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>12. Border-radius Scale</h2>
+<table>
+  <tr><th>Component</th><th>Class</th></tr>
+  <tr><td>Cards / modals / large panels</td><td><span class="token">rounded-xl</span></td></tr>
+  <tr><td>Buttons / large inputs / selects</td><td><span class="token">rounded-lg</span></td></tr>
+  <tr><td>Small inputs / inline selects / table-cell inputs</td><td><span class="token">rounded-md</span></td></tr>
+  <tr><td>Badges / pills</td><td><span class="token">rounded</span> (4px)</td></tr>
+  <tr><td>Avatar / icon circle</td><td><span class="token">rounded-full</span></td></tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>13. Shadow Scale</h2>
+<table>
+  <tr><th>Use</th><th>Class</th></tr>
+  <tr><td>Standard card</td><td><span class="token">shadow-sm</span></td></tr>
+  <tr><td>Dropdown / notification panel</td><td><span class="token">shadow-xl</span></td></tr>
+  <tr><td>Floating button / CTA emphasis</td><td><span class="token">shadow-xl</span></td></tr>
+  <tr><td>No shadow (nested panels)</td><td><span class="token">(none)</span></td></tr>
+</table>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>14. Visual Previews</h2>
+
+<div class="section-grid">
+  <div>
+    <div class="component-label">Light Mode</div>
+    <div style="background:#f1f5f9; padding:20px; border-radius:12px;">
+
+      <div style="background:white; border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-bottom:16px; box-shadow:0 1px 2px rgba(0,0,0,0.06);">
+        <p style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;margin-bottom:4px;">CARD SURFACE</p>
+        <p style="font-size:18px;font-weight:800;color:#0f172a;">₹48,95,000</p>
+        <p style="font-size:11px;color:#64748b;margin-top:2px;">Total Revenue</p>
+      </div>
+
+      <div style="background:#f1f5f9; padding:12px; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:16px;">
+        <p style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#64748b;margin-bottom:6px;">INNER PANEL</p>
+        <input class="lm-input" readonly value="S-26XXX (Auto-generated)" />
+      </div>
+
+      <table style="width:100%;border-radius:8px;overflow:hidden;border:1px solid #e2e8f0;">
+        <tr><th class="lm-th">SKU</th><th class="lm-th">Name</th><th class="lm-th" style="text-align:right">Qty</th></tr>
+        <tr><td class="lm-td" style="font-family:monospace;color:#1d4ed8">CL-001</td><td class="lm-td">3x3 Speed Cube</td><td class="lm-td" style="text-align:right;color:#0f172a;font-weight:700">240</td></tr>
+        <tr><td class="lm-td" style="font-family:monospace;color:#1d4ed8">CL-002</td><td class="lm-td-secondary">Pyraminx Standard</td><td class="lm-td" style="text-align:right;color:#64748b">80</td></tr>
+      </table>
+
+      <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap">
+        <span class="badge badge-success">✓ MATCH</span>
+        <span class="badge badge-error">✗ UNMATCHED</span>
+        <span class="badge badge-warning">⚠ FLAGGED</span>
+        <span class="badge badge-info">ℹ INFO</span>
+      </div>
+
+      <div style="margin-top:12px; display:flex; gap:8px;">
+        <button class="lm-btn-primary">Confirm</button>
+        <button class="lm-btn-secondary">Back</button>
+        <button class="lm-btn-danger">Delete</button>
+      </div>
+
+      <div style="margin-top:16px; border-bottom:1px solid #e2e8f0;">
+        <span class="lm-nav-active">Validation</span>
+        <span class="lm-nav-inactive">Allocation</span>
+        <span class="lm-nav-inactive">Review</span>
+      </div>
+
+      <div style="margin-top:12px; background:white; border:1px solid #e2e8f0; border-radius:8px; padding:8px;">
+        <span class="lm-sidebar-active">📦 Vendor Shipments</span>
+        <span class="lm-sidebar-inactive">📊 Dashboard</span>
+        <span class="lm-sidebar-inactive">💰 Finance</span>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="component-label">Dark Mode</div>
+    <div style="background:#0f172a; padding:20px; border-radius:12px;">
+
+      <div class="dm-card" style="margin-bottom:16px;">
+        <p style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;margin-bottom:4px;">CARD SURFACE</p>
+        <p style="font-size:18px;font-weight:800;color:white;">₹48,95,000</p>
+        <p style="font-size:11px;color:#94a3b8;margin-top:2px;">Total Revenue</p>
+      </div>
+
+      <div style="background:rgba(15,23,42,0.8); padding:12px; border-radius:8px; border:1px solid rgba(51,65,85,0.5); margin-bottom:16px;">
+        <p style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#64748b;margin-bottom:6px;">INNER PANEL</p>
+        <input class="dm-input" readonly value="S-26XXX (Auto-generated)" />
+      </div>
+
+      <table style="width:100%;border-radius:8px;overflow:hidden;border:1px solid #1e293b;">
+        <tr><th class="dm-th">SKU</th><th class="dm-th">Name</th><th class="dm-th" style="text-align:right">Qty</th></tr>
+        <tr><td class="dm-td" style="font-family:monospace;color:#60a5fa">CL-001</td><td class="dm-td">3x3 Speed Cube</td><td class="dm-td" style="text-align:right;color:white;font-weight:700">240</td></tr>
+        <tr><td class="dm-td" style="font-family:monospace;color:#60a5fa">CL-002</td><td class="dm-td-secondary">Pyraminx Standard</td><td class="dm-td-secondary" style="text-align:right">80</td></tr>
+      </table>
+
+      <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap">
+        <span class="badge badge-dk-success">✓ MATCH</span>
+        <span class="badge badge-dk-error">✗ UNMATCHED</span>
+        <span class="badge badge-dk-warning">⚠ FLAGGED</span>
+        <span class="badge badge-dk-info">ℹ INFO</span>
+      </div>
+
+      <div style="margin-top:12px; display:flex; gap:8px;">
+        <button class="dm-btn-primary">Confirm</button>
+        <button class="dm-btn-secondary">Back</button>
+      </div>
+
+      <div style="margin-top:16px; border-bottom:1px solid #1e293b;">
+        <span class="dm-nav-active">Validation</span>
+        <span class="dm-nav-inactive">Allocation</span>
+        <span class="dm-nav-inactive">Review</span>
+      </div>
+
+      <div style="margin-top:12px; background:rgba(15,23,42,0.5); border:1px solid #1e293b; border-radius:8px; padding:8px;">
+        <span class="dm-sidebar-active">📦 Vendor Shipments</span>
+        <span class="dm-sidebar-inactive">📊 Dashboard</span>
+        <span class="dm-sidebar-inactive">💰 Finance</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────── -->
+<h2>15. Rules &amp; Conventions</h2>
+
+<div class="rule">
+  <strong>Never use gray-* or primary-*.</strong> All neutral colours are <code>slate-*</code>. All brand/interactive colours are explicit <code>blue-*</code>. The custom <code>primary-</code> scale was removed because it had no Tailwind config backing it.
+</div>
+
+<div class="rule">
+  <strong>Dark mode: prefer opacity variants over opaque backgrounds.</strong> Use <code>dark:bg-slate-800/50</code> not <code>dark:bg-slate-800</code> for cards so the page background bleeds through subtly.
+</div>
+
+<div class="rule">
+  <strong>Text visibility contract:</strong> All body text in light mode must pass WCAG AA contrast on white (<code>#fff</code>). Minimum: <code>text-slate-600</code> for secondary, <code>text-slate-500</code> for labels only (not body copy). In dark mode: minimum <code>text-slate-400</code> for secondary, never use <code>text-slate-600</code> on dark backgrounds.
+</div>
+
+<div class="rule">
+  <strong>Status colours are mode-aware text only.</strong> Badge backgrounds (<code>bg-emerald-500/10</code>) and border opacity (<code>border-emerald-500/20</code>) are the same in both modes. Only the text colour changes: darker shade in light mode (<code>text-emerald-600</code>), lighter in dark (<code>dark:text-emerald-400</code>).
+</div>
+
+<div class="rule">
+  <strong>Hardcoded hex values are banned.</strong> Do not use <code>bg-[#e3e3e3]</code>, <code>bg-[#f1f1f1]</code>, <code>bg-[#c7c7c7]</code>, <code>text-[#000000]</code> or similar. Always use a named Tailwind slate/blue token.
+</div>
+
+<footer style="margin-top:48px; padding-top:16px; border-top:1px solid #e2e8f0; color:#94a3b8; font-size:11px;">
+  Finance ERP Design System · Generated 2026-06-19 · Open in a browser or Word for best rendering
+</footer>
+
+</body>
+</html>

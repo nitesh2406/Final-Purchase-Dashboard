@@ -1,6 +1,6 @@
 import React, { FC, useState, useMemo, useEffect } from 'react';
 import { AmazonChannelSku, AmazonSupplyChain } from '../../types/amazon';
-import { APPS_SCRIPT_URL } from '../../App';
+import { APPS_SCRIPT_URL } from '../../constants';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 interface AmazonSkuModalProps {

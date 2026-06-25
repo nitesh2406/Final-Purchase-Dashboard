@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { AmazonChannelSku } from '../types/amazon';
 import { AmazonSkuModal } from '../components/amazon/AmazonSkuModal';
-import { APPS_SCRIPT_URL } from '../App';
+import { APPS_SCRIPT_URL } from '../constants';
 
 // ─── Module-level cache (persists across tab switches) ───────────────────────
 // Declared outside component so it survives unmount/remount

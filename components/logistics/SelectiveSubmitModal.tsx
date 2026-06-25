@@ -52,13 +52,13 @@ export const SelectiveSubmitModal: React.FC<SelectiveSubmitModalProps> = ({
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[120] p-4 animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-2xl w-full max-w-2xl p-6 overflow-hidden animate-in zoom-in-95 duration-200 relative flex flex-col max-h-[85vh]">
+            <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-2xl w-full max-w-2xl p-6 overflow-hidden animate-in zoom-in-95 duration-200 relative flex flex-col max-h-[85vh]">
                 <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors">
                     <XMarkIcon className="w-5 h-5" />
                 </button>
 
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Submit Purchase Orders</h3>
-                <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Select vendors ready to submit:</p>
+                <h3 className="text-xl font-semibold text-white">Submit Purchase Orders</h3>
+                <p className="text-sm text-slate-400 mt-1">Select vendors ready to submit:</p>
 
                 <div className="mt-6 space-y-4 overflow-y-auto pr-2 flex-grow scrollbar-thin">
                     {/* Active Vendors */}
@@ -70,7 +70,7 @@ export const SelectiveSubmitModal: React.FC<SelectiveSubmitModalProps> = ({
                                 className={`p-4 rounded-lg cursor-pointer border transition-all ${
                                     selectedVendorCodes.includes(v.vendorCode) 
                                         ? 'bg-blue-600/10 border-blue-600/40 shadow-lg shadow-blue-900/10' 
-                                        : 'bg-gray-50 dark:bg-slate-700/20 border-gray-200 dark:border-slate-700/50 hover:bg-gray-100 dark:hover:bg-slate-700/40'
+                                        : 'bg-slate-700/20 border-slate-700/50 hover:bg-slate-700/40'
                                 }`}
                             >
                                 <div className="flex items-center">
@@ -81,13 +81,13 @@ export const SelectiveSubmitModal: React.FC<SelectiveSubmitModalProps> = ({
                                         className="w-5 h-5 accent-blue-600 mr-4 rounded border-slate-600 bg-slate-800"
                                     />
                                     <div>
-                                        <span className="text-base font-semibold text-gray-900 dark:text-white">{v.vendorName}</span>
-                                        <span className="ml-2 text-[10px] font-mono text-gray-400 dark:text-slate-500">{v.vendorCode}</span>
+                                        <span className="text-base font-semibold text-white">{v.vendorName}</span>
+                                        <span className="ml-2 text-[10px] font-mono text-slate-500">{v.vendorCode}</span>
                                     </div>
                                 </div>
-                                <div className="flex justify-between text-sm text-gray-500 dark:text-slate-400 ml-9 mt-1">
+                                <div className="flex justify-between text-sm text-slate-400 ml-9 mt-1">
                                     <span>{v.skuCount} SKUs • {v.itemCount} items</span>
-                                    <span className="text-gray-900 dark:text-white font-medium">{formatCurrency(v.totalAmount)}</span>
+                                    <span className="text-white font-medium">{formatCurrency(v.totalAmount)}</span>
                                 </div>
                                 <div className="ml-9 mt-2 flex items-center text-xs">
                                     {v.hasAllFiles ? (
@@ -109,19 +109,19 @@ export const SelectiveSubmitModal: React.FC<SelectiveSubmitModalProps> = ({
                     {/* Submitted Vendors Section (Locked) */}
                     {submittedVendors.length > 0 && (
                         <div className="mt-6 pt-4 border-t border-slate-700/50">
-                            <h4 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-3">Already Submitted</h4>
+                            <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Already Submitted</h4>
                             <div className="space-y-3 opacity-60">
                                 {submittedVendors.map((v) => (
                                     <div 
                                         key={v.vendorCode}
-                                        className="p-4 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/30 cursor-not-allowed"
+                                        className="p-4 rounded-lg border border-slate-700 bg-slate-900/30 cursor-not-allowed"
                                     >
                                         <div className="flex items-center">
                                             <div className="w-5 h-5 flex items-center justify-center mr-4 bg-blue-600/20 text-blue-400 rounded">
                                                 <CheckBadgeIcon className="w-4 h-4" />
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <span className="text-base font-medium text-gray-600 dark:text-slate-300">{v.vendorName}</span>
+                                                <span className="text-base font-medium text-slate-300">{v.vendorName}</span>
                                                 <LockClosedIcon className="w-3 h-3 text-slate-500" />
                                             </div>
                                         </div>
@@ -136,10 +136,10 @@ export const SelectiveSubmitModal: React.FC<SelectiveSubmitModalProps> = ({
                     )}
                 </div>
 
-                <div className="bg-gray-50 dark:bg-slate-900/50 rounded p-3 mt-6 flex justify-between items-center border border-gray-200 dark:border-slate-700/30">
-                    <span className="text-sm text-gray-500 dark:text-slate-400 font-medium">Selected: <span className="text-gray-900 dark:text-white">{summary.count} vendors</span></span>
-                    <span className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                        <span className="text-xs font-normal text-gray-400 dark:text-slate-500 uppercase">Selected Total</span>
+                <div className="bg-slate-900/50 rounded p-3 mt-6 flex justify-between items-center border border-slate-700/30">
+                    <span className="text-sm text-slate-400 font-medium">Selected: <span className="text-white">{summary.count} vendors</span></span>
+                    <span className="text-base font-bold text-white flex items-center gap-2">
+                        <span className="text-xs font-normal text-slate-500 uppercase">Selected Total</span>
                         {formatCurrency(summary.totalAmount)}
                     </span>
                 </div>
@@ -148,7 +148,7 @@ export const SelectiveSubmitModal: React.FC<SelectiveSubmitModalProps> = ({
                     <Button 
                         variant="secondary" 
                         onClick={onClose}
-                        className="flex-1 bg-gray-100 dark:bg-slate-700 border-gray-200 dark:border-slate-600 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-800 dark:text-white"
+                        className="flex-1 bg-slate-700 border-slate-600 hover:bg-slate-600 text-white"
                     >
                         Cancel
                     </Button>

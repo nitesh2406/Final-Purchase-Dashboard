@@ -11,7 +11,7 @@ import {
   ArrowPathIcon
 } from '../icons/Icons';
 import { BatchFinance, BatchMetrics } from '../../types';
-import { APPS_SCRIPT_URL } from '../../App';
+import { APPS_SCRIPT_URL } from '../../constants';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 
@@ -32,9 +32,9 @@ const DashboardCards: React.FC<{ metrics: any; isLoading: boolean }> = ({ metric
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {[1, 2, 3, 4].map(i => (
-          <div key={i} className="bg-slate-800 p-6 rounded-xl border border-slate-700 animate-pulse">
-            <div className="h-4 bg-slate-700 rounded w-24 mb-2" />
-            <div className="h-8 bg-slate-700 rounded w-16" />
+          <div key={i} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 animate-pulse">
+            <div className="h-4 bg-slate-350 dark:bg-slate-700 rounded w-24 mb-2" />
+            <div className="h-8 bg-slate-350 dark:bg-slate-700 rounded w-16" />
           </div>
         ))}
       </div>
@@ -46,29 +46,29 @@ const DashboardCards: React.FC<{ metrics: any; isLoading: boolean }> = ({ metric
       label: 'Active Batches',
       value: metrics?.activeBatches || 0,
       icon: BoxIcon,
-      color: 'text-blue-400',
-      bg: 'bg-blue-400/10'
+      color: 'text-blue-600 dark:text-blue-400',
+      bg: 'bg-blue-100 dark:bg-blue-400/10'
     },
     {
       label: 'Total Outstanding',
       value: `₹${((metrics?.totalOutstandingINR || 0) / 100000).toFixed(2)}L`,
       icon: BanknotesIcon,
-      color: 'text-red-400',
-      bg: 'bg-red-400/10'
+      color: 'text-red-600 dark:text-red-400',
+      bg: 'bg-red-100 dark:bg-red-400/10'
     },
     {
       label: 'Arriving This Week',
       value: metrics?.arrivingThisWeek || 0,
       icon: TruckIcon,
-      color: 'text-yellow-400',
-      bg: 'bg-yellow-400/10'
+      color: 'text-amber-600 dark:text-yellow-400',
+      bg: 'bg-amber-100 dark:bg-yellow-400/10'
     },
     {
       label: 'Pending Payments',
       value: metrics?.pendingPaymentsCount || 0,
       icon: ExclamationTriangleIcon,
-      color: 'text-orange-400',
-      bg: 'bg-orange-400/10'
+      color: 'text-orange-600 dark:text-orange-400',
+      bg: 'bg-orange-100 dark:bg-orange-400/10'
     }
   ];
 
@@ -77,16 +77,16 @@ const DashboardCards: React.FC<{ metrics: any; isLoading: boolean }> = ({ metric
       {cards.map((card, index) => {
         const Icon = card.icon;
         return (
-          <div key={index} className="bg-slate-800 p-6 rounded-xl border border-slate-700 hover:border-slate-600 transition-all shadow-sm">
+          <div key={index} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-all shadow-sm">
             <div className="flex items-center gap-2 mb-2">
               <div className={`p-1.5 rounded-lg ${card.bg}`}>
                 <Icon className={`w-4 h-4 ${card.color}`} />
               </div>
-              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
                 {card.label}
               </span>
             </div>
-            <div className="text-2xl font-bold text-slate-100">
+            <div className="text-2xl font-bold text-slate-900 dark:text-slate-100">
               {card.value}
             </div>
           </div>
@@ -102,7 +102,7 @@ const FilterBar: React.FC<{
   setFilters: (f: any) => void 
 }> = ({ filters, setFilters }) => {
   return (
-    <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 mb-6 shadow-sm">
+    <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 mb-6 shadow-sm">
       <div className="flex flex-col lg:flex-row gap-4">
         <div className="flex-1 relative">
           <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -111,14 +111,14 @@ const FilterBar: React.FC<{
             placeholder="Search Batch, Carrier, Tracking, Vendor..."
             value={filters.search}
             onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-            className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
+            className="w-full pl-10 pr-4 py-2 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
           />
         </div>
 
         <select
           value={filters.status}
           onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-          className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+          className="bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-800 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
         >
           <option value="All">All Statuses</option>
           <option value="Shipped">Shipped</option>
@@ -132,13 +132,13 @@ const FilterBar: React.FC<{
           <option value="Delivered">Delivered</option>
         </select>
 
-        <div className="flex gap-1 p-1 bg-slate-900 rounded-lg border border-slate-700">
+        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-300 dark:border-slate-700">
           {(['All', 'sea', 'air'] as const).map(mode => (
             <button
               key={mode}
               onClick={() => setFilters({ ...filters, mode })}
               className={`px-3 py-1 rounded-md text-[10px] font-bold uppercase transition-all ${
-                filters.mode === mode ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
+                filters.mode === mode ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-650 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
             >
               {mode === 'All' ? 'ALL' : mode === 'sea' ? '🚢 SEA' : '✈️ AIR'}
@@ -146,13 +146,13 @@ const FilterBar: React.FC<{
           ))}
         </div>
 
-        <div className="flex gap-1 p-1 bg-slate-900 rounded-lg border border-slate-700">
+        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-300 dark:border-slate-700">
           {(['All', 'Unpaid', 'Partial', 'Paid'] as const).map(pStatus => (
             <button
               key={pStatus}
               onClick={() => setFilters({ ...filters, paymentStatus: pStatus })}
               className={`px-3 py-1 rounded-md text-[10px] font-bold uppercase transition-all ${
-                filters.paymentStatus === pStatus ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
+                filters.paymentStatus === pStatus ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-650 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
             >
               {pStatus}
@@ -220,21 +220,21 @@ const BatchFinanceCard: React.FC<{
 
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
-      'Shipped': 'text-purple-400 bg-purple-400/10',
-      'In-Transit China': 'text-blue-400 bg-blue-400/10',
-      'Customs Clearance': 'text-yellow-400 bg-yellow-400/10',
-      'In-Transit India': 'text-green-400 bg-green-400/10',
-      'Delivered': 'text-emerald-400 bg-emerald-400/10'
+      'Shipped': 'text-purple-700 bg-purple-100 dark:text-purple-400 dark:bg-purple-400/10',
+      'In-Transit China': 'text-blue-700 bg-blue-100 dark:text-blue-400 dark:bg-blue-400/10',
+      'Customs Clearance': 'text-yellow-700 bg-yellow-100 dark:text-yellow-400 dark:bg-yellow-400/10',
+      'In-Transit India': 'text-green-700 bg-green-100 dark:text-green-400 dark:bg-green-400/10',
+      'Delivered': 'text-emerald-700 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-400/10'
     };
-    return colors[status] || 'text-slate-400 bg-slate-400/10';
+    return colors[status] || 'text-slate-700 bg-slate-100 dark:text-slate-400 dark:bg-slate-400/10';
   };
 
   const getPaymentStatusColor = (status: string) => {
     switch (status) {
-      case 'Paid': return 'text-emerald-400 bg-emerald-400/10';
-      case 'Partial': return 'text-amber-400 bg-amber-400/10';
-      case 'Unpaid': return 'text-red-400 bg-red-400/10';
-      default: return 'text-slate-400 bg-slate-400/10';
+      case 'Paid': return 'text-emerald-700 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-400/10';
+      case 'Partial': return 'text-amber-700 bg-amber-100 dark:text-amber-400 dark:bg-amber-400/10';
+      case 'Unpaid': return 'text-red-700 bg-red-100 dark:text-red-400 dark:bg-red-400/10';
+      default: return 'text-slate-700 bg-slate-100 dark:text-slate-400 dark:bg-slate-400/10';
     }
   };
 
@@ -242,13 +242,13 @@ const BatchFinanceCard: React.FC<{
 
   return (
     <div 
-      className="bg-slate-800 border border-slate-700 rounded-xl p-5 hover:border-slate-600 transition-all shadow-sm group relative"
+      className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 hover:border-slate-350 dark:hover:border-slate-600 transition-all shadow-sm group relative cursor-pointer"
       onClick={() => !isEditing && onViewDetails(batch.batch_id)}
     >
       {/* Edit Trigger */}
       <button 
         onClick={(e) => { e.stopPropagation(); setIsEditing(!isEditing); }}
-        className="absolute top-4 right-4 p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-400 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all"
+        className="absolute top-4 right-4 p-1.5 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all shadow-sm"
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
           <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
@@ -257,10 +257,10 @@ const BatchFinanceCard: React.FC<{
 
       <div className="flex items-start justify-between mb-3 pr-8">
         <div className="flex items-center gap-2">
-          <ModeIcon className="w-5 h-5 text-slate-500" />
-          <h3 className="text-lg font-bold text-slate-100">{batch.batch_id}</h3>
+          <ModeIcon className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+          <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">{batch.batch_id}</h3>
         </div>
-        <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
           ETA: {batch.expected_delivery ? new Date(batch.expected_delivery).toLocaleDateString() : 'TBA'}
         </span>
       </div>
@@ -275,30 +275,30 @@ const BatchFinanceCard: React.FC<{
       </div>
 
       <div className="space-y-2 mb-4">
-        <div className="flex items-center gap-2 text-sm text-slate-300">
+        <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
           <span className="font-bold">{batch.carrier}</span>
-          <span className="text-slate-600">•</span>
-          <span className="text-xs font-mono text-slate-500">{batch.tracking_number}</span>
+          <span className="text-slate-400 dark:text-slate-600">•</span>
+          <span className="text-xs font-mono text-slate-500 dark:text-slate-405">{batch.tracking_number}</span>
         </div>
-        <div className="text-[11px] text-slate-500">
+        <div className="text-[11px] text-slate-500 dark:text-slate-400">
           {batch.total_vendors} Vendors • {batch.total_cartons} Cartons • {batch.total_shipments} Shipments
         </div>
       </div>
 
       {/* Finance Row */}
-      <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700/50 mb-4">
+      <div className="bg-slate-100 dark:bg-slate-900/50 rounded-lg p-3 border border-slate-300 dark:border-slate-700/50 mb-4">
         <div className="flex justify-between items-center">
           <div>
             <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Total Amount</div>
-            <div className="text-sm font-bold text-slate-100">
+            <div className="text-sm font-bold text-slate-850 dark:text-slate-100">
               {batch.total_currency} {batch.total_amount?.toLocaleString()}
             </div>
           </div>
           <div className="text-right">
             <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">INR Equivalent</div>
-            <div className="text-sm font-bold text-blue-400">
+            <div className="text-sm font-bold text-blue-600 dark:text-blue-400">
               {batch.amount_inr ? `₹${batch.amount_inr.toLocaleString()}` : (
-                <span className="text-amber-500 flex items-center gap-1">
+                <span className="text-amber-600 dark:text-amber-500 flex items-center gap-1">
                   <ExclamationTriangleIcon className="w-3 h-3" /> Rate N/A
                 </span>
               )}
@@ -309,7 +309,7 @@ const BatchFinanceCard: React.FC<{
 
       {/* Inline Edit Panel */}
       {isEditing && (
-        <div className="mt-4 pt-4 border-t border-slate-700 space-y-3 animate-in slide-in-from-top-2 duration-200" onClick={e => e.stopPropagation()}>
+        <div className="mt-4 pt-4 border-t border-slate-300 dark:border-slate-700 space-y-3 animate-in slide-in-from-top-2 duration-200" onClick={e => e.stopPropagation()}>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 block">Carrier</label>
@@ -317,7 +317,7 @@ const BatchFinanceCard: React.FC<{
                 type="text" 
                 value={editData.carrier}
                 onChange={e => setEditData({...editData, carrier: e.target.value})}
-                className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-100"
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-1.5 text-xs text-slate-800 dark:text-slate-100"
               />
             </div>
             <div>
@@ -326,7 +326,7 @@ const BatchFinanceCard: React.FC<{
                 type="text" 
                 value={editData.tracking_number}
                 onChange={e => setEditData({...editData, tracking_number: e.target.value})}
-                className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-100"
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-1.5 text-xs text-slate-800 dark:text-slate-100"
               />
             </div>
           </div>
@@ -337,7 +337,7 @@ const BatchFinanceCard: React.FC<{
                 type="date" 
                 value={editData.expected_delivery?.split('T')[0]}
                 onChange={e => setEditData({...editData, expected_delivery: e.target.value})}
-                className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-100"
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-1.5 text-xs text-slate-800 dark:text-slate-100"
               />
             </div>
             <div>
@@ -345,7 +345,7 @@ const BatchFinanceCard: React.FC<{
               <select 
                 value={editData.status}
                 onChange={e => setEditData({...editData, status: e.target.value as BatchStatusOption})}
-                className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-100"
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-1.5 text-xs text-slate-800 dark:text-slate-100"
               >
                 <option value="Shipped">Shipped</option>
                 <option value="In-Transit China">In-Transit China</option>
@@ -366,7 +366,7 @@ const BatchFinanceCard: React.FC<{
                 type="number" 
                 value={editData.total_amount}
                 onChange={e => setEditData({...editData, total_amount: Number(e.target.value)})}
-                className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-100"
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-1.5 text-xs text-slate-800 dark:text-slate-100"
               />
             </div>
             <div>
@@ -374,7 +374,7 @@ const BatchFinanceCard: React.FC<{
               <select 
                 value={editData.total_currency}
                 onChange={e => setEditData({...editData, total_currency: e.target.value as 'RMB' | 'USD'})}
-                className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-100"
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-1.5 text-xs text-slate-800 dark:text-slate-100"
               >
                 <option value="RMB">RMB</option>
                 <option value="USD">USD</option>
@@ -383,7 +383,7 @@ const BatchFinanceCard: React.FC<{
           </div>
           <div className="flex gap-2 pt-2">
             <Button 
-              className="flex-1 py-1.5 text-xs" 
+              className="flex-1 py-1.5 text-xs font-bold" 
               onClick={handleSave}
               disabled={isSaving}
             >
@@ -391,7 +391,7 @@ const BatchFinanceCard: React.FC<{
             </Button>
             <Button 
               variant="secondary" 
-              className="flex-1 py-1.5 text-xs"
+              className="flex-1 py-1.5 text-xs font-bold"
               onClick={(e) => { e.stopPropagation(); setIsEditing(false); }}
             >
               Cancel
@@ -401,7 +401,7 @@ const BatchFinanceCard: React.FC<{
       )}
 
       {!isEditing && (
-        <button className="w-full mt-2 py-2 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded-lg transition-all font-bold text-xs flex items-center justify-center gap-2">
+        <button className="w-full mt-2 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-100 rounded-lg transition-all font-bold text-xs flex items-center justify-center gap-2 border border-slate-300 dark:border-transparent">
           View Details <ChevronRightIcon className="w-3.5 h-3.5" />
         </button>
       )}
@@ -486,7 +486,7 @@ export const ShipmentFinance: React.FC<ShipmentFinanceProps> = ({ onNavigateToDe
   }, [batches, filters]);
 
   return (
-    <div className="p-6 max-w-[1600px] mx-auto bg-slate-900 min-h-screen text-slate-100 pb-24">
+    <div className="p-6 max-w-[1600px] mx-auto bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-slate-100 pb-24">
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <div>
@@ -537,16 +537,16 @@ export const ShipmentFinance: React.FC<ShipmentFinanceProps> = ({ onNavigateToDe
       {isLoading && !financeCache ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[1, 2, 3, 4, 5, 6].map(i => (
-            <div key={i} className="bg-slate-800 border border-slate-700 rounded-xl p-5 animate-pulse h-64 shadow-sm" />
+            <div key={i} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 animate-pulse h-64 shadow-sm" />
           ))}
         </div>
       ) : filteredBatches.length === 0 ? (
-        <div className="text-center py-24 bg-slate-800 rounded-xl border-2 border-dashed border-slate-700 shadow-sm">
-          <BoxIcon className="w-16 h-16 mx-auto text-slate-700 mb-4" />
-          <p className="text-lg text-slate-300 font-medium">No batches matching your filters</p>
+        <div className="text-center py-24 bg-white dark:bg-slate-800 rounded-xl border-2 border-dashed border-slate-350 dark:border-slate-700 shadow-sm">
+          <BoxIcon className="w-16 h-16 mx-auto text-slate-400 dark:text-slate-700 mb-4" />
+          <p className="text-lg text-slate-700 dark:text-slate-300 font-medium">No batches matching your filters</p>
           <p className="text-sm text-slate-500 mt-1">Try adjusting your search or clearing filters</p>
           <button 
-            className="mt-6 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+            className="mt-6 px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-white rounded-lg transition-all border border-slate-300 dark:border-transparent font-semibold shadow-sm"
             onClick={() => setFilters({ search: '', status: 'All', mode: 'All', paymentStatus: 'All' })}
           >
             Clear Filters
@@ -568,7 +568,7 @@ export const ShipmentFinance: React.FC<ShipmentFinanceProps> = ({ onNavigateToDe
       )}
 
       {/* Debug Panel */}
-      <div className="mt-12 pt-8 border-t border-slate-800">
+      <div className="mt-12 pt-8 border-t border-slate-250 dark:border-slate-800">
         <button 
           onClick={() => setShowDebug(!showDebug)}
           className="text-[10px] font-bold text-slate-500 hover:text-blue-500 uppercase tracking-widest transition-colors flex items-center gap-2"
@@ -580,13 +580,13 @@ export const ShipmentFinance: React.FC<ShipmentFinanceProps> = ({ onNavigateToDe
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 animate-in slide-in-from-bottom-2 duration-200">
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-500 uppercase">Last Request</span>
-              <pre className="bg-slate-950 border border-slate-800 p-4 rounded-lg text-[10px] font-mono text-slate-400 overflow-auto max-h-[300px]">
+              <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-4 rounded-lg text-[10px] font-mono text-slate-800 dark:text-slate-400 overflow-auto max-h-[300px]">
                 {lastRequest ? JSON.stringify(lastRequest, null, 2) : '// No request recorded'}
               </pre>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-500 uppercase">Last Response</span>
-              <pre className="bg-slate-950 border border-slate-800 p-4 rounded-lg text-[10px] font-mono text-slate-400 overflow-auto max-h-[300px]">
+              <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-4 rounded-lg text-[10px] font-mono text-slate-800 dark:text-slate-400 overflow-auto max-h-[300px]">
                 {lastResponse ? JSON.stringify(lastResponse, null, 2) : '// No response recorded'}
               </pre>
             </div>

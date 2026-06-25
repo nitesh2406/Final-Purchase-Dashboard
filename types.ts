@@ -41,32 +41,40 @@ export interface PurchaseOrder {
   amount?: number; // Added for list view convenience
 }
 
-export type DraftStatus = 'DRAFT' | 'PARTIALLY_SUBMITTED' | 'SUBMITTED' | 'CANCELLED';
+export type DraftStatus = 'Draft' | 'Partially Submitted' | 'Order Placed' | 'Cancelled';
 
 export interface DraftOrder {
-  id: string;
-  vendors: string[];
-  submittedVendors?: Record<string, string>; // Maps vendor name to PO ID
-  mode: string;
-  planned_mode?: string; // FIX 9: Added fallback field from backend
-  draft_date?: string;
-  created_at?: string;
-  expected_delivery?: string;
-  notes: string;
-  totalSkus?: number;
-  totalItems?: number;
-  total_skus?: number;
-  total_items?: number;
-  status: DraftStatus;
-  items?: any[];
-  submittedAt?: string;
-  submittedBy?: string;
-  cancelledAt?: string;
+    id: string;
+    vendors: string[];
+    submittedVendors?: Record<string, string>; // Maps vendor name to PO ID
+    mode: string;
+    planned_mode?: string; // FIX 9: Added fallback field from backend
+    draft_date?: string;
+    created_at?: string;
+    expected_delivery?: string;
+    notes: string;
+    totalSkus?: number;
+    totalItems?: number;
+    total_skus?: number;
+    total_items?: number;
+    status: DraftStatus;
+    items?: any[]; 
+    submittedAt?: string;
+    submittedBy?: string;
+    cancelledAt?: string;
 }
 
 export interface VendorMaster {
-  vendor_code: string;
+  vendor_id: string;
   vendor_name: string;
+  vendor_code?: string;
+  currency?: string;
+  country?: string;
+  payment_terms?: string;
+  is_active?: boolean | string;
+  syncStatus?: 'pending' | 'syncing' | 'failed';
+  syncError?: string;
+  queueId?: string;
 }
 
 export interface ShipmentItem {
@@ -145,204 +153,204 @@ export interface Shipment {
 }
 
 export interface Vendor {
-  id: string;
-  name: string;
-  contactPerson: string;
-  email: string;
-  phone: string;
-  address: string;
-  type: 'Regular' | 'Aggregator' | 'Freight' | 'Child';
-  status: 'Active' | 'Inactive';
-  paymentTerms: string;
-  children?: string[]; // IDs of child vendors for aggregators
-  creditLimit?: number;
-  bankingInfo?: {
-    bankName: string;
-    accountNumber: string;
-    ifscCode: string;
-  };
+    id: string;
+    name: string;
+    contactPerson: string;
+    email: string;
+    phone: string;
+    address: string;
+    type: 'Regular' | 'Aggregator' | 'Freight' | 'Child';
+    status: 'Active' | 'Inactive';
+    paymentTerms: string;
+    children?: string[]; // IDs of child vendors for aggregators
+    creditLimit?: number;
+    bankingInfo?: {
+        bankName: string;
+        accountNumber: string;
+        ifscCode: string;
+    };
 }
 
 export interface InvoiceLineItem {
-  description: string;
-  amount: number;
-  taxRate: number;
-  taxAmount: number;
+    description: string;
+    amount: number;
+    taxRate: number;
+    taxAmount: number;
 }
 
 export type InvoiceStatus = 'Paid' | 'Pending' | 'Overdue' | 'Partially Paid' | 'Draft' | 'Cancelled';
 
 export interface InvoiceDocument {
-  type: 'Invoice PDF' | 'Receipt' | 'Credit Note';
-  fileName: string;
-  uploadDate: string;
-  size: string;
-  uploadedBy: string;
+    type: 'Invoice PDF' | 'Receipt' | 'Credit Note';
+    fileName: string;
+    uploadDate: string;
+    size: string;
+    uploadedBy: string;
 }
 
 export interface Payment {
-  id: string;
-  date: string;
-  amount: number;
-  method: 'Wire Transfer' | 'Credit Card' | 'Cash' | 'UPI' | 'Check';
-  reference: string;
-  recordedBy: string;
-  isAggregatorPayment?: boolean;
-  aggregatorPaymentId?: string;
-  exchangeRate?: number;
-  conversionCharge?: number;
-  bankCharge?: number;
-  otherCharge?: number;
-  baseAmountInHomeCurrency?: number;
-  actualPaidInHomeCurrency?: number;
+    id: string;
+    date: string;
+    amount: number;
+    method: 'Wire Transfer' | 'Credit Card' | 'Cash' | 'UPI' | 'Check';
+    reference: string;
+    recordedBy: string;
+    isAggregatorPayment?: boolean;
+    aggregatorPaymentId?: string;
+    exchangeRate?: number;
+    conversionCharge?: number;
+    bankCharge?: number;
+    otherCharge?: number;
+    baseAmountInHomeCurrency?: number;
+    actualPaidInHomeCurrency?: number;
 }
 
 export interface ActivityLogEntry {
-  timestamp: string;
-  user: string;
-  activity: string;
-  details: string;
+    timestamp: string;
+    user: string;
+    activity: string;
+    details: string;
 }
 
 export interface Invoice {
-  id: string;
-  vendor: string;
-  invoiceDate: string;
-  dueDate: string;
-  status: InvoiceStatus;
-  type: 'Regular' | 'Consolidated' | 'Freight';
-  currency: 'INR' | 'USD' | 'CNY';
-  amount: number;
-  paidAmount: number;
-  balance: number;
-  poNumber?: string;
-  shipments?: string[];
-  lineItems: InvoiceLineItem[];
-  costBreakdown: {
-    baseAmount: number;
-    cgst?: number;
-    sgst?: number;
-  };
-  payments: Payment[];
-  documents: InvoiceDocument[];
-  activityLog: ActivityLogEntry[];
-  notes: string;
-  paymentTerms?: string;
+    id: string;
+    vendor: string;
+    invoiceDate: string;
+    dueDate: string;
+    status: InvoiceStatus;
+    type: 'Regular' | 'Consolidated' | 'Freight';
+    currency: 'INR' | 'USD' | 'CNY';
+    amount: number;
+    paidAmount: number;
+    balance: number;
+    poNumber?: string;
+    shipments?: string[];
+    lineItems: InvoiceLineItem[];
+    costBreakdown: {
+        baseAmount: number;
+        cgst?: number;
+        sgst?: number;
+    };
+    payments: Payment[];
+    documents: InvoiceDocument[];
+    activityLog: ActivityLogEntry[];
+    notes: string;
+    paymentTerms?: string;
 }
 
 export interface TaxSlab {
-  id: string;
-  name: string;
-  rate: number;
-  description: string;
-  itemCount: number;
+    id: string;
+    name: string;
+    rate: number;
+    description: string;
+    itemCount: number;
 }
 
 export interface HsnCode {
-  id: string;
-  code: string;
-  description: string;
-  defaultTaxRate: number;
-  itemCount: number;
+    id: string;
+    code: string;
+    description: string;
+    defaultTaxRate: number;
+    itemCount: number;
 }
 
 export interface FreightAgent {
-  id: string;
-  name: string;
-  contactPerson: string;
-  email: string;
-  phone: string;
-  services: ('Sea' | 'Air')[];
-  activeSince: string;
-  routeCount: number;
-  rating: number;
-  status: 'Active' | 'Inactive';
+    id: string;
+    name: string;
+    contactPerson: string;
+    email: string;
+    phone: string;
+    services: ('Sea' | 'Air')[];
+    activeSince: string;
+    routeCount: number;
+    rating: number;
+    status: 'Active' | 'Inactive';
 }
 
 export interface FreightRate {
-  id: string;
-  agentId: string;
-  mode: 'Sea' | 'Air';
-  origin: string;
-  destination: string;
-  containerType?: '20ft' | '40ft' | 'LCL';
-  rate: number;
-  unit: 'per container' | 'per kg' | 'per CBM';
-  leadTime: string; // e.g., "30-45 days"
-  minWeight?: number;
-  effectiveDate: string;
-  isExpired?: boolean;
-  history?: { rate: number; dateRange: string }[];
+    id: string;
+    agentId: string;
+    mode: 'Sea' | 'Air';
+    origin: string;
+    destination: string;
+    containerType?: '20ft' | '40ft' | 'LCL';
+    rate: number;
+    unit: 'per container' | 'per kg' | 'per CBM';
+    leadTime: string; // e.g., "30-45 days"
+    minWeight?: number;
+    effectiveDate: string;
+    isExpired?: boolean;
+    history?: { rate: number; dateRange: string }[];
 }
 
 export interface AdditionalCharge {
-  id: string;
-  type: string;
-  amount: number;
-  unit: 'fixed' | 'percentage' | 'per kg';
-  applicableTo: string;
+    id: string;
+    type: string;
+    amount: number;
+    unit: 'fixed' | 'percentage' | 'per kg';
+    applicableTo: string;
 }
 
 export interface PaymentTerm {
-  id: string;
-  name: string;
-  days: number;
-  description: string;
-  vendorCount: number;
+    id: string;
+    name: string;
+    days: number;
+    description: string;
+    vendorCount: number;
 }
 
 export interface ApprovalRule {
-  id: string;
-  name: string;
-  type: 'Invoice' | 'Payment' | 'PO';
-  condition: string;
-  approvers: string[];
-  status: 'Active' | 'Inactive';
+    id: string;
+    name: string;
+    type: 'Invoice' | 'Payment' | 'PO';
+    condition: string;
+    approvers: string[];
+    status: 'Active' | 'Inactive';
 }
 
 export interface User {
-  id: string;
-  name: string;
-  email: string;
-  role: 'Admin' | 'Manager' | 'Finance User' | 'Inventory User' | 'Viewer';
-  department: 'Management' | 'Finance' | 'Inventory' | 'Logistics';
-  status: 'Active' | 'Inactive';
-  lastLogin: string;
+    id: string;
+    name: string;
+    email: string;
+    role: 'Admin' | 'Manager' | 'Finance User' | 'Inventory User' | 'Viewer';
+    department: 'Management' | 'Finance' | 'Inventory' | 'Logistics';
+    status: 'Active' | 'Inactive';
+    lastLogin: string;
 }
 
 export interface Permission {
-  view: boolean;
-  create: boolean;
-  edit: boolean;
-  delete: boolean;
-  approve: boolean;
+    view: boolean;
+    create: boolean;
+    edit: boolean;
+    delete: boolean;
+    approve: boolean;
 }
 
 export interface Role {
-  id: 'Admin' | 'Manager' | 'Finance User' | 'Inventory User' | 'Viewer';
-  permissions: {
-    [module: string]: Permission;
-  };
+    id: 'Admin' | 'Manager' | 'Finance User' | 'Inventory User' | 'Viewer';
+    permissions: {
+        [module: string]: Permission;
+    };
 }
 
 export interface NotificationRule {
-  event: string;
-  email: boolean;
-  inApp: boolean;
-  frequency: 'Daily' | 'Instant';
-  recipients: string;
+    event: string;
+    email: boolean;
+    inApp: boolean;
+    frequency: 'Daily' | 'Instant';
+    recipients: string;
 }
 
 export interface VendorReportData {
-  vendorId: string;
-  vendorName: string;
-  invoiceCount: number;
-  totalAmount: number;
-  totalPaid: number;
-  pendingAmount: number;
-  overdueAmount: number;
-  lastPaymentDate: string;
-  paymentTerms: string;
+    vendorId: string;
+    vendorName: string;
+    invoiceCount: number;
+    totalAmount: number;
+    totalPaid: number;
+    pendingAmount: number;
+    overdueAmount: number;
+    lastPaymentDate: string;
+    paymentTerms: string;
 }
 
 export interface Notification {
@@ -368,7 +376,6 @@ export interface ForecastingSku {
   inboundETA: string | null;
   daysOfCover: number;
   reorderQty: number;
-  rawReorderQty?: number; // Pre-MOQ recommendation value
   unitCost: number;
   urgencyLevel: "critical" | "warning" | "healthy";
   mode: "Sea" | "Air" | "Both";
@@ -412,19 +419,6 @@ export interface ForecastingSku {
     isDelayed: boolean;
     delay_days: number;
   }>;
-  // New backend fields
-  inProductionPOs?: Array<{
-    poId: string;
-    qty: number;
-    status: string;
-  }>;
-  inProduction?: number;
-  effectiveDaysOfCover?: number;
-  b2bRegularUnits?: number;
-  bulkUnits?: number;
-  bulkOrders?: number;
-  suggestBulkSs?: boolean;
-  salesHistory90B2C?: { date: string; units: number }[];
   poHistory?: Array<{
     poId: string;
     qty: number;
@@ -452,11 +446,20 @@ export interface ForecastingSku {
   lastStockoutEnd: string | null;
   stockoutGapDays: number;
   SS_BULK: number;
-  kitStockContribution?: number;
-  rmb_price?: number | null;
-  rmb_price_missing?: boolean;
-  weight_gm?: number | null;
+
+  // Extended fields from forecasting engine
   brand?: string;
+  rmb_price?: number;
+  weight_gm?: number;
+  inProduction?: number;
+  inProductionPOs?: Array<{ poId: string; qty: number; status: string }>;
+  effectiveDaysOfCover?: number;
+  rawReorderQty?: number;
+  salesHistory90B2C?: { date: string; units: number }[];
+  suggestBulkSs?: boolean;
+  bulkOrders?: number;
+  b2bRegularUnits?: number;
+  bulkUnits?: number;
 }
 
 // ==========================================
@@ -483,8 +486,7 @@ export interface Batch {
   is_delayed: boolean;
   delay_days: number;
   vendor_shipments?: BatchVendorShipment[];
-  vendor_summary?: any[];
-
+  
   // Financial reconciliation fields
   original_amount_rmb: number;
   duty_charges_inr: number;
@@ -492,7 +494,7 @@ export interface Batch {
   final_total_inr: number;
 }
 
-export type BatchStatus =
+export type BatchStatus = 
   | 'Shipped'
   | 'In-Transit China'
   | 'At Port China'
@@ -508,7 +510,7 @@ export interface BatchVendorShipment {
   shipment_id: string;
   vendor_code: string;
   vendor_name: string;
-  invoice_no: string;
+  invoiceId: string;
   invoice_date: string;
   total_units: number;
   total_amount?: number; // compat
@@ -525,7 +527,7 @@ export interface BatchLineItem {
   factory_code: string;
   ean: string;
   incoming_qty: number;
-
+  
   // Compatibility fields
   invoice_qty?: number;
   unit_price?: number;
@@ -536,7 +538,7 @@ export interface BatchLineItem {
   future_stock: number | null;
   mma: number | null;
   doc_after_arrival: number | null;
-
+  
   // Product specs placeholders
   has_logo: boolean | null;
   has_packaging: boolean | null;
@@ -577,10 +579,17 @@ export interface ShipmentFinanceData {
   batch_id: string;
   vendor_code: string;
   vendor_name?: string;
-  invoice_no: string;
+  invoiceId: string;
   total_amount: number;
   currency: 'RMB' | 'USD';
   amount_inr?: number;
   payment_status: 'Unpaid' | 'Partial' | 'Paid';
   account_type?: 'Trade' | 'Pool';
 }
+
+export type ViewType =
+  | 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders'
+  | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance'
+  | 'Inventory Analytics' | 'Settings' | 'Shipment Finance' | 'Shipment Finance Detail'
+  | 'Payment Ledger' | 'Accounts View' | 'Settlement Ledger'
+  | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail';

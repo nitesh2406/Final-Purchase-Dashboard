@@ -28,19 +28,19 @@ const getStatusConfig = (status: Invoice['status']) => {
         'Pending': { color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-200' },
         'Overdue': { color: 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200' },
         'Partially Paid': { color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-200' },
-        'Draft': { color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300' },
-        'Cancelled': { color: 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-400' },
+        'Draft': { color: 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-300' },
+        'Cancelled': { color: 'bg-slate-200 text-slate-600 dark:bg-slate-600 dark:text-slate-400' },
     };
     return config[status] || config['Draft'];
 };
 
 const MetricCard: FC<{ title: string, value: string, subtitle: string, icon: React.ReactNode }> = ({ title, value, subtitle, icon }) => (
     <Card className="flex items-center p-4">
-        <div className="p-3 mr-4 text-primary-500 bg-primary-100 rounded-full dark:bg-primary-900/50">{icon}</div>
+        <div className="p-3 mr-4 text-blue-500 bg-blue-100 rounded-full dark:bg-blue-900/50">{icon}</div>
         <div>
-            <p className="text-sm font-medium text-gray-600 dark:text-gray-400">{title}</p>
-            <p className="text-lg font-semibold text-gray-800 dark:text-white">{value}</p>
-            <p className="text-xs text-gray-500">{subtitle}</p>
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-400">{title}</p>
+            <p className="text-lg font-semibold text-slate-800 dark:text-white">{value}</p>
+            <p className="text-xs text-slate-500">{subtitle}</p>
         </div>
     </Card>
 );
@@ -163,15 +163,15 @@ export const InvoicesView: FC<InvoicesViewProps> = (props) => {
 
             <div className="flex flex-wrap gap-2">
                 {(['All', 'Pending', 'Partially Paid', 'Paid', 'Overdue', 'Cancelled'] as const).map(s =>(
-                    <button key={s} onClick={() => setStatusFilter(s === 'All' ? 'All' : s)} className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${statusFilter === s ? 'bg-primary-600 text-white shadow' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'}`}>
+                    <button key={s} onClick={() => setStatusFilter(s === 'All' ? 'All' : s)} className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${statusFilter === s ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
                         {s} <span className="ml-1.5 bg-black/10 dark:bg-white/10 text-xs rounded-full px-1.5 py-0.5">{s === 'All' ? statusCounts.All : statusCounts[s]}</span>
                     </button>
                 ))}
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex-1 min-w-[300px]"><input type="text" placeholder="Search Invoice ID, Vendor..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-4 pr-4 py-2 rounded-lg border dark:bg-gray-900 dark:border-gray-700"/></div>
-                <div className="flex items-center gap-2"><select className="rounded-lg border dark:bg-gray-900 dark:border-gray-700 py-2"><option>Last 30 days</option></select><select className="rounded-lg border dark:bg-gray-900 dark:border-gray-700 py-2"><option>All Vendors</option></select></div>
+                <div className="flex-1 min-w-[300px]"><input type="text" placeholder="Search Invoice ID, Vendor..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-4 pr-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"/></div>
+                <div className="flex items-center gap-2"><select className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"><option>Last 30 days</option></select><select className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"><option>All Vendors</option></select></div>
                  <div className="flex items-center gap-2">
                     <Button onClick={() => setBulkPaymentModalOpen(true)} variant="secondary" disabled={selectedRows.length === 0}>Bulk Pay ({selectedRows.length})</Button>
                     <Button onClick={() => setCreateModalOpen(true)} icon={<PlusCircleIcon/>}>Create Invoice</Button>
@@ -179,21 +179,21 @@ export const InvoicesView: FC<InvoicesViewProps> = (props) => {
             </div>
             
              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead className="bg-gray-50 dark:bg-gray-800">
+                <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
+                    <thead className="bg-slate-50 dark:bg-slate-800">
                         <tr>
                             <th className="px-4 py-3"><input type="checkbox" onChange={e => setSelectedRows(e.target.checked ? paginatedInvoices.map(i => i.id) : [])} /></th>
                             {['Status', 'Invoice ID', 'Vendor', 'Date', 'Due Date', 'Amount', 'Balance', 'Actions'].map(h => (
-                                <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{h}</th>
+                                <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">{h}</th>
                             ))}
                         </tr>
                     </thead>
-                    <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+                    <tbody className="bg-white dark:bg-slate-900 divide-y divide-slate-200 dark:divide-slate-700">
                         {paginatedInvoices.map(invoice => (
-                            <tr key={invoice.id}>
+                            <tr key={invoice.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                                 <td className="px-4 py-4"><input type="checkbox" checked={selectedRows.includes(invoice.id)} onChange={() => setSelectedRows(prev => prev.includes(invoice.id) ? prev.filter(id => id !== invoice.id) : [...prev, invoice.id])} /></td>
                                 <td className="px-4 py-4 whitespace-nowrap text-sm"><span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusConfig(invoice.status).color}`}>{invoice.status}</span></td>
-                                <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">{invoice.id}</td>
+                                <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-slate-900 dark:text-white">{invoice.id}</td>
                                 <td className="px-4 py-4 whitespace-nowrap text-sm">{invoice.vendor}</td>
                                 <td className="px-4 py-4 whitespace-nowrap text-sm">{formatDate(invoice.invoiceDate)}</td>
                                 <td className="px-4 py-4 whitespace-nowrap text-sm">{formatDate(invoice.dueDate)}</td>

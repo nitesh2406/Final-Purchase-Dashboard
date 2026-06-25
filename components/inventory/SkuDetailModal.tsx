@@ -1,5 +1,3 @@
-
-// TODO: Add rmb_price, weight_gm, brand to ForecastingSku in types.ts
 import React, { FC, useMemo, useState } from 'react';
 import { ForecastingSku } from '../../types';
 import { Button } from '../ui/Button';
@@ -10,8 +8,8 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 interface SkuDetailModalProps {
     sku: ForecastingSku | null;
     onClose: () => void;
-    chartPeriod: '30' | '90';
-    onChartPeriodChange: (period: '30' | '90') => void;
+    chartPeriod?: '30' | '90';
+    onChartPeriodChange?: (period: '30' | '90') => void;
 }
 
 const formatCurrency = (amount: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
@@ -23,7 +21,6 @@ const formatDate = (dateString: string) => {
     return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-// U2 FIX: Use slate theme to match rest of app dark mode
 const Metric: FC<{ label: string; value: string | number; subValue?: string, className?: string }> = ({ label, value, subValue, className }) => (
     <div className={`p-3 rounded-md bg-slate-700/50 border border-slate-600/50 ${className}`}>
         <p className="text-sm text-slate-400">{label}</p>
@@ -38,20 +35,23 @@ const EmptyState: FC<{ message: string }> = ({ message }) => (
     </div>
 );
 
-export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPeriod, onChartPeriodChange }) => {
+export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPeriod: chartPeriodProp, onChartPeriodChange }) => {
     const [showDebug, setShowDebug] = useState(false);
+    const [chartPeriodInternal, setChartPeriodInternal] = useState<'30' | '90'>('30');
+    const chartPeriod = chartPeriodProp ?? chartPeriodInternal;
+    const setChartPeriod = (val: '30' | '90') => {
+        setChartPeriodInternal(val);
+        onChartPeriodChange?.(val);
+    };
 
-    const { totalStock, availableToSell, channelData, avgLeadTime, avgAirLeadTime, avgSeaLeadTime } = useMemo(() => {
+    const { availableToSell, channelData, avgLeadTime, avgAirLeadTime, avgSeaLeadTime } = useMemo(() => {
         if (!sku) {
-            return { totalStock: 0, availableToSell: 0, channelData: [], avgLeadTime: 0, avgAirLeadTime: 0, avgSeaLeadTime: 0 };
+            return { availableToSell: 0, channelData: [], avgLeadTime: 0, avgAirLeadTime: 0, avgSeaLeadTime: 0 };
         }
 
-        // Safeguard: stockByLocation might be undefined from backend
         const stockLoc = (sku.stockByLocation || {}) as Record<string, number>;
-        const totalStock = Object.values(stockLoc).reduce((a: number, b: number) => a + b, 0);
-        const availableToSell = totalStock;
+        const availableToSell = Object.values(stockLoc).reduce((a: number, b: number) => a + b, 0);
 
-        // Safeguard: channelSplit might be undefined
         const split = sku.channelSplit || {};
         const channelData = Object.entries(split).map(([name, data]: [string, any]) => ({
             name: name.charAt(0).toUpperCase() + name.slice(1),
@@ -76,21 +76,18 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
             avgSeaLeadTime = seaPos.length > 0 ? Math.round(totalSeaLeadTime / seaPos.length) : 0;
         }
 
-        return { totalStock, availableToSell, channelData, avgLeadTime, avgAirLeadTime, avgSeaLeadTime };
+        return { availableToSell, channelData, avgLeadTime, avgAirLeadTime, avgSeaLeadTime };
     }, [sku]);
 
-    // Robust Data Processing for Chart
     const chartData = useMemo(() => {
         if (!sku) return [];
 
-        // 1. Prioritize 90 day history if available, otherwise fallback to 30 day
         let rawData = (sku.salesHistory90 && sku.salesHistory90.length > 0)
             ? sku.salesHistory90
             : (sku.salesHistory30 || []);
 
         if (!rawData || rawData.length === 0) return [];
 
-        // 2. Parse Helpers
         const parseUnits = (val: any): number => {
             if (typeof val === 'number') return val;
             if (typeof val === 'string') {
@@ -100,27 +97,23 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
             return 0;
         };
 
-        // 3. Process existing data into a Map for quick lookup
         const dataMap = new Map<string, number>();
         let maxDate = 0;
 
         rawData.forEach(item => {
             const d = new Date(item.date);
             if (!isNaN(d.getTime())) {
-                // Normalize to YYYY-MM-DD for key
                 const key = d.toISOString().split('T')[0];
                 dataMap.set(key, parseUnits(item.units));
                 if (d.getTime() > maxDate) maxDate = d.getTime();
             }
         });
 
-        // 4. Determine Date Range (End Date is either today or the last available data point)
         const endDate = maxDate > 0 ? new Date(maxDate) : new Date();
-        const daysToSubtract = chartPeriod === '30' ? 29 : 89; // 30 or 90 days inclusive
+        const daysToSubtract = chartPeriod === '30' ? 29 : 89;
         const startDate = new Date(endDate);
         startDate.setDate(endDate.getDate() - daysToSubtract);
 
-        // 5. Fill gaps with 0, and also merge B2C data
         const b2cMap = new Map<string, number>();
         (sku.salesHistory90B2C || []).forEach(item => {
             const d = new Date(item.date);
@@ -155,7 +148,6 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            {/* U2 FIX: Use slate-800 dark theme matching app */}
             <div className="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-[85vw] max-w-6xl h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
                 {/* Header */}
                 <header className="flex items-center justify-between p-4 border-b border-slate-700 flex-shrink-0">
@@ -182,13 +174,13 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                                         <h4 className="font-semibold text-sm text-slate-200">Sales Trend</h4>
                                         <div className="flex bg-slate-700 rounded-lg p-0.5">
                                             <button
-                                                onClick={() => onChartPeriodChange('30')}
+                                                onClick={() => setChartPeriod('30')}
                                                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${chartPeriod === '30' ? 'bg-slate-500 shadow text-white' : 'text-slate-400 hover:text-slate-200'}`}
                                             >
                                                 30 Days
                                             </button>
                                             <button
-                                                onClick={() => onChartPeriodChange('90')}
+                                                onClick={() => setChartPeriod('90')}
                                                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${chartPeriod === '90' ? 'bg-slate-500 shadow text-white' : 'text-slate-400 hover:text-slate-200'}`}
                                             >
                                                 90 Days
@@ -218,7 +210,7 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                                                             contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
                                                             labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
                                                             itemStyle={{ color: '#3b82f6' }}
-                                                            formatter={(value: number) => [value, 'Total Units']}
+                                                            formatter={(value: any) => [value, 'Total Units']}
                                                             labelFormatter={(unixTime) => new Date(unixTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
                                                         />
                                                         <Line type="monotone" dataKey="units" stroke="#3b82f6" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#3b82f6' }} />
@@ -248,7 +240,7 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                                                                 contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
                                                                 labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
                                                                 itemStyle={{ color: '#10b981' }}
-                                                                formatter={(value: number) => [value, 'B2C Units']}
+                                                                formatter={(value: any) => [value, 'B2C Units']}
                                                                 labelFormatter={(unixTime) => new Date(unixTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
                                                             />
                                                             <Line type="monotone" dataKey="unitsB2C" stroke="#10b981" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#10b981' }} />
@@ -335,8 +327,7 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                                                         <td className="px-4 py-2 text-right">{formatNumber(qty)}</td>
                                                     </tr>
                                                 ))}
-                                                {/* Reserved Row - styling updated to muted */}
-                                                <tr className="text-gray-500 dark:text-gray-400">
+                                                <tr className="text-slate-500">
                                                     <td className="px-4 py-2">
                                                         Reserved <span className="text-xs font-normal ml-1">(included above)</span>
                                                     </td>
@@ -344,7 +335,6 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                                                 </tr>
                                             </tbody>
                                             <tfoot className="bg-slate-700 font-semibold">
-                                                {/* Renamed Available to TOTAL and kept green styling */}
                                                 <tr>
                                                     <td className="px-4 py-2 text-green-400">TOTAL</td>
                                                     <td className="px-4 py-2 text-right text-green-400">{formatNumber(availableToSell)}</td>
@@ -361,12 +351,13 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                                         <table className="min-w-full text-sm">
                                             <thead className="bg-slate-700"><tr><th className="px-4 py-2 text-left font-medium text-slate-300">Channel</th><th className="px-4 py-2 text-right font-medium text-slate-300">Sales</th><th className="px-4 py-2 text-right font-medium text-slate-300">%</th></tr></thead>
                                             <tbody className="divide-y divide-slate-700">
-                                                {channelData.map((ch, idx) => <tr key={idx} className="even:bg-slate-700/30 text-slate-200">
-                                                    <td className="px-4 py-2">{ch.name}</td>
-                                                    {/* Task 9: Round percentage to 1 decimal */}
-                                                    <td className="px-4 py-2 text-right">{formatNumber(ch.units)}</td>
-                                                    <td className="px-4 py-2 text-right">{(ch.percentage).toFixed(1)}%</td>
-                                                </tr>)}
+                                                {channelData.map((ch, idx) => (
+                                                    <tr key={idx} className="even:bg-slate-700/30 text-slate-200">
+                                                        <td className="px-4 py-2">{ch.name}</td>
+                                                        <td className="px-4 py-2 text-right">{formatNumber(ch.units)}</td>
+                                                        <td className="px-4 py-2 text-right">{(ch.percentage).toFixed(1)}%</td>
+                                                    </tr>
+                                                ))}
                                             </tbody>
                                         </table>
                                     </div>
@@ -375,7 +366,7 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                         </div>
                     </section>
 
-                    <hr className="dark:border-gray-700" />
+                    <hr className="border-slate-700" />
 
                     {/* Section 4: Supply Chain */}
                     <section>
@@ -387,8 +378,7 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                             <Metric label="Avg Air Lead Time" value={`${avgAirLeadTime} days`} />
                         </div>
 
-                        {/* Task 2: Split into In Production + In Transit sections */}
-                        {/* Section A: In Production */}
+                        {/* In Production POs */}
                         {(sku.inProductionPOs || []).length > 0 && (
                             <>
                                 <h4 className="font-semibold text-amber-400 mb-2">🏭 In Production</h4>
@@ -413,7 +403,7 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                             </>
                         )}
 
-                        {/* Section B: In Transit */}
+                        {/* In Transit POs */}
                         <h4 className="font-semibold text-slate-300 mb-2">🚢 In Transit</h4>
                         {inTransitPOs.length > 0 ? (
                             <div className="overflow-x-auto border border-slate-600 rounded-lg mb-6">
@@ -434,7 +424,6 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                                                 </td>
                                                 <td className="px-4 py-2">{formatDate(po.etaDate)}</td>
                                                 <td className={`px-4 py-2 font-semibold ${po.isDelayed ? 'text-red-500' : 'text-gray-700 dark:text-gray-300'}`}>
-                                                    {/* FIX: Changed delayDays to delay_days to match interface in types.ts */}
                                                     {po.daysRemaining} {po.isDelayed && <span className="text-xs font-normal">(Delayed {po.delay_days}d)</span>}
                                                 </td>
                                             </tr>
@@ -468,7 +457,7 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                         ) : <EmptyState message="No PO history available" />}
                     </section>
 
-                    <hr className="dark:border-gray-700" />
+                    <hr className="border-slate-700" />
 
                     {/* Section 5: Business Rules & Combos */}
                     <section>
@@ -532,7 +521,6 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                                         <span className="font-medium text-slate-200">{formatCurrency(sku.businessRules?.unitCost || sku.unitCost || 0)}</span>
                                     </div>
                                 </div>
-                                {/* Task 3: BULK pattern ticker */}
                                 {sku.suggestBulkSs && (
                                     <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 mt-2">
                                         <span className="text-amber-400">⚡</span>
@@ -546,10 +534,9 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white"><GiftIcon className="w-5 h-5 text-purple-400" /> Combo Usage</h3>
                                 {comboUsage.length > 0 ? (
                                     <div className="space-y-3">
-                                        <p className="text-sm text-gray-500">This item is part of <span className="font-bold text-purple-600">{comboUsage.length}</span> combo(s), driving <span className="font-bold">{(sku.comboImpactPercent || 0).toFixed(1)}%</span> of sales.</p>
+                                        <p className="text-sm text-slate-400">This item is part of <span className="font-bold text-purple-400">{comboUsage.length}</span> combo(s), driving <span className="font-bold">{(sku.comboImpactPercent || 0).toFixed(1)}%</span> of sales.</p>
                                         <div className="border border-slate-600 rounded-lg overflow-hidden">
                                             <table className="min-w-full text-sm">
-                                                {/* Task 6: Added 90D Sales column */}
                                                 <thead className="bg-slate-700"><tr><th className="px-4 py-2 text-left text-slate-300">Combo Name</th><th className="px-4 py-2 text-right text-slate-300">Qty/Combo</th><th className="px-4 py-2 text-right text-slate-300">90D Sales</th></tr></thead>
                                                 <tbody className="divide-y divide-slate-700">
                                                     {comboUsage.map(c => (
@@ -579,7 +566,6 @@ export const SkuDetailModal: FC<SkuDetailModalProps> = ({ sku, onClose, chartPer
                         </button>
                         {showDebug && (
                             <pre className="mt-4 p-4 bg-slate-900 rounded-lg text-xs overflow-x-auto border border-slate-700 text-slate-300">
-                                {/* Debug: focused on new fields */}
                                 {JSON.stringify({
                                     b2bRegularUnits: sku.b2bRegularUnits,
                                     bulkUnits: sku.bulkUnits,

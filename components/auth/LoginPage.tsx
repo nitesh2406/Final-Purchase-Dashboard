@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';
-import { APPS_SCRIPT_URL } from '../../App.tsx';
+import { APPS_SCRIPT_URL } from '../../constants';
 
 interface LoginPageProps {
     onLoginSuccess: (user: any) => void;

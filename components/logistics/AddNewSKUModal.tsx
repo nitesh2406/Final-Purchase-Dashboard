@@ -73,7 +73,7 @@ export const AddNewSKUModal: React.FC<AddNewSKUModalProps> = ({ isOpen, onClose,
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in fade-in duration-200" onClick={onClose}>
-            <div className="bg-[#1e293b] border border-slate-700 rounded-lg shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
                 {/* Header */}
                 <div className="flex items-center justify-between p-6 border-b border-slate-700">
                     <div>

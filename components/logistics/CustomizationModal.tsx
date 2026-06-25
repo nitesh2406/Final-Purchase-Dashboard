@@ -63,7 +63,7 @@ export const CustomizationModal: React.FC<CustomizationModalProps> = ({ isOpen, 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200" onClick={onClose}>
             <div 
-                className="bg-[#1e293b] border border-slate-700 rounded-lg shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200" 
+                className="bg-slate-800 border border-slate-700 rounded-lg shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}

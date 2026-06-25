@@ -10,24 +10,26 @@ import {
 import { DraftOrderEdit } from './DraftOrderEdit';
 import { CancelDraftModal } from './CancelDraftModal';
 import { PurchaseOrder, DraftOrder, Sku, DraftStatus, Vendor, VendorMaster } from '../../types';
-import { APPS_SCRIPT_URL, API_ACTIONS, ViewType } from '../../App';
+import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { ViewType } from '../../types';
 
 const StatusBadge: React.FC<{ status: DraftStatus }> = ({ status }) => {
     const config: Record<string, string> = {
-        'DRAFT': 'bg-slate-600 text-white',
-        'PARTIALLY_SUBMITTED': 'bg-amber-600 text-white',
+        'DRAFT': 'bg-slate-700 text-slate-300',
+        'PARTIALLY_SUBMITTED': 'bg-orange-600 text-white',
         'SUBMITTED': 'bg-blue-600 text-white',
-        'CANCELLED': 'bg-red-600 text-white',
+        'CANCELLED': 'bg-red-600/20 text-red-400 border border-red-500/50',
     };
     const labels: Record<string, string> = {
         'DRAFT': 'Draft',
         'PARTIALLY_SUBMITTED': 'Partially Submitted',
-        'SUBMITTED': 'Submitted',
+        'SUBMITTED': 'Order Placed',
         'CANCELLED': 'Cancelled',
     };
+    const key = String(status).toUpperCase();
     return (
-        <span className={`px-2 py-1 text-[11px] font-bold rounded uppercase tracking-wider ${config[String(status).toUpperCase()] || 'bg-slate-600 text-white'}`}>
-            {labels[String(status).toUpperCase()] || status}
+        <span className={`px-2 py-0.5 text-[10px] font-semibold rounded uppercase tracking-wider ${config[key] || 'bg-slate-700 text-slate-300'}`}>
+            {labels[key] || status}
         </span>
     );
 };
@@ -86,20 +88,20 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [activeTab, setActiveTab] = useState<'All' | DraftStatus>('DRAFT');
+    const [activeTab, setActiveTab] = useState<'All' | DraftStatus>('DRAFT' as any);
     const [cancelModalDraft, setCancelModalDraft] = useState<DraftOrder | null>(null);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [isMutating, setIsMutating] = useState(false);
     const [isFetchingDetails, setIsFetchingDetails] = useState(false);
 
-    // BUG 1 FIX: Mode selection modal state for new draft creation
+    // Mode selection modal for new draft creation
     const [createModeModal, setCreateModeModal] = useState(false);
     const [newDraftMode, setNewDraftMode] = useState<'SEA' | 'AIR'>('SEA');
 
-    // ISSUE 7: Prefetch cache for DRAFT lines
+    // Prefetch cache for DRAFT lines
     const [draftLinesCache, setDraftLinesCache] = useState<Map<string, any[]>>(new Map());
-    const [lastPrefetchTime, setLastPrefetchTime] = useState<string>('');
+
     const prefetchedRef = useRef(false);
 
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'id', direction: 'desc' });
@@ -108,12 +110,11 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
-        await onRefreshDrafts();
-        prefetchedRef.current = false; // Re-trigger prefetch after refresh
+        onRefreshDrafts();
+        prefetchedRef.current = false;
         setIsRefreshing(false);
     };
 
-    // ISSUE 7: Prefetch all DRAFT lines on load
     const prefetchDraftLines = useCallback(async () => {
         const draftItems = drafts.filter(d => String(d.status).toUpperCase() === 'DRAFT');
         if (draftItems.length === 0) return;
@@ -121,7 +122,6 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
         const newCache = new Map<string, any[]>();
         const CONCURRENCY = 5;
 
-        // Process in batches of CONCURRENCY
         for (let i = 0; i < draftItems.length; i += CONCURRENCY) {
             const batch = draftItems.slice(i, i + CONCURRENCY);
             const results = await Promise.all(
@@ -148,10 +148,8 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
         }
 
         setDraftLinesCache(newCache);
-        setLastPrefetchTime(new Date().toLocaleTimeString());
     }, [drafts]);
 
-    // Trigger prefetch when drafts are loaded
     useEffect(() => {
         if (drafts.length > 0 && !prefetchedRef.current) {
             prefetchedRef.current = true;
@@ -162,7 +160,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     const filteredDrafts = useMemo(() => {
         const lowerQuery = searchQuery.toLowerCase();
         return drafts.filter(d => {
-            const matchesTab = activeTab === 'All' || String(d.status).toUpperCase() === activeTab;
+            const matchesTab = activeTab === 'All' || String(d.status).toUpperCase() === String(activeTab).toUpperCase();
             const matchesSearch = d.id.toLowerCase().includes(lowerQuery) ||
                 (d.vendors && d.vendors.some(v => v.toLowerCase().includes(lowerQuery)));
             return matchesTab && matchesSearch;
@@ -182,17 +180,15 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
         });
     }, [filteredDrafts, sortConfig]);
 
-    // ISSUE 4: Handle highlight and scroll
+    // Handle highlight and scroll to target row
     useEffect(() => {
         if (highlightDraftId) {
-            // Find the page containing this draft
             const draftIndex = sortedDrafts.findIndex(d => d.id === highlightDraftId);
             if (draftIndex !== -1) {
                 const targetPage = Math.floor(draftIndex / rowsPerPage) + 1;
                 setCurrentPage(targetPage);
                 setHighlightedId(highlightDraftId);
 
-                // Reset after 3 seconds
                 const timer = setTimeout(() => {
                     setHighlightedId(null);
                     setHighlightDraftId(null);
@@ -203,7 +199,6 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
         }
     }, [highlightDraftId, sortedDrafts, rowsPerPage, setHighlightDraftId]);
 
-    // Scroll highlighted row into view
     useEffect(() => {
         if (highlightedId) {
             const element = document.getElementById(`draft-row-${highlightedId}`);
@@ -239,7 +234,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
             const result = await response.json();
             if (result.success) {
                 setDrafts(prev => prev.map(d => d.id === cancelModalDraft.id ? {
-                    ...d, status: 'CANCELLED' as const, cancelledAt: new Date().toISOString()
+                    ...d, status: 'Cancelled' as DraftStatus, cancelledAt: new Date().toISOString()
                 } : d));
                 showToast(`Draft order ${cancelModalDraft.id} cancelled`, 'success');
             } else {
@@ -267,7 +262,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                 const result = await response.json();
                 if (result.success) {
                     setDrafts(prev => prev.map(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY_SUBMITTED'].includes(String(d.status).toUpperCase())
-                        ? { ...d, status: 'CANCELLED' as const, cancelledAt: new Date().toISOString() }
+                        ? { ...d, status: 'Cancelled' as DraftStatus, cancelledAt: new Date().toISOString() }
                         : d));
                     showToast(`${affected.length} drafts cancelled`, 'success');
                     setSelectedIds([]);
@@ -285,7 +280,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     const handleEdit = async (id: string) => {
         if (isFetchingDetails || !id) return;
 
-        // ISSUE 7: Check prefetch cache first
+        // Check prefetch cache first
         const cachedLines = draftLinesCache.get(id);
         if (cachedLines) {
             const draft = drafts.find(d => d.id === id);
@@ -381,14 +376,13 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                     try {
                         const isEdit = view === 'edit';
                         const action = isEdit ? API_ACTIONS.SAVE_DRAFT : API_ACTIONS.CREATE_DRAFT;
-                        // BUG 2 FIX: Use flat structure for create payload
                         const payload = isEdit
                             ? { action, draftId: updated.id, ...updated, lines: updated.items }
                             : {
                                 action,
-                                mode: updated.mode || updated.planned_mode,
                                 lines: updated.items || [],
-                                ...updated
+                                ...updated,
+                                mode: updated.mode || updated.planned_mode,
                             };
 
                         const response = await fetch(APPS_SCRIPT_URL, {
@@ -430,7 +424,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     }
 
     return (
-        <div className="flex flex-col h-full space-y-4 text-gray-900 dark:text-white relative p-6 bg-gray-50 dark:bg-[#0f172a] min-h-screen">
+        <div className="flex flex-col h-full space-y-4 text-slate-800 dark:text-white relative p-6 bg-slate-50 dark:bg-slate-900 min-h-screen">
             {(toast || isMutating || isFetchingDetails) && (
                 <div className="fixed top-24 right-8 z-[150] flex flex-col gap-2">
                     {(isMutating || isFetchingDetails) && (
@@ -451,34 +445,34 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
 
             <div className="flex items-center gap-3 px-1 h-10 mb-2">
                 <div className="relative flex-1">
-                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
                     <input
                         type="text"
                         placeholder="Search by Draft PO number, vendor, or item..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 bg-white dark:bg-slate-800/50 border border-gray-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-slate-500 text-sm text-gray-900 dark:text-white"
+                        className="w-full pl-9 pr-4 py-2 bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-slate-500 text-sm text-slate-800 dark:text-white"
                     />
                 </div>
 
-                <Button variant="secondary" className="border-slate-700 h-10 px-4 whitespace-nowrap" icon={<FunnelIcon className="w-4 h-4" />}>Filters</Button>
+                <Button variant="secondary" className="border-slate-200 dark:border-slate-700 h-10 px-4 whitespace-nowrap bg-white dark:bg-slate-800/40 text-slate-700 dark:text-slate-350" icon={<FunnelIcon className="w-4 h-4" />}>Filters</Button>
 
                 <button
                     onClick={handleRefresh}
                     disabled={isRefreshing}
-                    className="p-2.5 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-white transition-all shadow-lg"
+                    className="p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-all shadow-sm"
                     title="Refresh Drafts"
                 >
                     <ArrowPathIcon className={`w-5 h-5 ${isRefreshing ? 'animate-spin text-blue-400' : ''}`} />
                 </button>
 
-                <Button onClick={handleCreateNew} className="bg-blue-600 hover:bg-blue-700 h-10 px-4 whitespace-nowrap shadow-lg shadow-blue-900/20" icon={<PlusIcon className="w-4 h-4" />}>Create Draft PO</Button>
+                <Button onClick={handleCreateNew} className="bg-blue-600 hover:bg-blue-700 h-10 px-4 whitespace-nowrap shadow-lg shadow-blue-950/10 dark:shadow-blue-900/20" icon={<PlusIcon className="w-4 h-4" />}>Create Draft PO</Button>
             </div>
 
             {drafts.length > 0 ? (
                 <>
                     <div className="space-y-3">
-                        <div className="flex gap-8 border-b border-slate-800 px-1">
+                        <div className="flex gap-8 border-b border-slate-200 dark:border-slate-800 px-1">
                             {([
                                 { key: 'All' as const, label: 'All' },
                                 { key: 'DRAFT' as const, label: 'Draft' },
@@ -488,83 +482,88 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                             ]).map(({ key: tab, label }) => (
                                 <button
                                     key={tab}
-                                    onClick={() => { setActiveTab(tab); setCurrentPage(1); }}
-                                    className={`pb-3 text-sm font-medium transition-all relative ${activeTab === tab ? 'text-blue-500' : 'text-slate-500 hover:text-slate-300'
-                                        }`}
+                                    onClick={() => { setActiveTab(tab as any); setCurrentPage(1); }}
+                                    className={`pb-3 text-sm font-medium transition-all relative ${
+                                        String(activeTab).toUpperCase() === String(tab).toUpperCase() || activeTab === tab
+                                            ? 'text-blue-500 font-semibold'
+                                            : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+                                    }`}
                                 >
                                     {label}
-                                    {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-full" />}
+                                    {(String(activeTab).toUpperCase() === String(tab).toUpperCase() || activeTab === tab) && (
+                                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-full" />
+                                    )}
                                 </button>
                             ))}
                         </div>
                     </div>
 
-                    <Card className="bg-white dark:bg-slate-800/30 border-gray-200 dark:border-slate-700 p-0 overflow-hidden flex flex-col flex-grow shadow-xl">
+                    <Card className="bg-white dark:bg-slate-800/30 border border-slate-200 dark:border-slate-700 p-0 overflow-hidden flex flex-col flex-grow shadow-md dark:shadow-xl">
                         <div className="overflow-x-auto min-w-[1000px]">
                             {paginatedDrafts.length > 0 ? (
                                 <table className="w-full text-left text-sm border-collapse">
                                     <thead>
-                                        <tr className="bg-gray-50 dark:bg-slate-900/50 text-gray-500 dark:text-slate-400 text-[11px] uppercase tracking-wider border-b border-gray-200 dark:border-slate-700">
+                                        <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 text-[11px] uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
                                             <th className="px-4 py-3 w-10">
                                                 <input
                                                     type="checkbox"
                                                     checked={selectedIds.length === paginatedDrafts.length && paginatedDrafts.length > 0}
                                                     onChange={toggleSelectAll}
-                                                    className="rounded border-slate-600 bg-slate-800"
+                                                    className="rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800"
                                                 />
                                             </th>
-                                            <th className="px-4 py-3 font-semibold cursor-pointer hover:text-gray-900 dark:hover:text-white text-sm text-gray-600 dark:text-slate-300" onClick={() => handleSort('id')}>Draft PO Number <SortIcon column="id" /></th>
-                                            <th className="px-4 py-3 font-semibold text-sm text-gray-600 dark:text-slate-300">Vendor(s)</th>
-                                            <th className="px-4 py-3 font-semibold text-xs text-gray-500 dark:text-slate-400 uppercase">Mode</th>
-                                            <th className="px-4 py-3 font-semibold cursor-pointer hover:text-gray-900 dark:hover:text-white text-sm text-gray-600 dark:text-slate-300" onClick={() => handleSort('draft_date')}>PO Date <SortIcon column="draft_date" /></th>
-                                            <th className="px-4 py-3 font-semibold text-center cursor-pointer hover:text-gray-900 dark:hover:text-white text-sm text-gray-600 dark:text-slate-300" onClick={() => handleSort('total_skus')}>Total SKUs <SortIcon column="total_skus" /></th>
-                                            <th className="px-4 py-3 font-semibold text-center cursor-pointer hover:text-gray-900 dark:hover:text-white text-sm text-gray-600 dark:text-slate-300" onClick={() => handleSort('total_items')}>Total Items <SortIcon column="total_items" /></th>
-                                            <th className="px-4 py-3 font-semibold cursor-pointer hover:text-gray-900 dark:hover:text-white text-sm text-gray-600 dark:text-slate-300" onClick={() => handleSort('status')}>Status <SortIcon column="status" /></th>
-                                            <th className="px-4 py-3 font-semibold text-right text-sm text-gray-600 dark:text-slate-300">Actions</th>
+                                            <th className="px-4 py-3 font-medium cursor-pointer hover:text-slate-850 dark:hover:text-white" onClick={() => handleSort('id')}>Draft PO Number <SortIcon column="id" /></th>
+                                            <th className="px-4 py-3 font-medium">Vendor(s)</th>
+                                            <th className="px-4 py-3 font-medium text-xs text-slate-500 dark:text-slate-400 uppercase">Mode</th>
+                                            <th className="px-4 py-3 font-medium cursor-pointer hover:text-slate-850 dark:hover:text-white" onClick={() => handleSort('draft_date')}>PO Date <SortIcon column="draft_date" /></th>
+                                            <th className="px-4 py-3 font-medium text-center cursor-pointer hover:text-slate-850 dark:hover:text-white" onClick={() => handleSort('total_skus')}>Total SKUs <SortIcon column="total_skus" /></th>
+                                            <th className="px-4 py-3 font-medium text-center cursor-pointer hover:text-slate-850 dark:hover:text-white" onClick={() => handleSort('total_items')}>Total Items <SortIcon column="total_items" /></th>
+                                            <th className="px-4 py-3 font-medium cursor-pointer hover:text-slate-850 dark:hover:text-white" onClick={() => handleSort('status')}>Status <SortIcon column="status" /></th>
+                                            <th className="px-4 py-3 font-medium text-right">Actions</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-700/50">
+                                    <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
                                         {paginatedDrafts.map((draft) => (
                                             <tr
                                                 key={draft.id}
                                                 id={`draft-row-${draft.id}`}
                                                 onClick={() => handleEdit(draft.id)}
-                                                className={`group hover:bg-gray-50 dark:hover:bg-slate-700/40 transition-all duration-300 cursor-pointer ${String(draft.status).toUpperCase() === 'CANCELLED' ? 'opacity-50' : ''} ${highlightedId === draft.id ? 'ring-4 ring-blue-500/50 bg-blue-900/20 z-10' : ''}`}
+                                                className={`group hover:bg-slate-100 dark:hover:bg-slate-700/40 transition-all duration-300 cursor-pointer ${String(draft.status).toUpperCase() === 'CANCELLED' || draft.status === 'Cancelled' ? 'opacity-50' : ''} ${highlightedId === draft.id ? 'ring-4 ring-blue-500/50 bg-blue-50 dark:bg-blue-900/20 z-10' : ''}`}
                                             >
                                                 <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                                     <input
                                                         type="checkbox"
                                                         checked={selectedIds.includes(draft.id)}
                                                         onChange={() => setSelectedIds(prev => prev.includes(draft.id) ? prev.filter(rowId => rowId !== draft.id) : [...prev, draft.id])}
-                                                        className="rounded border-slate-600 bg-slate-800"
+                                                        className="rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800"
                                                     />
                                                 </td>
-                                                <td className="px-4 py-3 font-bold text-blue-400 text-base">{draft.id}</td>
-                                                <td className="px-4 py-3 text-gray-800 dark:text-slate-100 text-base">
+                                                <td className="px-4 py-3 font-mono font-bold text-blue-500 dark:text-blue-400">{draft.id}</td>
+                                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                                                     <div className="flex flex-col leading-tight">
-                                                        {draft.vendors && draft.vendors.slice(0, 2).map((v, i) => <span key={i}>{v}</span>)}
-                                                        {draft.vendors && draft.vendors.length > 2 && <span className="text-xs text-slate-400 mt-1">+ {draft.vendors.length - 2} more</span>}
+                                                        {draft.vendors && draft.vendors.slice(0, 2).map((v, i) => <span key={i} className="text-xs">{v}</span>)}
+                                                        {draft.vendors && draft.vendors.length > 2 && <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">+ {draft.vendors.length - 2} more</span>}
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <ModeBadge mode={draft.mode || draft.planned_mode} />
                                                 </td>
-                                                <td className="px-4 py-3 text-gray-500 dark:text-slate-400 text-sm">
+                                                <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs">
                                                     {formatDateString(draft.draft_date || draft.created_at)}
                                                 </td>
-                                                <td className="px-4 py-3 text-center text-gray-800 dark:text-slate-100 text-base">{draft.total_skus || draft.totalSkus || 0}</td>
-                                                <td className="px-4 py-3 text-center text-gray-900 dark:text-white font-bold text-base">{draft.total_items || draft.totalItems || 0}</td>
+                                                <td className="px-4 py-3 text-center text-slate-600 dark:text-slate-300">{draft.total_skus || draft.totalSkus || 0}</td>
+                                                <td className="px-4 py-3 text-center text-slate-800 dark:text-white font-medium">{draft.total_items || draft.totalItems || 0}</td>
                                                 <td className="px-4 py-3"><StatusBadge status={draft.status} /></td>
                                                 <td className="px-4 py-3 text-right">
                                                     <div className="flex justify-end gap-1.5" onClick={e => e.stopPropagation()}>
-                                                        <button onClick={() => handleEdit(draft.id)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-600 rounded text-gray-400 dark:text-slate-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors duration-150" title="Edit">
+                                                        <button onClick={() => handleEdit(draft.id)} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded text-slate-400 dark:text-slate-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors duration-150" title="Edit">
                                                             {['DRAFT', 'PARTIALLY_SUBMITTED'].includes(String(draft.status).toUpperCase()) ? <PencilIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
                                                         </button>
-                                                        <button onClick={() => handleDuplicate(draft)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-600 rounded text-gray-400 dark:text-slate-400 hover:text-gray-800 dark:hover:text-white transition-colors duration-150" title="Duplicate">
+                                                        <button onClick={() => handleDuplicate(draft)} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded text-slate-400 dark:text-slate-500 hover:text-slate-800 dark:hover:text-white transition-colors duration-150" title="Duplicate">
                                                             <DocumentDuplicateIcon className="w-4 h-4" />
                                                         </button>
                                                         {['DRAFT', 'PARTIALLY_SUBMITTED'].includes(String(draft.status).toUpperCase()) && (
-                                                            <button onClick={() => setCancelModalDraft(draft)} className="p-1.5 hover:bg-red-500/20 rounded text-gray-400 dark:text-slate-400 hover:text-red-500 transition-colors duration-150" title="Cancel">
+                                                            <button onClick={() => setCancelModalDraft(draft)} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-500/20 rounded text-slate-400 dark:text-slate-500 hover:text-red-500 transition-colors duration-150" title="Cancel">
                                                                 <TrashIcon className="w-4 h-4" />
                                                             </button>
                                                         )}
@@ -575,8 +574,8 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                     </tbody>
                                 </table>
                             ) : (
-                                <div className="py-20 flex flex-col items-center justify-center text-slate-500">
-                                    <MagnifyingGlassIcon className="w-12 h-12 mb-4 opacity-20" />
+                                <div className="py-20 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500">
+                                    <MagnifyingGlassIcon className="w-12 h-12 mb-4 opacity-30" />
                                     <h3 className="text-lg font-medium">No matches found</h3>
                                     <p className="text-sm">Try adjusting your filters or search query.</p>
                                 </div>
@@ -584,15 +583,15 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                         </div>
 
                         {totalPages > 1 && (
-                            <div className="p-4 border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/30 flex items-center justify-between">
-                                <span className="text-xs text-gray-500 dark:text-slate-500">
+                            <div className="p-4 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/35 flex items-center justify-between">
+                                <span className="text-xs text-slate-500 dark:text-slate-450">
                                     Showing {(currentPage - 1) * rowsPerPage + 1}-{Math.min(currentPage * rowsPerPage, sortedDrafts.length)} of {sortedDrafts.length} drafts
                                 </span>
                                 <div className="flex gap-1">
                                     <button
                                         disabled={currentPage === 1}
                                         onClick={() => setCurrentPage(prev => prev - 1)}
-                                        className="p-2 rounded hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                        className="p-2 rounded hover:bg-slate-200 dark:hover:bg-slate-700 border border-transparent hover:border-slate-300 dark:hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-slate-600 dark:text-slate-400"
                                     >
                                         <ChevronLeftIcon className="w-4 h-4" />
                                     </button>
@@ -600,7 +599,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                         <button
                                             key={i}
                                             onClick={() => setCurrentPage(i + 1)}
-                                            className={`w-8 h-8 rounded text-xs font-medium transition-all ${currentPage === i + 1 ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 hover:text-gray-900 dark:hover:text-white'}`}
+                                            className={`w-8 h-8 rounded text-xs font-medium transition-all ${currentPage === i + 1 ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-250 dark:hover:bg-slate-700 hover:text-slate-800 dark:hover:text-white'}`}
                                         >
                                             {i + 1}
                                         </button>
@@ -608,7 +607,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                     <button
                                         disabled={currentPage === totalPages}
                                         onClick={() => setCurrentPage(prev => prev + 1)}
-                                        className="p-2 rounded hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                        className="p-2 rounded hover:bg-slate-200 dark:hover:bg-slate-700 border border-transparent hover:border-slate-300 dark:hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-slate-600 dark:text-slate-400"
                                     >
                                         <ChevronRightIcon className="w-4 h-4" />
                                     </button>
@@ -618,29 +617,29 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                     </Card>
                 </>
             ) : (
-                <div className="border-2 border-dashed border-slate-700 rounded-2xl py-24 flex flex-col items-center justify-center bg-slate-800/20 text-center px-6">
-                    <ListBulletIcon className="w-12 h-12 text-slate-600 mb-6" />
-                    <h3 className="text-xl font-semibold text-slate-300">No draft orders yet</h3>
+                <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl py-24 flex flex-col items-center justify-center bg-white dark:bg-slate-800/20 text-center px-6 shadow-sm">
+                    <ListBulletIcon className="w-12 h-12 text-slate-400 dark:text-slate-600 mb-6" />
+                    <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-300">No draft orders yet</h3>
                     <p className="text-slate-500 mt-2 max-w-sm">Create your first draft order to start planning and managing purchase orders across multiple vendors.</p>
-                    <Button onClick={handleCreateNew} className="mt-8 bg-blue-600 hover:bg-blue-700 h-11 px-8 font-bold text-white shadow-xl shadow-blue-900/30 transition-all duration-150 active:scale-95" icon={<PlusIcon className="w-4 h-4" />}>
+                    <Button onClick={handleCreateNew} className="mt-8 bg-blue-600 hover:bg-blue-700 h-11 px-8 font-bold text-white shadow-lg shadow-blue-500/10 dark:shadow-blue-900/30 transition-all duration-150 active:scale-95" icon={<PlusIcon className="w-4 h-4" />}>
                         Create Draft PO
                     </Button>
                 </div>
             )}
 
-            {/* BUG 1 FIX: Shipping Mode Selection Modal */}
+            {/* Shipping Mode Selection Modal */}
             {createModeModal && (
                 <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-200">
-                    <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-2xl p-6 w-full max-w-sm animate-in zoom-in-95 duration-200">
-                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-1">Select Shipping Mode</h3>
-                        <p className="text-xs text-gray-500 dark:text-slate-400 mb-5">Choose the shipping mode for this draft order.</p>
+                    <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xl p-6 w-full max-w-sm animate-in zoom-in-95 duration-200">
+                        <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-1">Select Shipping Mode</h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-5">Choose the shipping mode for this draft order.</p>
                         <div className="flex gap-3 mb-6">
                             <button
                                 onClick={() => setNewDraftMode('SEA')}
                                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 font-semibold text-sm transition-all ${
                                     newDraftMode === 'SEA'
                                         ? 'bg-blue-600/20 text-blue-400 border-blue-500 shadow-lg shadow-blue-900/20'
-                                        : 'bg-gray-50 dark:bg-slate-900/50 text-gray-400 dark:text-slate-500 border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
+                                        : 'bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
                                 }`}
                             >
                                 <ShipIcon className="w-5 h-5" />
@@ -651,7 +650,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 font-semibold text-sm transition-all ${
                                     newDraftMode === 'AIR'
                                         ? 'bg-sky-600/20 text-sky-400 border-sky-500 shadow-lg shadow-sky-900/20'
-                                        : 'bg-gray-50 dark:bg-slate-900/50 text-gray-400 dark:text-slate-500 border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
+                                        : 'bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
                                 }`}
                             >
                                 <AirplaneIcon className="w-5 h-5" />
@@ -662,7 +661,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                             <Button
                                 variant="secondary"
                                 onClick={() => setCreateModeModal(false)}
-                                className="flex-1 h-10 border-gray-200 dark:border-slate-700"
+                                className="flex-1 h-10 border-slate-200 dark:border-slate-700"
                             >
                                 Cancel
                             </Button>

@@ -8,15 +8,131 @@ type PrefTab = 'General' | 'Notifications' | 'Data & Security' | 'Integrations' 
 
 export const SystemPreferences: React.FC = () => {
     const [activeTab, setActiveTab] = useState<PrefTab>('General');
+    const [clearedStatus, setClearedStatus] = useState<string | null>(null);
+    const [cacheStats, setCacheStats] = useState(() => {
+        const invStr = localStorage.getItem('purchase_invoices_table');
+        const payStr = localStorage.getItem('payment_logs_table');
+        const setStr = localStorage.getItem('settlement_records_table');
+        const eodTime = localStorage.getItem('last_eod_success_time');
+        
+        let invCount = 0;
+        let payCount = 0;
+        let setCount = 0;
+        let eodActive = false;
+        let eodRemaining = '';
+        
+        try { if (invStr) invCount = JSON.parse(invStr).length; } catch(e){}
+        try { if (payStr) payCount = JSON.parse(payStr).length; } catch(e){}
+        try { if (setStr) setCount = JSON.parse(setStr).length; } catch(e){}
+        
+        if (eodTime) {
+            const diff = Date.now() - parseInt(eodTime, 10);
+            if (diff < 10 * 60 * 1000) {
+                eodActive = true;
+                const secLeft = Math.ceil((10 * 60 * 1000 - diff) / 1000);
+                const min = Math.floor(secLeft / 60);
+                const sec = secLeft % 60;
+                eodRemaining = `${min}m ${sec}s`;
+            }
+        }
+        
+        return { invCount, payCount, setCount, eodActive, eodRemaining };
+    });
+
+    const handleClearCache = () => {
+        localStorage.removeItem('purchase_invoices_table');
+        localStorage.removeItem('payment_logs_table');
+        localStorage.removeItem('settlement_records_table');
+        localStorage.removeItem('last_eod_success_time');
+        localStorage.removeItem('vendor_shipment_draft');
+        
+        setCacheStats({
+            invCount: 0,
+            payCount: 0,
+            setCount: 0,
+            eodActive: false,
+            eodRemaining: ''
+        });
+        
+        setClearedStatus('Optimistic data and offline cache successfully cleared! Reloading to fetch raw Sheets data...');
+        setTimeout(() => {
+            window.location.reload();
+        }, 1200);
+    };
 
     const renderContent = () => {
         switch(activeTab) {
             case 'General': return (
                 <div>
-                    <h4 className="font-semibold mb-2">Organization Info</h4>
-                    <div className="grid grid-cols-2 gap-4">
-                        {/* Form fields for org info */}
+                    <h4 className="font-semibold mb-2 text-slate-800 dark:text-white">Organization Info</h4>
+                    <div className="grid grid-cols-2 gap-4 text-slate-600 dark:text-slate-300">
+                        <div>
+                            <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Company Name</label>
+                            <input type="text" readOnly value="Cubelelo Logistics Private Limited" className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-2 text-sm text-slate-800 dark:text-white" />
+                        </div>
+                        <div>
+                            <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">HQ Location</label>
+                            <input type="text" readOnly value="Bengaluru, Karnataka, India" className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-2 text-sm text-slate-800 dark:text-white" />
+                        </div>
                     </div>
+                </div>
+            );
+            case 'Data & Security': return (
+                <div className="space-y-6">
+                    <div>
+                        <h4 className="font-semibold text-slate-800 dark:text-white mb-1">Optimistic UI Cache & Offline State</h4>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Manage local offline caching used to ensure fast interaction. Clearing the cache forces immediate real-time fetch from the master Google Sheets spreadsheet.</p>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                            <span className="block text-xs text-slate-500 dark:text-slate-400">Total Purchase Invoices</span>
+                            <span className="text-xl font-bold text-slate-800 dark:text-white font-mono">{cacheStats.invCount}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                            <span className="block text-xs text-slate-500 dark:text-slate-400">Cached Payment Logs</span>
+                            <span className="text-xl font-bold text-slate-800 dark:text-white font-mono">{cacheStats.payCount}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                            <span className="block text-xs text-slate-500 dark:text-slate-400">Settlement Ledger Size</span>
+                            <span className="text-xl font-bold text-slate-800 dark:text-white font-mono">{cacheStats.setCount}</span>
+                        </div>
+                        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                            <span className="block text-xs text-slate-500 dark:text-slate-400">EOD Safe Interval</span>
+                            <span className="text-sm font-bold text-slate-800 dark:text-white font-mono flex items-center gap-1.5 mt-1">
+                                {cacheStats.eodActive ? (
+                                    <>
+                                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                                        Locked ({cacheStats.eodRemaining})
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                                        Inactive (Idle)
+                                    </>
+                                )}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-100/60 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60 rounded-xl p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                            <span className="block text-sm font-semibold text-slate-800 dark:text-white">Reset Optimistic Storage</span>
+                            <span className="block text-xs text-slate-500 dark:text-slate-400 mt-0.5">Wipes local database copies, draft orders, and 10-minute protective EOD delay.</span>
+                        </div>
+                        <button
+                            onClick={handleClearCache}
+                            className="bg-amber-600 hover:bg-amber-500 text-white font-medium text-xs px-4 py-2.5 rounded-lg shadow-md transition-all duration-200"
+                        >
+                            Purge Cache & Fetch Hard Copy
+                        </button>
+                    </div>
+
+                    {clearedStatus && (
+                        <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs animate-pulse">
+                            {clearedStatus}
+                        </div>
+                    )}
                 </div>
             );
             case 'User Management': return (

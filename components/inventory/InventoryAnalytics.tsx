@@ -35,7 +35,7 @@ export const InventoryAnalytics: React.FC = () => {
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card>
-                    <h3 className="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-4">Total Spend by Vendor</h3>
+                    <h3 className="text-lg font-medium leading-6 text-slate-900 dark:text-white mb-4">Total Spend by Vendor</h3>
                      <ResponsiveContainer width="100%" height={250}>
                         <PieChart>
                             <Pie data={spendByVendorData} cx="50%" cy="50%" labelLine={false} outerRadius={80} fill="#8884d8" dataKey="value" nameKey="name" label={(entry) => entry.name}>
@@ -47,7 +47,7 @@ export const InventoryAnalytics: React.FC = () => {
                      </ResponsiveContainer>
                 </Card>
                 <Card>
-                    <h3 className="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-4">Inventory Value (On Hand vs In Transit)</h3>
+                    <h3 className="text-lg font-medium leading-6 text-slate-900 dark:text-white mb-4">Inventory Value (On Hand vs In Transit)</h3>
                      <ResponsiveContainer width="100%" height={250}>
                         <BarChart data={MOCK_SKUS} layout="vertical" margin={{ top: 5, right: 30, left: 70, bottom: 5 }}>
                            <CartesianGrid strokeDasharray="3 3" />
@@ -63,37 +63,37 @@ export const InventoryAnalytics: React.FC = () => {
             </div>
 
             <Card>
-                <h3 className="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-4">Master Item Visibility</h3>
-                <input 
+                <h3 className="text-lg font-medium leading-6 text-slate-900 dark:text-white mb-4">Master Item Visibility</h3>
+                <input
                     type="text"
                     placeholder="Search by SKU, EAN, or Name..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="mb-4 w-full sm:w-1/2 rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    className="mb-4 w-full sm:w-1/2 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                        <thead className="bg-gray-50 dark:bg-gray-700">
+                    <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
+                        <thead className="bg-slate-100 dark:bg-slate-900">
                             <tr>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">SKU</th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
-                                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">On Hand</th>
-                                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">In Transit</th>
-                                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">On Order</th>
-                                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Days of Cover</th>
+                                <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">SKU</th>
+                                <th className="px-4 py-3 text-left text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Name</th>
+                                <th className="px-4 py-3 text-right text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">On Hand</th>
+                                <th className="px-4 py-3 text-right text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">In Transit</th>
+                                <th className="px-4 py-3 text-right text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">On Order</th>
+                                <th className="px-4 py-3 text-right text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Days of Cover</th>
                             </tr>
                         </thead>
-                        <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                        <tbody className="bg-white dark:bg-transparent divide-y divide-slate-200 dark:divide-slate-700">
                             {filteredSkus.map((sku) => {
                                 const doc = calculateDOC(sku);
                                 return (
-                                <tr key={sku.id}>
-                                    <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">{sku.id}</td>
-                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{sku.name}</td>
-                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 text-right">{sku.stockOnHand}</td>
-                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 text-right">{sku.stockInTransit}</td>
-                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 text-right">{sku.stockOnOrder}</td>
-                                    <td className={`px-4 py-4 whitespace-nowrap text-sm text-right font-semibold ${doc < 15 ? 'text-red-500' : 'text-green-500'}`}>{isFinite(doc) ? doc.toFixed(1) : 'N/A'}</td>
+                                <tr key={sku.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/20 transition-colors">
+                                    <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-slate-900 dark:text-white">{sku.id}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-600 dark:text-slate-400">{sku.name}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-600 dark:text-slate-400 text-right">{sku.stockOnHand}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-600 dark:text-slate-400 text-right">{sku.stockInTransit}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-600 dark:text-slate-400 text-right">{sku.stockOnOrder}</td>
+                                    <td className={`px-4 py-4 whitespace-nowrap text-sm text-right font-semibold ${doc < 15 ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{isFinite(doc) ? doc.toFixed(1) : 'N/A'}</td>
                                 </tr>
                                 );
                             })}

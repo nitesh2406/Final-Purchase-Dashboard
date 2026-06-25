@@ -14,7 +14,7 @@ import {
   ClockIcon
 } from '../icons/Icons';
 import { BatchFinance, ShipmentFinanceData } from '../../types';
-import { APPS_SCRIPT_URL } from '../../App';
+import { APPS_SCRIPT_URL } from '../../constants';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 
@@ -201,7 +201,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
 
   if (isLoading && !financeData.batch) {
     return (
-      <div className="p-6 max-w-[1600px] mx-auto bg-slate-900 min-h-screen text-slate-100 space-y-8 animate-pulse">
+      <div className="p-6 max-w-[1600px] mx-auto bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-slate-100 space-y-8 animate-pulse">
         <div className="h-8 bg-slate-800 rounded w-1/4" />
         <div className="grid grid-cols-4 gap-4">
           {[1, 2, 3, 4].map(i => <div key={i} className="h-24 bg-slate-800 rounded-xl" />)}
@@ -213,7 +213,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
 
   if (error) {
     return (
-      <div className="p-6 max-w-[1600px] mx-auto bg-slate-900 min-h-screen text-slate-100">
+      <div className="p-6 max-w-[1600px] mx-auto bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-slate-100">
         <div className="bg-red-500/10 border border-red-500/30 p-6 rounded-xl text-center">
           <ExclamationTriangleIcon className="w-12 h-12 text-red-500 mx-auto mb-4" />
           <h2 className="text-xl font-bold mb-2">Error Loading Details</h2>
@@ -228,7 +228,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
   if (!batch) return null;
 
   return (
-    <div className="p-6 max-w-[1600px] mx-auto bg-slate-900 min-h-screen text-slate-100 pb-24 space-y-8">
+    <div className="p-6 max-w-[1600px] mx-auto bg-slate-50 dark:bg-slate-900 min-h-screen text-slate-800 dark:text-slate-100 pb-24 space-y-8">
       {/* SECTION 1 — Page Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="space-y-2">
@@ -267,60 +267,60 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
 
       {/* SECTION 2 — Batch Info Bar */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="bg-slate-800 border-slate-700 p-4">
+        <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-blue-500/10 rounded-lg">
-              <TruckIcon className="w-5 h-5 text-blue-400" />
+              <TruckIcon className="w-5 h-5 text-blue-500 dark:text-blue-400" />
             </div>
-            <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Carrier & Tracking</span>
+            <span className="text-xs text-slate-550 dark:text-slate-400 font-bold uppercase tracking-wider">Carrier & Tracking</span>
           </div>
-          <div className="text-lg font-bold">{batch.carrier}</div>
-          <div className="text-sm font-mono text-slate-500">{batch.tracking_number}</div>
+          <div className="text-lg font-bold text-slate-800 dark:text-white">{batch.carrier}</div>
+          <div className="text-sm font-mono text-slate-500 dark:text-slate-400">{batch.tracking_number}</div>
         </Card>
 
-        <Card className="bg-slate-800 border-slate-700 p-4">
+        <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-yellow-500/10 rounded-lg">
-              <ClockIcon className="w-5 h-5 text-yellow-400" />
+              <ClockIcon className="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
             </div>
-            <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Expected Delivery</span>
+            <span className="text-xs text-slate-550 dark:text-slate-400 font-bold uppercase tracking-wider">Expected Delivery</span>
           </div>
-          <div className="text-lg font-bold">
+          <div className="text-lg font-bold text-slate-800 dark:text-white">
             {batch.expected_delivery ? new Date(batch.expected_delivery).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'TBA'}
           </div>
-          <div className="text-xs text-slate-500">Shipped: {batch.shipped_at ? new Date(batch.shipped_at).toLocaleDateString() : 'N/A'}</div>
+          <div className="text-xs text-slate-500 dark:text-slate-400">Shipped: {batch.shipped_at ? new Date(batch.shipped_at).toLocaleDateString() : 'N/A'}</div>
         </Card>
 
-        <Card className="bg-slate-800 border-slate-700 p-4">
+        <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-emerald-500/10 rounded-lg">
-              <BanknotesIcon className="w-5 h-5 text-emerald-400" />
+              <BanknotesIcon className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
             </div>
-            <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Total Amount</span>
+            <span className="text-xs text-slate-550 dark:text-slate-400 font-bold uppercase tracking-wider">Total Amount</span>
           </div>
-          <div className="text-lg font-bold">{batch.total_currency} {batch.total_amount?.toLocaleString()}</div>
-          <div className="text-sm font-bold text-blue-400">
+          <div className="text-lg font-bold text-slate-800 dark:text-white">{batch.total_currency} {batch.total_amount?.toLocaleString()}</div>
+          <div className="text-sm font-bold text-blue-600 dark:text-blue-400">
             {batch.amount_inr ? `₹${batch.amount_inr.toLocaleString()}` : (
-              <span className="text-amber-500 flex items-center gap-1">
+              <span className="text-amber-600 dark:text-amber-500 flex items-center gap-1">
                 <ExclamationTriangleIcon className="w-3 h-3" /> FX Rate N/A
               </span>
             )}
           </div>
         </Card>
 
-        <Card className="bg-slate-800 border-slate-700 p-4">
+        <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-purple-500/10 rounded-lg">
-              <CheckBadgeIcon className="w-5 h-5 text-purple-400" />
+              <CheckBadgeIcon className="w-5 h-5 text-purple-600 dark:text-purple-400" />
             </div>
-            <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Payment Status</span>
+            <span className="text-xs text-slate-550 dark:text-slate-400 font-bold uppercase tracking-wider">Payment Status</span>
           </div>
           <div className="mt-1">
             <span className={`px-3 py-1 rounded-full text-sm font-bold uppercase tracking-wider ${getPaymentStatusColor(batch.payment_status)}`}>
               {batch.payment_status}
             </span>
           </div>
-          <div className="text-xs text-slate-500 mt-2">
+          <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">
             {batch.total_vendors} Vendors • {batch.total_shipments} Shipments
           </div>
         </Card>
@@ -328,9 +328,9 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
 
       {/* SECTION 3 — Batch Edit Panel */}
       {isEditingBatch && (
-        <Card className="bg-slate-800 border-blue-500/50 p-6 animate-in slide-in-from-top-4 duration-300">
-          <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+        <Card className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-blue-500/50 p-6 animate-in slide-in-from-top-4 duration-300">
+          <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-slate-800 dark:text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-blue-500 dark:text-blue-400" viewBox="0 0 20 20" fill="currentColor">
               <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
             </svg>
             Edit Batch Details
@@ -342,7 +342,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                 type="text" 
                 value={batchForm.carrier}
                 onChange={e => setBatchForm({...batchForm, carrier: e.target.value})}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-600 outline-none"
               />
             </div>
             <div className="space-y-1.5">
@@ -351,7 +351,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                 type="text" 
                 value={batchForm.tracking_number}
                 onChange={e => setBatchForm({...batchForm, tracking_number: e.target.value})}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+                className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-600 outline-none"
               />
             </div>
             <div className="space-y-1.5">
@@ -422,17 +422,17 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
       )}
 
       {/* SECTION 4 — Shipments Table */}
-      <Card className="bg-slate-800 border-slate-700 overflow-hidden">
-        <div className="p-4 border-b border-slate-700 flex justify-between items-center">
-          <h3 className="font-bold flex items-center gap-2">
-            <BoxIcon className="w-5 h-5 text-slate-400" />
+      <Card className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <div className="p-4 border-b border-slate-250 dark:border-slate-700 flex justify-between items-center">
+          <h3 className="font-bold flex items-center gap-2 text-slate-850 dark:text-white">
+            <BoxIcon className="w-5 h-5 text-slate-500 dark:text-slate-400" />
             Vendor Shipments ({shipments.length})
           </h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-900/50 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700">
+              <tr className="bg-slate-100 dark:bg-slate-900/50 text-[10px] font-bold text-slate-600 dark:text-slate-500 uppercase tracking-widest border-b border-slate-250 dark:border-slate-700">
                 <th className="px-6 py-4">Vendor</th>
                 <th className="px-6 py-4">Invoice No</th>
                 <th className="px-6 py-4">Invoice Date</th>
@@ -443,30 +443,30 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700/50">
+            <tbody className="divide-y divide-slate-300 dark:divide-slate-700/50">
               {shipments.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={8} className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
                     No shipments found in this batch.
                   </td>
                 </tr>
               ) : (
                 shipments.map((s: any) => (
                   <React.Fragment key={s.shipment_id}>
-                    <tr className={`hover:bg-slate-700/30 transition-colors ${editingShipmentId === s.shipment_id ? 'bg-blue-500/5' : ''}`}>
-                      <td className="px-6 py-4 font-bold text-slate-300">{s.vendor_code}</td>
-                      <td className="px-6 py-4 text-sm text-slate-400">{s.invoice_no}</td>
-                      <td className="px-6 py-4 text-sm text-slate-500">
+                    <tr className={`hover:bg-slate-200/50 dark:hover:bg-slate-700/30 transition-colors ${editingShipmentId === s.shipment_id ? 'bg-blue-500/5' : ''}`}>
+                      <td className="px-6 py-4 font-bold text-slate-800 dark:text-slate-300">{s.vendor_code}</td>
+                      <td className="px-6 py-4 text-sm text-slate-750 dark:text-slate-400">{s.invoice_no}</td>
+                      <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-500">
                         {s.invoice_date ? new Date(s.invoice_date).toLocaleDateString() : 'N/A'}
                       </td>
-                      <td className="px-6 py-4 font-bold text-slate-200">
+                      <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-200">
                         {s.currency} {s.total_amount?.toLocaleString()}
                       </td>
                       <td className="px-6 py-4">
                         {s.amount_inr ? (
-                          <span className="text-blue-400 font-bold">₹{s.amount_inr.toLocaleString()}</span>
+                          <span className="text-blue-600 dark:text-blue-400 font-bold">₹{s.amount_inr.toLocaleString()}</span>
                         ) : (
-                          <span className="text-amber-500 text-xs font-bold flex items-center gap-1">
+                          <span className="text-amber-600 dark:text-amber-500 text-xs font-bold flex items-center gap-1">
                             <ExclamationTriangleIcon className="w-3 h-3" /> Rate N/A
                           </span>
                         )}
@@ -476,21 +476,21 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                           {s.payment_status}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-sm text-emerald-400 font-bold">
+                      <td className="px-6 py-4 text-sm text-emerald-600 dark:text-emerald-400 font-bold">
                         ₹{s.paid_inr?.toLocaleString() || '0'}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <button 
                           onClick={() => setEditingShipmentId(editingShipmentId === s.shipment_id ? null : s.shipment_id)}
-                          className="text-blue-400 hover:text-blue-300 text-xs font-bold"
+                          className="text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300 text-xs font-bold"
                         >
                           {editingShipmentId === s.shipment_id ? 'Cancel' : 'Edit'}
                         </button>
                       </td>
                     </tr>
                     {editingShipmentId === s.shipment_id && (
-                      <tr className="bg-slate-900/50">
-                        <td colSpan={8} className="px-6 py-6 border-b border-slate-700">
+                      <tr className="bg-slate-100 dark:bg-slate-900/50">
+                        <td colSpan={8} className="px-6 py-6 border-b border-slate-300 dark:border-slate-700">
                           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                             <div className="space-y-1.5">
                               <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Invoice No</label>
@@ -501,7 +501,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                                   ...shipmentForms, 
                                   [s.shipment_id]: { ...shipmentForms[s.shipment_id], invoice_no: e.target.value }
                                 })}
-                                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600"
+                                className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-850 dark:text-white outline-none focus:ring-2 focus:ring-blue-600_not_found"
                               />
                             </div>
                             <div className="space-y-1.5">
@@ -513,7 +513,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                                   ...shipmentForms, 
                                   [s.shipment_id]: { ...shipmentForms[s.shipment_id], total_amount: Number(e.target.value) }
                                 })}
-                                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600"
+                                className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-850 dark:text-white outline-none focus:ring-2 focus:ring-blue-600"
                               />
                             </div>
                             <div className="space-y-1.5">
@@ -524,7 +524,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                                   ...shipmentForms, 
                                   [s.shipment_id]: { ...shipmentForms[s.shipment_id], currency: e.target.value }
                                 })}
-                                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600"
+                                className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-850 dark:text-white outline-none focus:ring-2 focus:ring-blue-600"
                               >
                                 <option value="RMB">RMB</option>
                                 <option value="USD">USD</option>
@@ -539,7 +539,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                                   ...shipmentForms, 
                                   [s.shipment_id]: { ...shipmentForms[s.shipment_id], remarks: e.target.value }
                                 })}
-                                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-600"
+                                className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-850 dark:text-white outline-none focus:ring-2 focus:ring-blue-600"
                                 placeholder="Financial remarks..."
                               />
                             </div>
@@ -564,22 +564,22 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
       </Card>
 
       {/* SECTION 5 — Payment History */}
-      <Card className="bg-slate-800 border-slate-700 overflow-hidden">
+      <Card className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden">
         <button 
           onClick={() => setIsPaymentHistoryExpanded(!isPaymentHistoryExpanded)}
-          className="w-full p-4 flex justify-between items-center hover:bg-slate-700/30 transition-colors"
+          className="w-full p-4 flex justify-between items-center hover:bg-slate-200/50 dark:hover:bg-slate-700/30 transition-colors"
         >
-          <h3 className="font-bold flex items-center gap-2">
-            <BanknotesIcon className="w-5 h-5 text-emerald-400" />
+          <h3 className="font-bold flex items-center gap-2 text-slate-850 dark:text-white">
+            <BanknotesIcon className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
             Payment History ({payments.length} payments)
           </h3>
           {isPaymentHistoryExpanded ? <ChevronUpIcon className="w-5 h-5 text-slate-500" /> : <ChevronDownIcon className="w-5 h-5 text-slate-500" />}
         </button>
         {isPaymentHistoryExpanded && (
-          <div className="border-t border-slate-700 overflow-x-auto animate-in slide-in-from-top-2 duration-200">
+          <div className="border-t border-slate-300 dark:border-slate-700 overflow-x-auto animate-in slide-in-from-top-2 duration-200">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-900/50 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700">
+                <tr className="bg-slate-100 dark:bg-slate-900/50 text-[10px] font-bold text-slate-600 dark:text-slate-500 uppercase tracking-widest border-b border-slate-300 dark:border-slate-700">
                   <th className="px-6 py-4">Date</th>
                   <th className="px-6 py-4">Vendor</th>
                   <th className="px-6 py-4">Account Type</th>
@@ -590,7 +590,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                   <th className="px-6 py-4">Notes</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/50">
+              <tbody className="divide-y divide-slate-300 dark:divide-slate-700/50">
                 {payments.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-6 py-8 text-center text-slate-500">No payments logged for this batch yet.</td>
@@ -598,20 +598,20 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                 ) : (
                   <>
                     {payments.map((p: any) => (
-                      <tr key={p.payment_id} className="hover:bg-slate-700/30 transition-colors">
-                        <td className="px-6 py-4 text-sm text-slate-400">{new Date(p.payment_date).toLocaleDateString()}</td>
-                        <td className="px-6 py-4 font-bold text-slate-300">{p.vendor_id}</td>
-                        <td className="px-6 py-4 text-xs text-slate-500 uppercase font-bold">{p.account_type}</td>
-                        <td className="px-6 py-4 font-bold text-emerald-400">₹{p.amount_inr?.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-sm text-slate-300">{p.currency} {p.amount_foreign?.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-xs font-mono text-slate-500">{p.day_fx_rate}</td>
-                        <td className="px-6 py-4 text-xs text-slate-500 font-mono">{p.reference_no}</td>
-                        <td className="px-6 py-4 text-xs text-slate-500 italic">{p.notes}</td>
+                      <tr key={p.payment_id} className="hover:bg-slate-200/50 dark:hover:bg-slate-700/30 transition-colors">
+                        <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{new Date(p.payment_date).toLocaleDateString()}</td>
+                        <td className="px-6 py-4 font-bold text-slate-800 dark:text-slate-300">{p.vendor_id}</td>
+                        <td className="px-6 py-4 text-xs text-slate-600 dark:text-slate-500 uppercase font-bold">{p.account_type}</td>
+                        <td className="px-6 py-4 font-bold text-emerald-600 dark:text-emerald-400">₹{p.amount_inr?.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-sm text-slate-800 dark:text-slate-300">{p.currency} {p.amount_foreign?.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-xs font-mono text-slate-600 dark:text-slate-500">{p.day_fx_rate}</td>
+                        <td className="px-6 py-4 text-xs text-slate-600 dark:text-slate-500 font-mono">{p.reference_no}</td>
+                        <td className="px-6 py-4 text-xs text-slate-600 dark:text-slate-500 italic">{p.notes}</td>
                       </tr>
                     ))}
-                    <tr className="bg-slate-900/80 font-bold border-t-2 border-slate-700">
-                      <td colSpan={3} className="px-6 py-4 text-right text-slate-400 uppercase tracking-wider text-xs">Total Payments (INR)</td>
-                      <td className="px-6 py-4 text-lg text-emerald-400">
+                    <tr className="bg-slate-100 dark:bg-slate-900/80 font-bold border-t-2 border-slate-300 dark:border-slate-700">
+                      <td colSpan={3} className="px-6 py-4 text-right text-slate-600 dark:text-slate-400 uppercase tracking-wider text-xs">Total Payments (INR)</td>
+                      <td className="px-6 py-4 text-lg text-emerald-600 dark:text-emerald-400">
                         ₹{payments.reduce((sum: number, p: any) => sum + (p.amount_inr || 0), 0).toLocaleString()}
                       </td>
                       <td colSpan={4}></td>
@@ -632,21 +632,21 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
               <ExclamationTriangleIcon className={`w-5 h-5 ${batch.blended_rate ? 'text-blue-400' : 'text-amber-400'}`} />
             </div>
             <div>
-              <h4 className="font-bold text-slate-200 mb-1">FX Rate Information</h4>
+              <h4 className="font-bold text-slate-800 dark:text-slate-200 mb-1">FX Rate Information</h4>
               {batch.blended_rate ? (
                 <div className="space-y-1">
-                  <p className="text-sm text-slate-400">
-                    Rate Period: <span className="text-slate-200 font-bold">{batch.rate_period}</span>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    Rate Period: <span className="text-slate-800 dark:text-slate-200 font-bold">{batch.rate_period}</span>
                   </p>
-                  <p className="text-sm text-slate-400">
-                    Blended Rate: <span className="text-blue-400 font-bold">₹{batch.blended_rate.toFixed(2)} / {batch.total_currency}</span>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    Blended Rate: <span className="text-blue-600 dark:text-blue-400 font-bold">₹{batch.blended_rate.toFixed(2)} / {batch.total_currency}</span>
                   </p>
-                  <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mt-2">
+                  <p className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider mt-2">
                     Source: Calculated from payments in this period
                   </p>
                 </div>
               ) : (
-                <p className="text-sm text-amber-400/80">
+                <p className="text-sm text-amber-600 dark:text-amber-400/80">
                   No FX rate for this period yet. Log payments to auto-calculate the blended rate for this shipment month.
                 </p>
               )}
@@ -656,7 +656,7 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
       </div>
 
       {/* Debug Panel */}
-      <div className="mt-12 pt-8 border-t border-slate-800">
+      <div className="mt-12 pt-8 border-t border-slate-250 dark:border-slate-800">
         <button 
           onClick={() => setShowDebug(!showDebug)}
           className="text-[10px] font-bold text-slate-500 hover:text-blue-500 uppercase tracking-widest transition-colors flex items-center gap-2"
@@ -671,12 +671,12 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                 <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Last Request</span>
                 <button 
                   onClick={() => copyToClipboard(JSON.stringify(lastRequest, null, 2))}
-                  className="text-[9px] text-blue-400 hover:underline font-bold uppercase"
+                  className="text-[9px] text-blue-500 hover:underline font-bold uppercase"
                 >
                   Copy JSON
                 </button>
               </div>
-              <pre className="bg-slate-950 border border-slate-800 p-4 rounded-lg text-[10px] font-mono text-slate-400 overflow-auto max-h-[400px]">
+              <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-350 dark:border-slate-800 p-4 rounded-lg text-[10px] font-mono text-slate-800 dark:text-slate-400 overflow-auto max-h-[400px]">
                 {lastRequest ? JSON.stringify(lastRequest, null, 2) : '// No request recorded'}
               </pre>
             </div>
@@ -685,12 +685,12 @@ export const ShipmentFinanceDetail: React.FC<ShipmentFinanceDetailProps> = ({ ba
                 <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Last Response</span>
                 <button 
                   onClick={() => copyToClipboard(JSON.stringify(lastResponse, null, 2))}
-                  className="text-[9px] text-blue-400 hover:underline font-bold uppercase"
+                  className="text-[9px] text-blue-500 hover:underline font-bold uppercase"
                 >
                   Copy JSON
                 </button>
               </div>
-              <pre className="bg-slate-950 border border-slate-800 p-4 rounded-lg text-[10px] font-mono text-slate-400 overflow-auto max-h-[400px]">
+              <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-350 dark:border-slate-800 p-4 rounded-lg text-[10px] font-mono text-slate-800 dark:text-slate-400 overflow-auto max-h-[400px]">
                 {lastResponse ? JSON.stringify(lastResponse, null, 2) : '// No response recorded'}
               </pre>
             </div>
