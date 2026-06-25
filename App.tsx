@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { LoginPage } from './components/auth/LoginPage.tsx';
-import { Sidebar } from './components/layout/sidebar.tsx';
-import { Header } from './components/layout/header.tsx';
+import { Sidebar } from './components/layout/Sidebar.tsx';
+import { Header } from './components/layout/Header.tsx';
 import { Dashboard } from './components/dashboard/Dashboard.tsx';
 import {
     PurchaseInvoice,
@@ -20,7 +20,7 @@ import { DraftOrdersTable } from './components/logistics/DraftOrdersTable.tsx';
 import { PurchaseOrders } from './components/purchasing/PurchaseOrders.tsx';
 import { VendorShipments } from './components/logistics/VendorShipments.tsx';
 import { ShipmentTracker } from './components/logistics/ShipmentTracker.tsx';
-import { BatchDetail } from './components/logistics/batchdetail.tsx';
+import { BatchDetail } from './components/logistics/BatchDetail.tsx';
 import { Logistics } from './components/logistics/Logistics.tsx';
 import { Finance } from './components/finance/Finance.tsx';
 import { InventoryAnalytics } from './components/inventory/InventoryAnalytics.tsx';

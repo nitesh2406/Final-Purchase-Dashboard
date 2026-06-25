@@ -127,8 +127,8 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
   const activeVendors = useMemo(() => {
     if (vendors && vendors.length > 0) {
       return vendors.map(v => ({
-        code: (v.id || (v as any).vendor_id || '').trim(),
-        name: (v.name || (v as any).vendor_name || v.id || (v as any).vendor_id || '').trim()
+        code: (('id' in v ? v.id : v.vendor_id) || '').trim(),
+        name: (('name' in v ? v.name : v.vendor_name) || '').trim()
       }));
     }
     // Fallback to initial structured vendors
@@ -148,16 +148,12 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
     }
 
     const ids = new Set<string>();
-    const matchedVendorObj = activeVendors.find(v => v.code === selectedVendor);
 
-    // 1. From invoices prop matching selected vendor ID or name
+    // 1. From invoices prop matching selected vendor
     if (localInvoices && localInvoices.length > 0) {
       localInvoices.forEach(inv => {
-        if (
-          inv.vendor === selectedVendor || 
-          (matchedVendorObj && (inv.vendor === matchedVendorObj.name || inv.vendor === matchedVendorObj.code))
-        ) {
-          if (inv.id) ids.add(inv.id);
+        if (inv.vendorCode === selectedVendor) {
+          if (inv.invoiceId) ids.add(inv.invoiceId);
         }
       });
     }
@@ -178,7 +174,7 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
 
     if (localInvoices && localInvoices.length > 0) {
       localInvoices.forEach(inv => {
-        if (inv && inv.id) ids.add(inv.id);
+        if (inv && inv.invoiceId) ids.add(inv.invoiceId);
       });
     }
 
@@ -265,7 +261,7 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
     // 1. Total Unpaid Invoices & Total Liability
     // Filter unpaid liability entries matching selected vendor or specific invoice
     let unpaidList: any[] = localInvoices
-      ? localInvoices.filter(i => i.status !== 'Paid' && i.status !== 'Cancelled')
+      ? localInvoices.filter(i => i.status !== 'Processed')
       : [];
 
     if (selectedVendor) {
