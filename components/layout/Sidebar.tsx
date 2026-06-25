@@ -91,11 +91,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollap
                     {!isCollapsed && (
                       <span className="ml-3 flex-1 whitespace-nowrap text-left">{item.name}</span>
                     )}
-                    {!isCollapsed && item.wip && (
-                      <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide rounded-full bg-orange-100 text-orange-600 dark:bg-orange-900/40 dark:text-orange-400 flex-shrink-0">
-                        Test
-                      </span>
-                    )}
                   </button>
                 ))}
               </div>

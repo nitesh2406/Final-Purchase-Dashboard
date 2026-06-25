@@ -40,7 +40,7 @@ import { ViewType } from './types';
 import { SkeletonDashboard } from './components/feedback/SkeletonDashboard.tsx';
 import { SyncQueueManager, QueueItem } from './services/syncQueue.ts';
 
-const TEST_LOGIN_BYPASS = false;
+const TEST_LOGIN_BYPASS = import.meta.env.VITE_TEST_LOGIN_BYPASS === 'true';
 const DEV_USER = TEST_LOGIN_BYPASS ? { name: 'Dev User', email: 'dev@local', role: 'ADMIN', loggedInAt: Date.now() } : null;
 
 const App: React.FC = () => {
