@@ -4,14 +4,6 @@ export type { VendorMaster } from '../types';
 
 export const IS_DEVELOPMENT_MODE = true;
 
-// Master list of Vendor Accounts
-export const MASTER_VENDOR_ACCOUNTS = [
-  { code: 'V-001', name: 'Jiaxing Sourcing Group' },
-  { code: 'V-002', name: 'Pinghu Clothing Co.' },
-  { code: 'V-003', name: 'Guangzhou Sourcing Ltd' },
-  { code: 'V-004', name: 'Yiwu Accessories Co.' },
-  { code: 'V-005', name: 'Shenzhen Hardware Group' }
-];
 
 // Resolve the Apps Script deployment URL - exported centrally from constants.ts
 const appsScriptUrl = APPS_SCRIPT_URL;
@@ -66,14 +58,38 @@ export async function executeAppsScriptProxy<T = any>(
 }
 
 /**
- * Fetches the vendor masters directly from the VendorAccounts sheet.
+ * Fetches the canonical vendor list from the 'Vendor Masters' sheet.
+ * Maps vendor_code → vendor_id so the VendorMaster type is satisfied.
+ */
+export async function fetchVendorMasters(): Promise<VendorMaster[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_vendor_masters', 'VendorMasters', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.vendors)) {
+      return response.vendors
+        .filter((v: any) => v.vendor_code || v.vendor_id)
+        .map((v: any) => ({
+          vendor_id: v.vendor_code || v.vendor_id || '',
+          vendor_name: v.vendor_name || v.vendor_code || '',
+          vendor_code: v.vendor_code || '',
+          is_active: v.active !== false
+        }));
+    }
+  } catch (err) {
+    console.error('Failed to fetch vendor masters:', err);
+  }
+  return [];
+}
+
+/**
+ * Fetches vendor finance accounts from the VendorAccounts sheet.
+ * Used for payment account selectors (trade/pool). Not for vendor dropdowns.
  */
 export async function fetchVendorAccounts(): Promise<VendorMaster[]> {
   try {
     const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_vendor_accounts', 'VendorAccounts', 'POST');
-    if (response && response.status === 'success' && Array.isArray(response.records)) {
-      return response.records.map((row: any) => ({
-        vendor_id: row.vendor_id || row['Vendor ID'] || row.vendorCode || '',
+    if (response && response.status === 'success' && Array.isArray(response.accounts)) {
+      return response.accounts.map((row: any) => ({
+        vendor_id: row.vendor_id || row['Vendor ID'] || row.account_id || row.vendorCode || '',
         vendor_name: row.vendor_name || row['Vendor Name'] || row.vendorName || '',
         currency: row.currency || '',
         country: row.country || '',
@@ -134,8 +150,7 @@ export async function deleteRecordByUniqueId(table: string, idColumn: string, ta
 
 
 export function getVendorName(vendorCode: string): string {
-  const match = MASTER_VENDOR_ACCOUNTS.find(v => v.code === vendorCode);
-  return match ? match.name : 'Unknown Sourcing Vendor';
+  return vendorCode || 'Unknown Vendor';
 }
 
 export interface SettlementRecord {

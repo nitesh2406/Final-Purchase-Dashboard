@@ -21,14 +21,6 @@ import {
 } from 'lucide-react';
 import { PurchaseInvoice, PaymentLog, SettlementRecord, VendorLedgerEntry, VendorMaster } from '../../services/settlementService';
 
-// Defining Master Sourcing Vendors list
-export const MASTER_VENDOR_ACCOUNTS = [
-  { code: 'V-001', name: 'Jiaxing Sourcing Group' },
-  { code: 'V-002', name: 'Pinghu Clothing Co.' },
-  { code: 'V-003', name: 'Guangzhou Sourcing Ltd' },
-  { code: 'V-004', name: 'Yiwu Accessories Co.' },
-  { code: 'V-005', name: 'Shenzhen Hardware Group' }
-];
 
 interface VendorLedgerTabProps {
   invoices: PurchaseInvoice[];
@@ -59,13 +51,10 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
 }) => {
   // Master vendors compiled list
   const masterVendors = useMemo(() => {
-    if (vendors && vendors.length > 0) {
-      return vendors.map(v => ({
-        code: v.vendor_id,
-        name: v.vendor_name || v.vendor_id
-      }));
-    }
-    return MASTER_VENDOR_ACCOUNTS;
+    return (vendors || []).map(v => ({
+      code: v.vendor_id,
+      name: v.vendor_name || v.vendor_id
+    }));
   }, [vendors]);
 
   // Active selected vendor state

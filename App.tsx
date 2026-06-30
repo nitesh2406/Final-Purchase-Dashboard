@@ -12,7 +12,7 @@ import {
     fetchPaymentLogs,
     fetchSettlementRecords,
     fetchVendorLedger,
-    fetchVendorAccounts,
+    fetchVendorMasters,
     syncInvoicesFromShipments,
     IS_DEVELOPMENT_MODE
 } from './services/settlementService.ts';
@@ -175,8 +175,8 @@ const App: React.FC = () => {
                 setVendorLedger(refreshedLedger);
                 setSettlementRecords(refreshedSettlements);
             } else if (type === 'vendor_create') {
-                const refreshedMasters = await fetchVendorAccounts();
-                setVendorMasters(refreshedMasters);
+                const refreshedMasters = await fetchVendorMasters();
+                if (refreshedMasters.length > 0) setVendorMasters(refreshedMasters);
             }
         });
     }, []);
@@ -360,7 +360,17 @@ const App: React.FC = () => {
             if (invData?.invoices) setInvoices(invData.invoices);
             if (venData?.vendors) setVendors(venData.vendors);
             if (notifData?.notifications) setNotifications(notifData.notifications);
-            if (venMastersData?.vendors) setVendorMasters(venMastersData.vendors);
+            if (venMastersData?.vendors) {
+                setVendorMasters(venMastersData.vendors
+                    .filter((v: any) => v.vendor_code || v.vendor_id)
+                    .map((v: any) => ({
+                        vendor_id: v.vendor_code || v.vendor_id || '',
+                        vendor_name: v.vendor_name || v.vendor_code || '',
+                        vendor_code: v.vendor_code || '',
+                        is_active: v.active !== false
+                    }))
+                );
+            }
 
             // Fetch Financial Data
             const finInvoicesPromise = fetchPurchaseInvoices();
@@ -382,14 +392,14 @@ const App: React.FC = () => {
                 fetchPaymentLogs(),
                 fetchSettlementRecords(),
                 fetchVendorLedger(),
-                fetchVendorAccounts(),
+                fetchVendorMasters(),
             ]);
 
             const rawShipments = (rawShipmentsRes && rawShipmentsRes.status === 'success' && Array.isArray(rawShipmentsRes.records))
                 ? rawShipmentsRes.records
                 : [];
 
-            setVendorMasters(masters);
+            if (masters.length > 0) setVendorMasters(masters);
             setVendorLedger(finVendorLedger);
 
             const lastEodSuccess = localStorage.getItem('last_eod_success_time');
