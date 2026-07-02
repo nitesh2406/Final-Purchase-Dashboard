@@ -1163,7 +1163,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                             <td className="px-5 py-4 text-xs font-bold font-mono text-right">
                               <span className="text-indigo-600 dark:text-indigo-400">
                                 {(() => {
-                                  const relevantSettlements = settlementRecords.filter(s => s.invoiceNo === inv.invoiceId && s.txnType === 'Invoice Settlement');
+                                  const relevantSettlements = settlementRecords.filter(s => s.invoice_no === inv.invoiceId && s.txnType === 'Invoice Settlement');
                                   const totalSettledRmb = relevantSettlements.reduce((sum, s) => sum + s.amountRmb, 0);
                                   const calculatedBalance = Math.max(0, (inv.rmb || 0) - totalSettledRmb);
                                   return `¥${calculatedBalance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
@@ -1285,7 +1285,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                               const totalSettledRmb = invoiceSettlementRecords.reduce((sum, s) => sum + s.amountRmb, 0);
                               
                               // Checking if there is an explicit advance record in the Settlement Ledger
-                              const hasAdvanceRecord = relevantRecords.some(s => s.invoiceNo === 'ADVANCE' || s.txnType === 'Advance Payment');
+                              const hasAdvanceRecord = relevantRecords.some(s => s.invoice_no === 'ADVANCE' || s.txnType === 'Advance Payment');
                               
                               // Checking if there is any partial settlement (some settled, but not all)
                               const isPartiallySettled = totalSettledRmb > 0 && totalSettledRmb < log.rmbAmount;

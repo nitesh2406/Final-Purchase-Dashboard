@@ -133,6 +133,21 @@ const App: React.FC = () => {
         return () => clearInterval(interval);
     }, []);
 
+    // Tracks whether finance data has been fetched this session (avoid re-fetching on tab switch)
+    const financeDataLoaded = React.useRef(false);
+
+    // Keep-warm: fire a lightweight GAS ping every 4 minutes to prevent cold starts
+    useEffect(() => {
+        if (!user) return;
+        const ping = () => fetch(APPS_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({ action: 'ping' })
+        }).catch(() => {});
+        const id = setInterval(ping, 4 * 60 * 1000);
+        return () => clearInterval(id);
+    }, [user]);
+
     const handleLoginSuccess = (userData: any) => {
         localStorage.setItem('auth_user', JSON.stringify(userData));
         setUser(userData);
@@ -372,160 +387,11 @@ const App: React.FC = () => {
                 );
             }
 
-            // Fetch Financial Data
-            const finInvoicesPromise = fetchPurchaseInvoices();
-            const rawShipmentsPromise = fetchDirect({ action: 'get_vendor_shipments' }).catch(err => {
-                console.warn('Failed to fetch raw Vendor_Shipments sheet:', err);
-                return { status: 'error', records: [] };
-            });
-
-            const [
-                finInvoices,
-                rawShipmentsRes,
-                finPayments,
-                finSettlements,
-                finVendorLedger,
-                masters
-            ] = await Promise.all([
-                finInvoicesPromise,
-                rawShipmentsPromise,
-                fetchPaymentLogs(),
-                fetchSettlementRecords(),
-                fetchVendorLedger(),
-                fetchVendorMasters(),
-            ]);
-
-            const rawShipments = (rawShipmentsRes && rawShipmentsRes.status === 'success' && Array.isArray(rawShipmentsRes.records))
-                ? rawShipmentsRes.records
-                : [];
-
-            if (masters.length > 0) setVendorMasters(masters);
-            setVendorLedger(finVendorLedger);
-
-            const lastEodSuccess = localStorage.getItem('last_eod_success_time');
-            const isCacheActive = false;
-
-            if (lastEodSuccess && !isCacheActive) {
-                localStorage.removeItem('last_eod_success_time');
-            }
-
-            let mergedInvoices = [...finInvoices];
-
-            const existingInvoiceIds = new Set(mergedInvoices.map((inv: any) => String(inv.invoiceId).trim()));
-            const optimisticInvoices: any[] = [];
-
-            if (!IS_DEVELOPMENT_MODE) {
-                rawShipments.forEach((ship: any) => {
-                    const invoiceId = String(ship.invoice_no || ship.invoiceId || ship['Invoice ID'] || ship.InvoiceId || '').trim();
-                    if (!invoiceId || invoiceId === '' || invoiceId === 'undefined' || invoiceId === 'null' || existingInvoiceIds.has(invoiceId)) {
-                        return;
-                    }
-
-                    const date = ship.invoice_date || ship['Invoice Date'] || ship.Date || new Date().toISOString().split('T')[0];
-                    const vendorCode = ship.VendorCode || ship['Vendor Code'] || ship.vendor_code || '';
-                    const rmb = parseFloat(ship.RMB || '0') || 0;
-
-                    optimisticInvoices.push({
-                        date,
-                        invoiceId,
-                        vendorCode,
-                        rmb,
-                        notes: 'Auto-Ingested from Shipments (In-Flight Sync)',
-                        er1: undefined,
-                        inr: undefined,
-                        status: 'Pending EOD',
-                        settledAmount: 0,
-                        balance: rmb,
-                        temp: true,
-                        createdAtTimestamp: Date.now()
-                    });
-                });
-            }
-
-            if (IS_DEVELOPMENT_MODE) {
-                setPurchaseInvoices(mergedInvoices);
-            } else {
-                setPurchaseInvoices(prev => {
-                    const remoteIds = new Set(mergedInvoices.map(i => i.invoiceId ? String(i.invoiceId).trim().toLowerCase() : ''));
-                    const remainingTemp = IS_DEVELOPMENT_MODE ? [] : prev.filter(i => {
-                        if (!i.temp) return false;
-                        const key = i.invoiceId ? String(i.invoiceId).trim().toLowerCase() : '';
-                        return !remoteIds.has(key);
-                    });
-
-                    const finalInvoices = [...remainingTemp, ...optimisticInvoices, ...mergedInvoices];
-                    const uniqueInvoicesMap = new Map();
-                    finalInvoices.forEach(inv => {
-                        const key = inv && inv.invoiceId ? String(inv.invoiceId).trim().toLowerCase() : '';
-                        if (key) {
-                            uniqueInvoicesMap.set(key, inv);
-                        }
-                    });
-                    return Array.from(uniqueInvoicesMap.values());
-                });
-            }
-
-            if (IS_DEVELOPMENT_MODE) {
-                setPaymentLogs(finPayments);
-            } else {
-                setPaymentLogs(prev => {
-                    const remoteIds = new Set(finPayments.map(p => p.paymentId ? String(p.paymentId).trim().toLowerCase() : ''));
-                    const remainingTemp = prev.filter(p => {
-                        if (!p.temp) return false;
-                        const key = p.paymentId ? String(p.paymentId).trim().toLowerCase() : '';
-                        return !remoteIds.has(key);
-                    });
-                    const finalPayments = [...remainingTemp, ...finPayments];
-                    const uniquePaymentsMap = new Map();
-                    finalPayments.forEach(p => {
-                        const key = p && p.paymentId ? String(p.paymentId).trim().toLowerCase() : '';
-                        if (key) {
-                            uniquePaymentsMap.set(key, p);
-                        }
-                    });
-                    return Array.from(uniquePaymentsMap.values());
-                });
-            }
-
-            if (IS_DEVELOPMENT_MODE) {
-                setSettlementRecords(finSettlements);
-            } else {
-                setSettlementRecords(prev => {
-                    const remoteIds = new Set(finSettlements.map(s => s.id ? String(s.id).trim().toLowerCase() : ''));
-                    const remainingTemp = prev.filter(s => {
-                        if (!s.temp) return false;
-                        const key = s.id ? String(s.id).trim().toLowerCase() : '';
-                        return !remoteIds.has(key);
-                    });
-                    const finalSettlements = [...remainingTemp, ...finSettlements];
-                    const uniqueSettlementsMap = new Map();
-                    finalSettlements.forEach(s => {
-                        const key = s && s.id ? String(s.id).trim().toLowerCase() : '';
-                        if (key) {
-                            uniqueSettlementsMap.set(key, s);
-                        }
-                    });
-                    return Array.from(uniqueSettlementsMap.values());
-                });
-            }
-
-            setIsSyncingShipments(true);
-            const syncPromise = syncInvoicesFromShipments();
-
-            syncPromise.then(async () => {
-                const refreshedInvoices = await fetchPurchaseInvoices();
-                setIsSyncingShipments(false);
-                setPurchaseInvoices(refreshedInvoices);
-                setShipmentsDataLoaded(true);
-            }).catch(err => {
-                console.error("Silent background sync refresh failed:", err);
-                setIsSyncingShipments(false);
-                setShipmentsDataLoaded(true);
-            });
-
+            // Core data ready — finance data loads lazily on first Finance tab visit
             setPurchaseDataLoaded(true);
             setPaymentDataLoaded(true);
             setVendorDataLoaded(true);
+            setShipmentsDataLoaded(true);
 
             setSyncSuccess(true);
             setIsSyncing(false);
@@ -543,7 +409,116 @@ const App: React.FC = () => {
         }
     }, []);
 
+    // Fetches finance-only data. Called lazily on first Finance tab visit, not on mount.
+    const fetchFinanceData = useCallback(async () => {
+        if (financeDataLoaded.current) return;
+        financeDataLoaded.current = true; // prevent double-fire
+        try {
+            const fetchDirect = async (payload: any) => {
+                try {
+                    const res = await fetch(APPS_SCRIPT_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                        body: JSON.stringify(payload)
+                    });
+                    const rawText = await res.text();
+                    try { return JSON.parse(rawText); } catch { return { status: 'error' }; }
+                } catch { return { status: 'error' }; }
+            };
+
+            const [finInvoices, rawShipmentsRes, finPayments, finSettlements, finVendorLedger, masters] =
+                await Promise.all([
+                    fetchPurchaseInvoices(),
+                    fetchDirect({ action: 'get_vendor_shipments' }).catch(() => ({ status: 'error', records: [] })),
+                    fetchPaymentLogs(),
+                    fetchSettlementRecords(),
+                    fetchVendorLedger(),
+                    fetchVendorMasters(),
+                ]);
+
+            const rawShipments = (rawShipmentsRes?.status === 'success' && Array.isArray(rawShipmentsRes.records))
+                ? rawShipmentsRes.records : [];
+
+            if (masters.length > 0) setVendorMasters(masters);
+            setVendorLedger(finVendorLedger);
+
+            const lastEodSuccess = localStorage.getItem('last_eod_success_time');
+            if (lastEodSuccess) localStorage.removeItem('last_eod_success_time');
+
+            const mergedInvoices = [...finInvoices];
+            const existingInvoiceIds = new Set(mergedInvoices.map((inv: any) => String(inv.invoiceId).trim()));
+            const optimisticInvoices: any[] = [];
+
+            if (!IS_DEVELOPMENT_MODE) {
+                rawShipments.forEach((ship: any) => {
+                    const invoiceId = String(ship.invoice_no || ship.invoiceId || ship['Invoice ID'] || ship.InvoiceId || '').trim();
+                    if (!invoiceId || invoiceId === 'undefined' || invoiceId === 'null' || existingInvoiceIds.has(invoiceId)) return;
+                    optimisticInvoices.push({
+                        date: ship.invoice_date || ship['Invoice Date'] || ship.Date || new Date().toISOString().split('T')[0],
+                        invoiceId,
+                        vendorCode: ship.VendorCode || ship['Vendor Code'] || ship.vendor_code || '',
+                        rmb: parseFloat(ship.RMB || '0') || 0,
+                        notes: 'Auto-Ingested from Shipments (In-Flight Sync)',
+                        er1: undefined, inr: undefined,
+                        status: 'Pending EOD', settledAmount: 0,
+                        balance: parseFloat(ship.RMB || '0') || 0,
+                        temp: true, createdAtTimestamp: Date.now()
+                    });
+                });
+            }
+
+            if (IS_DEVELOPMENT_MODE) {
+                setPurchaseInvoices(mergedInvoices);
+                setPaymentLogs(finPayments);
+                setSettlementRecords(finSettlements);
+            } else {
+                setPurchaseInvoices(prev => {
+                    const remoteIds = new Set(mergedInvoices.map((i: any) => i.invoiceId ? String(i.invoiceId).trim().toLowerCase() : ''));
+                    const remainingTemp = prev.filter(i => i.temp && !remoteIds.has(String(i.invoiceId || '').trim().toLowerCase()));
+                    const all = [...remainingTemp, ...optimisticInvoices, ...mergedInvoices];
+                    return Array.from(new Map(all.map(inv => [String(inv.invoiceId || '').trim().toLowerCase(), inv])).values());
+                });
+                setPaymentLogs(prev => {
+                    const remoteIds = new Set(finPayments.map((p: any) => String(p.paymentId || '').trim().toLowerCase()));
+                    const remainingTemp = prev.filter(p => p.temp && !remoteIds.has(String(p.paymentId || '').trim().toLowerCase()));
+                    return Array.from(new Map([...remainingTemp, ...finPayments].map(p => [String(p.paymentId || '').trim().toLowerCase(), p])).values());
+                });
+                setSettlementRecords(prev => {
+                    const remoteIds = new Set(finSettlements.map((s: any) => String(s.id || '').trim().toLowerCase()));
+                    const remainingTemp = prev.filter(s => s.temp && !remoteIds.has(String(s.id || '').trim().toLowerCase()));
+                    return Array.from(new Map([...remainingTemp, ...finSettlements].map(s => [String(s.id || '').trim().toLowerCase(), s])).values());
+                });
+            }
+
+            setIsSyncingShipments(true);
+            syncInvoicesFromShipments()
+                .then(async () => {
+                    const refreshed = await fetchPurchaseInvoices();
+                    setIsSyncingShipments(false);
+                    setPurchaseInvoices(refreshed);
+                })
+                .catch(() => setIsSyncingShipments(false));
+        } catch (err: any) {
+            console.error('Finance data fetch failed:', err);
+        }
+    }, []);
+
+    const FINANCE_VIEWS = ['Finance', 'PaymentLedger', 'AccountsView', 'SettlementLedger', 'ShipmentFinance', 'ShipmentFinanceDetail'];
+    useEffect(() => {
+        if (!user) return;
+        if (FINANCE_VIEWS.includes(currentView)) fetchFinanceData();
+    }, [currentView, user, fetchFinanceData]);
+
+    // Config fetches — serve from localStorage cache (1-hour TTL) to avoid a GAS call on every reload
+    const CONFIG_TTL = 60 * 60 * 1000;
     const fetchConfig = useCallback(async () => {
+        try {
+            const hit = localStorage.getItem('cache_forecasting_config');
+            if (hit) {
+                const { data, ts } = JSON.parse(hit);
+                if (Date.now() - ts < CONFIG_TTL) { setForecastingConfig(data); setConfigLastLoaded(new Date(ts)); return; }
+            }
+        } catch {}
         try {
             const response = await fetch(APPS_SCRIPT_URL, {
                 method: 'POST',
@@ -551,9 +526,10 @@ const App: React.FC = () => {
                 body: JSON.stringify({ action: 'get_forecasting_config' })
             });
             const data = await response.json();
-            if (data && data.success && data.config) {
+            if (data?.success && data?.config) {
                 setForecastingConfig(data.config);
                 setConfigLastLoaded(new Date());
+                localStorage.setItem('cache_forecasting_config', JSON.stringify({ data: data.config, ts: Date.now() }));
             }
         } catch (e) {
             console.error("Config fetch error:", e);
@@ -562,15 +538,23 @@ const App: React.FC = () => {
 
     const fetchAmazonConfig = useCallback(async () => {
         try {
+            const hit = localStorage.getItem('cache_amazon_config');
+            if (hit) {
+                const { data, ts } = JSON.parse(hit);
+                if (Date.now() - ts < CONFIG_TTL) { setAmazonConfig(data); setAmazonConfigLastLoaded(new Date(ts)); return; }
+            }
+        } catch {}
+        try {
             const response = await fetch(APPS_SCRIPT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                 body: JSON.stringify({ action: 'get_amazon_config' })
             });
             const data = await response.json();
-            if (data && data.status === 'success' && data.config) {
+            if (data?.status === 'success' && data?.config) {
                 setAmazonConfig(data.config);
                 setAmazonConfigLastLoaded(new Date());
+                localStorage.setItem('cache_amazon_config', JSON.stringify({ data: data.config, ts: Date.now() }));
             }
         } catch (e) {
             console.error('Amazon config fetch error:', e);
