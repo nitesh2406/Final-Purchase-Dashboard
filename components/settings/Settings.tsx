@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useQueryParam } from '../../hooks/useQueryParam';
 import { ForecastingConfig } from './ForecastingConfig';
 import { PricingConfig } from './PricingConfig';
 import { SystemPreferences } from './SystemPreferences';
@@ -80,7 +81,7 @@ export const Settings: React.FC<{
     onRefreshAmazonConfig?: () => void;
     amazonConfigLastLoaded?: Date | null;
 }> = ({ config: _config, onRefreshConfig: _onRefreshConfig, lastLoaded: _lastLoaded, amazonConfig, onRefreshAmazonConfig, amazonConfigLastLoaded }) => {
-    const [activeView, setActiveView] = useState<SettingsView>('Forecasting Config');
+    const [activeView, setActiveView] = useQueryParam<SettingsView>('settingsView', 'Forecasting Config');
 
     const renderView = () => {
         switch (activeView) {

@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleOAuthProvider } from '@react-oauth/google';
+import { BrowserRouter } from 'react-router-dom';
 import App from './App.tsx';
 
 // Clear previous cached data per user request
@@ -25,7 +26,9 @@ const root = createRoot(rootElement);
 root.render(
   <React.StrictMode>
      <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ''}>
-      <App />
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
     </GoogleOAuthProvider>
   </React.StrictMode>
 );

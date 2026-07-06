@@ -1,4 +1,5 @@
-import React, { useState, FC } from 'react';
+import React, { FC } from 'react';
+import { useQueryParam } from '../../hooks/useQueryParam';
 import { Invoice, Vendor, PurchaseOrder, Shipment } from '../../types';
 import { InvoicesView } from './InvoicesView';
 import { VendorsView } from './VendorsView';
@@ -26,7 +27,7 @@ const financeNav: { name: FinanceView, icon: React.ReactNode }[] = [
 ];
 
 export const Finance: FC<FinanceProps> = (props) => {
-    const [activeView, setActiveView] = useState<FinanceView>('Reports');
+    const [activeView, setActiveView] = useQueryParam<FinanceView>('financeView', 'Reports');
 
     const renderView = () => {
         switch (activeView) {

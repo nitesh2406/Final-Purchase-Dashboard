@@ -6,6 +6,7 @@ import { ArrowsUpDownIcon, ArrowPathIcon, ShipIcon, AirplaneIcon, ClockIcon, Pen
 import { SkuDetailModal } from './SkuDetailModal';
 import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
 import { ViewType } from '../../types';
+import { useQueryParam } from '../../hooks/useQueryParam';
 
 // Helper functions
 const formatNumber = (num: number) => new Intl.NumberFormat('en-IN').format(num);
@@ -85,7 +86,7 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
     const [isCreatingDraft, setIsCreatingDraft] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [toast, setToast] = useState<ToastState | null>(null);
-    const [activeMode, setActiveMode] = useState<'all' | 'sea' | 'air'>('all');
+    const [activeMode, setActiveMode] = useQueryParam<'all' | 'sea' | 'air'>('mode', 'all');
 
     // Per-mode reorderQty overrides
     const [qtyOverrides, setQtyOverrides] = useState<{

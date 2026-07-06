@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  getPurchaseInvoices, 
+import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
+import {
+  getPurchaseInvoices,
   submitPurchaseInvoice, 
   executeEODExchangeRateEngine, 
   resetPurchaseInvoicesDb,
@@ -83,7 +84,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   syncError = null
 }) => {
   // Navigation & UI tabs
-  const [activeTab, setActiveTab ] = useState<ActiveTabType>('purchase_entries');
+  const [activeTab, setActiveTab ] = useQueryParam<ActiveTabType>('accountsTab', 'purchase_entries');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEodRunning, setIsEodRunning] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
@@ -100,8 +101,8 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
 
   // Dynamic list states
   const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedVendorFilter, setSelectedVendorFilter] = useState('');
+  const [searchQuery, setSearchQuery] = useQueryParamFast('search', '');
+  const [selectedVendorFilter, setSelectedVendorFilter] = useQueryParam<string>('vendor', '');
   const [configError, setConfigError] = useState<string | null>(null);
   
   // EOD calculations report log console

@@ -39,16 +39,25 @@ import { APPS_SCRIPT_URL, API_ACTIONS } from './constants.ts';
 import { ViewType } from './types';
 import { SkeletonDashboard } from './components/feedback/SkeletonDashboard.tsx';
 import { SyncQueueManager, QueueItem } from './services/syncQueue.ts';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { viewToPath, matchPathToView } from './routes.ts';
 
 const TEST_LOGIN_BYPASS = import.meta.env.VITE_TEST_LOGIN_BYPASS === 'true';
 const DEV_USER = TEST_LOGIN_BYPASS ? { name: 'Dev User', email: 'dev@local', role: 'ADMIN', loggedInAt: Date.now() } : null;
 
 const App: React.FC = () => {
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-    const [currentView, setCurrentView] = useState<ViewType>('Dashboard');
-    const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
-    const [selectedFinanceBatchId, setSelectedFinanceBatchId] = useState<string | null>(null);
-    const [selectedSkuRequestId, setSelectedSkuRequestId] = useState<string | null>(null);
+
+    // Navigation state lives in the URL, not in React state, so refreshing or
+    // sharing a link always lands on the same view/record.
+    const location = useLocation();
+    const navigate = useNavigate();
+    const matchedRoute = matchPathToView(location.pathname);
+    const currentView: ViewType = matchedRoute?.view || 'Dashboard';
+    const setCurrentView = useCallback((v: ViewType) => navigate(viewToPath(v)), [navigate]);
+    const selectedBatchId: string | null = currentView === 'Batch Detail' ? (matchedRoute?.params.batchId || null) : null;
+    const selectedFinanceBatchId: string | null = currentView === 'Shipment Finance Detail' ? (matchedRoute?.params.batchId || null) : null;
+    const selectedSkuRequestId: string | null = currentView === 'SKU Detail' ? (matchedRoute?.params.requestId || null) : null;
     const [skuRequests, setSkuRequests] = useState<any[]>([]);
     const [skuRequestsLoaded, setSkuRequestsLoaded] = useState(false);
     const [skuStatusFilter, setSkuStatusFilter] = useState<string>('PENDING');
@@ -679,8 +688,7 @@ const App: React.FC = () => {
                 />;
             case 'Shipment Tracker':
                 return <ShipmentTracker onNavigateToBatch={(id) => {
-                    setSelectedBatchId(id);
-                    setCurrentView('Batch Detail');
+                    navigate(viewToPath('Batch Detail', { batchId: id }));
                 }} />;
             case 'Batch Detail':
                 return selectedBatchId ? (
@@ -689,8 +697,7 @@ const App: React.FC = () => {
                         onBack={() => setCurrentView('Shipment Tracker')}
                     />
                 ) : <ShipmentTracker onNavigateToBatch={(id) => {
-                    setSelectedBatchId(id);
-                    setCurrentView('Batch Detail');
+                    navigate(viewToPath('Batch Detail', { batchId: id }));
                 }} />;
             case 'Finance':
                 return <Finance
@@ -706,8 +713,7 @@ const App: React.FC = () => {
                 />;
             case 'Shipment Finance':
                 return <ShipmentFinance onNavigateToDetail={(id) => {
-                    setSelectedFinanceBatchId(id);
-                    setCurrentView('Shipment Finance Detail');
+                    navigate(viewToPath('Shipment Finance Detail', { batchId: id }));
                 }} />;
             case 'Shipment Finance Detail':
                 return selectedFinanceBatchId ? (
@@ -716,8 +722,7 @@ const App: React.FC = () => {
                         onBack={() => setCurrentView('Shipment Finance')}
                     />
                 ) : <ShipmentFinance onNavigateToDetail={(id) => {
-                    setSelectedFinanceBatchId(id);
-                    setCurrentView('Shipment Finance Detail');
+                    navigate(viewToPath('Shipment Finance Detail', { batchId: id }));
                 }} />;
             case 'Payment Ledger':
                 return <PaymentLedger
@@ -743,8 +748,7 @@ const App: React.FC = () => {
                     vendorLedger={vendorLedger}
                     vendors={displayVendorMasters}
                     onNavigateToDetail={(id) => {
-                        setSelectedFinanceBatchId(id);
-                        setCurrentView('Shipment Finance Detail');
+                        navigate(viewToPath('Shipment Finance Detail', { batchId: id }));
                     }}
                     onNavigate={(v) => setCurrentView(v)}
                     onRefresh={() => fetchAllData(true)}
@@ -765,8 +769,7 @@ const App: React.FC = () => {
             case 'Create SKU':
                 return <NewSkuDashboard
                     onOpenDetail={(id) => {
-                        setSelectedSkuRequestId(id);
-                        setCurrentView('SKU Detail');
+                        navigate(viewToPath('SKU Detail', { requestId: id }));
                     }}
                     cachedData={skuRequests}
                     onDataLoaded={(data) => {
@@ -791,8 +794,7 @@ const App: React.FC = () => {
                     />
                 ) : <NewSkuDashboard
                     onOpenDetail={(id) => {
-                        setSelectedSkuRequestId(id);
-                        setCurrentView('SKU Detail');
+                        navigate(viewToPath('SKU Detail', { requestId: id }));
                     }}
                     cachedData={skuRequests}
                     onDataLoaded={(data) => {

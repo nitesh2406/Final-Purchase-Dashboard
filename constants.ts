@@ -3,6 +3,10 @@ import { Sku, PurchaseOrder, Shipment, Invoice, Vendor, TaxSlab, HsnCode, Freigh
 
 export const APPS_SCRIPT_URL = (import.meta as any).env.VITE_APPS_SCRIPT_URL;
 
+// Dev/testing only: when true, Vendor Shipment finalization skips the Apps
+// Script write (no Sheets data changes) and only exercises the Drive upload.
+export const DEV_MODE_SKIP_SHIPMENT_WRITE = (import.meta as any).env.VITE_DEV_MODE_SKIP_SHIPMENT_WRITE === 'true';
+
 export const API_ACTIONS = {
     // Draft Operations
     GET_DRAFTS: 'get_drafts',
@@ -15,6 +19,7 @@ export const API_ACTIONS = {
     DUPLICATE_DRAFT: 'duplicate_draft',
     SAVE_CUSTOMIZATION: 'save_customization',
     // Purchase Order Operations
+    CREATE_PO_DIRECT: 'create_po_direct',
     GET_PURCHASE_ORDERS: 'get_pos',
     GET_PURCHASE_ORDER_DETAILS: 'get_purchase_order_details',
     CLOSE_PO: 'close_po',
@@ -31,6 +36,7 @@ export const API_ACTIONS = {
     SHIPMENT_GET_ALLOCATION: 'shipment_get_allocation',
     SHIPMENT_CREATE: 'shipment_create',
     GET_OPEN_BATCHES: 'get_open_batches',
+    UPDATE_SHIPMENT_DRIVE_DOCS: 'update_shipment_drive_docs',
     // Finance Operations
     GET_BATCHES_FINANCE: 'get_batches_finance',
     GET_BATCH_FINANCE_DETAIL: 'get_batch_finance_detail',

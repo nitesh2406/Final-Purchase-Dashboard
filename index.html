@@ -31,6 +31,21 @@
         }
       }
     </script>
+    <script>
+      // Sync the Tailwind `dark` class with the OS/browser color-scheme
+      // preference, and keep it live-updated when that preference changes
+      // (Tailwind's darkMode:'class' strategy never does this on its own).
+      (function () {
+        var media = window.matchMedia('(prefers-color-scheme: dark)');
+        var applyTheme = function (isDark) {
+          document.documentElement.classList.toggle('dark', isDark);
+        };
+        applyTheme(media.matches);
+        media.addEventListener('change', function (e) {
+          applyTheme(e.matches);
+        });
+      })();
+    </script>
   <script type="importmap">
 {
   "imports": {

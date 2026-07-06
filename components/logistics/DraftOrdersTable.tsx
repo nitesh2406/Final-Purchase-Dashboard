@@ -10,6 +10,7 @@ import {
 import { DraftOrderEdit } from './DraftOrderEdit';
 import { CancelDraftModal } from './CancelDraftModal';
 import { PurchaseOrder, DraftOrder, Sku, DraftStatus, Vendor, VendorMaster } from '../../types';
+import { useQueryParam } from '../../hooks/useQueryParam';
 import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
 import { ViewType } from '../../types';
 
@@ -88,7 +89,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [activeTab, setActiveTab] = useState<'All' | DraftStatus>('DRAFT' as any);
+    const [activeTab, setActiveTab] = useQueryParam<'All' | DraftStatus>('statusFilter', 'DRAFT' as any);
     const [cancelModalDraft, setCancelModalDraft] = useState<DraftOrder | null>(null);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);

@@ -30,7 +30,7 @@ import {
     LockClosedIcon,
     EyeIcon
 } from '../icons/Icons';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { APPS_SCRIPT_URL, API_ACTIONS, DEV_MODE_SKIP_SHIPMENT_WRITE } from '../../constants';
 import { ViewType } from '../../types';
 import { VendorMaster, Sku } from '../../types';
 
@@ -601,9 +601,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const [isRefreshingAllocation, setIsRefreshingAllocation] = useState(false);
     const [canProceedToCreation, setCanProceedToCreation] = useState(false);
     const [expandedWarnings, setExpandedWarnings] = useState<{[key: string]: boolean}>({});
-    const [showCreatePOModal, setShowCreatePOModal] = useState(false);
-    const [createdDraftId, setCreatedDraftId] = useState<string | null>(null);
-    const [showDraftSuccessModal, setShowDraftSuccessModal] = useState(false);
+    const [showPreviewPOModal, setShowPreviewPOModal] = useState(false);
+    const [poCreationResults, setPoCreationResults] = useState<Array<{vendor_code: string; po_id?: string; sku_count?: number; total_qty?: number; success: boolean; error?: string}>>([]);
+    const [showPOResultModal, setShowPOResultModal] = useState(false);
+    const [isRetryingVendor, setIsRetryingVendor] = useState<string | null>(null);
     const [detectionInfo, setDetectionInfo] = useState<any>(null);
     const [invoiceMetaNotice, setInvoiceMetaNotice] = useState<{no: string, date: string} | null>(null);
 
@@ -621,6 +622,21 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const [isCreatingShipment, setIsCreatingShipment] = useState(false);
     const [shipmentSuccess, setShipmentSuccess] = useState(false);
     const [createdShipmentId, setCreatedShipmentId] = useState('');
+
+    // Drive document upload (after Finalize, once batch_id + shipment_id are known)
+    const [isUploadingDocs, setIsUploadingDocs] = useState(false);
+    const [showDriveUploadModal, setShowDriveUploadModal] = useState(false);
+    const [driveUploadResults, setDriveUploadResults] = useState<Array<{
+        fileName: string;
+        status: 'uploaded' | 'conflict' | 'used_existing' | 'failed';
+        fileId?: string;
+        viewUrl?: string;
+        error?: string;
+        existing?: { fileId: string; fileName: string; viewUrl: string };
+    }>>([]);
+    const [driveFolderInfo, setDriveFolderInfo] = useState<{ folderId: string; folderUrl: string } | null>(null);
+    const [pendingDriveIds, setPendingDriveIds] = useState<{ batchId: string; shipmentId: string } | null>(null);
+    const [resolvingConflict, setResolvingConflict] = useState<string | null>(null);
 
     const toggleRowExpansion = (sku: string) => {
         setExpandedRows(prev => ({
@@ -643,9 +659,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     };
 
     const getWarningColor = (severity: string) => {
-        if (severity === 'BLOCKING') return 'border-red-200 bg-red-50/70 dark:border-red-500/30 dark:bg-red-500/5';
-        if (severity === 'WARNING') return 'border-amber-200 bg-amber-50/70 dark:border-amber-500/30 dark:bg-amber-500/5';
-        return 'border-blue-200 bg-blue-50/70 dark:border-blue-500/30 dark:bg-blue-500/5';
+        if (severity === 'BLOCKING') return 'border-red-300 bg-red-100 dark:border-red-500/40 dark:bg-red-500/15';
+        if (severity === 'WARNING') return 'border-amber-300 bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/15';
+        return 'border-blue-300 bg-blue-100 dark:border-blue-500/40 dark:bg-blue-500/15';
     };
 
     const clearSelection = useCallback(() => {
@@ -1360,81 +1376,71 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         }
     };
 
-    const handleCreateDraftFromReview = async () => {
-      console.log('=== CREATE DRAFT FROM REVIEW STARTED ===');
-      console.log('Shipping Mode:', shippingMode);
-      console.log('Vendor Code:', vendorCode);
-      console.log('Allocation Data:', allocationData);
-      
-      setIsProcessing(true);
-      setBackendError(null); // Clear previous errors
-      
+    const getUnallocatedItems = () => allocationData
+      .filter(a => a.unallocated_qty > 0)
+      .map(a => ({
+        sku: a.sku,
+        sku_name: a.sku_name,
+        qty: a.unallocated_qty,
+        vendor_code: vendorCode,
+        unit_price: a.unit_price,
+        custom_logo: false,
+        custom_packaging: false,
+        solving_manual: false,
+        opp_wrap: false,
+        custom_remarks: '',
+        customization_files: ''
+      }));
+
+    const handleCreatePOsDirect = async (linesOverride?: ReturnType<typeof getUnallocatedItems>, vendorBeingRetried?: string) => {
+      const lines = linesOverride || getUnallocatedItems();
+
+      if (lines.length === 0) {
+        alert('No unallocated items to create a purchase order for');
+        return;
+      }
+
+      if (vendorBeingRetried) {
+        setIsRetryingVendor(vendorBeingRetried);
+      } else {
+        setIsProcessing(true);
+      }
+      setBackendError(null);
+
       try {
-        // Prepare unallocated items
-        const unallocatedItems = allocationData
-          .filter(a => a.unallocated_qty > 0)
-          .map(a => ({
-            sku: a.sku,
-            sku_name: a.sku_name,
-            qty: a.unallocated_qty,
-            vendor_code: vendorCode,
-            unit_price: a.unit_price,
-            custom_logo: false,
-            custom_packaging: false,
-            solving_manual: false,
-            opp_wrap: false,
-            custom_remarks: '',
-            customization_files: ''
-          }));
-        
-        console.log('Unallocated Items:', unallocatedItems);
-        
-        if (unallocatedItems.length === 0) {
-          alert('No unallocated items to create draft');
-          setIsProcessing(false);
-          return;
-        }
-        
         const payload = {
-          action: 'create_manual_draft',
+          action: API_ACTIONS.CREATE_PO_DIRECT,
           mode: shippingMode,
-          lines: unallocatedItems
+          lines
         };
-        
-        console.log('Payload:', JSON.stringify(payload, null, 2));
-        console.log('APPS_SCRIPT_URL:', APPS_SCRIPT_URL);
-        
+
         const response = await fetch(APPS_SCRIPT_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify(payload)
         });
-        
-        console.log('Response status:', response.status);
-        console.log('Response ok:', response.ok);
-        
+
         const data = await response.json();
-        console.log('Response data:', data);
-        
+
         if (data.status === 'success') {
-          console.log('Draft created successfully:', data.draft_id);
-          setCreatedDraftId(data.draft_id);
-          setShowCreatePOModal(false);
-          setShowDraftSuccessModal(true);
+          setPoCreationResults(prev => {
+            if (!vendorBeingRetried) return data.results || [];
+            // Merge retry result back into the existing results list
+            const merged = prev.filter(r => r.vendor_code !== vendorBeingRetried);
+            return [...merged, ...(data.results || [])];
+          });
+          setShowPreviewPOModal(false);
+          setShowPOResultModal(true);
+          // Refresh allocation/review data so newly-created POs are reflected
+          await handleRefreshAllocation();
         } else {
-          console.error('Backend error:', data.message);
-          alert('Error: ' + (data.message || 'Failed to create draft'));
-          setBackendError(data.message || 'Failed to create draft');
+          setBackendError(data.message || 'Failed to create purchase orders');
         }
       } catch (error: any) {
-        console.error('Caught error:', error);
-        console.error('Error message:', error.message);
-        console.error('Error stack:', error.stack);
-        alert('Error: ' + (error.message || 'Failed to create draft'));
-        setBackendError(error.message || 'Failed to create draft');
+        setBackendError(error.message || 'Failed to create purchase orders');
       } finally {
-        console.log('=== CREATE DRAFT FINISHED ===');
         setIsProcessing(false);
+        setIsRetryingVendor(null);
       }
     };
 
@@ -1457,14 +1463,111 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
       return Object.keys(errors).length === 0;
     };
 
+    const uploadShipmentDocumentsToDrive = async (
+      batchId: string,
+      shipmentId: string,
+      filesToSend?: typeof uploadedFiles,
+      conflictResolutions?: Record<string, string>
+    ) => {
+      const targets = filesToSend || uploadedFiles;
+      if (targets.length === 0) return;
+
+      setIsUploadingDocs(true);
+      try {
+        const formData = new FormData();
+        formData.append('batchId', batchId);
+        formData.append('shipmentId', shipmentId);
+        formData.append('vendorCode', vendorCode);
+        if (conflictResolutions) formData.append('conflictResolutions', JSON.stringify(conflictResolutions));
+        targets.forEach(f => formData.append('files', f.file, f.file.name));
+
+        const response = await fetch('/api/drive/upload-shipment-docs', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          setDriveFolderInfo({ folderId: data.folder.folderId, folderUrl: data.folder.folderUrl });
+          setDriveUploadResults(prev => {
+            const names = new Set(data.files.map((f: any) => f.fileName));
+            const merged = prev.filter(r => !names.has(r.fileName));
+            return [...merged, ...data.files];
+          });
+
+          // Best-effort: record the folder on the shipment's Sheets row. Non-fatal —
+          // the files are already safely in Drive even if this metadata write fails.
+          // Skipped entirely in dev mode, which must not write anything to Sheets.
+          if (DEV_MODE_SKIP_SHIPMENT_WRITE) {
+            console.log('[DEV MODE] Skipping update_shipment_drive_docs Sheets write.');
+          } else fetch(APPS_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              action: API_ACTIONS.UPDATE_SHIPMENT_DRIVE_DOCS,
+              shipmentId,
+              driveFolderId: data.folder.folderId,
+              driveFolderUrl: data.folder.folderUrl
+            })
+          }).catch(err => console.error('Failed to record Drive folder metadata:', err));
+        } else {
+          setBackendError(data.error || 'Failed to upload shipment documents to Drive');
+        }
+      } catch (error: any) {
+        setBackendError(error.message || 'Failed to upload shipment documents to Drive');
+      } finally {
+        setIsUploadingDocs(false);
+        setShowDriveUploadModal(true);
+      }
+    };
+
+    const handleResolveDriveConflict = (fileName: string, strategy: 'replace' | 'keep_both' | 'use_existing') => {
+      if (!pendingDriveIds) return;
+      const file = uploadedFiles.find(f => f.file.name === fileName);
+      if (!file) return;
+      setResolvingConflict(fileName);
+      uploadShipmentDocumentsToDrive(pendingDriveIds.batchId, pendingDriveIds.shipmentId, [file], { [fileName]: strategy })
+        .finally(() => setResolvingConflict(null));
+    };
+
+    const handleRetryDriveUpload = (fileName: string) => {
+      if (!pendingDriveIds) return;
+      const file = uploadedFiles.find(f => f.file.name === fileName);
+      if (!file) return;
+      setResolvingConflict(fileName);
+      uploadShipmentDocumentsToDrive(pendingDriveIds.batchId, pendingDriveIds.shipmentId, [file])
+        .finally(() => setResolvingConflict(null));
+    };
+
     const handleFinalizeShipment = async () => {
       if (!validateCreation()) {
         return;
       }
-      
+
       setIsCreatingShipment(true);
-      
+
       try {
+        if (DEV_MODE_SKIP_SHIPMENT_WRITE) {
+          // Dev/testing mode: skip the Apps Script write entirely (no Batches/
+          // Vendor_Shipments/Purchase_Orders changes) and only exercise the
+          // Drive upload, using throwaway IDs so the folder structure still works.
+          console.log('[DEV MODE] Skipping create_vendor_shipment — Drive upload only.');
+          const testBatchId = batchOption === 'existing' && selectedBatchId
+            ? selectedBatchId
+            : `DEV-${shippingMode || 'BATCH'}-${Date.now()}`;
+          const testShipmentId = `DEV-VS-${vendorCode || 'TEST'}-${Date.now()}`;
+
+          setCreatedShipmentId(testShipmentId);
+
+          if (uploadedFiles.length > 0) {
+            setPendingDriveIds({ batchId: testBatchId, shipmentId: testShipmentId });
+            await uploadShipmentDocumentsToDrive(testBatchId, testShipmentId);
+          } else {
+            setShipmentSuccess(true);
+          }
+          return;
+        }
+
         const payload = {
           action: 'create_vendor_shipment',
           vendor_code: vendorCode,
@@ -1496,9 +1599,15 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
         if (data.status === 'success') {
           setCreatedShipmentId(data.shipment_id);
-          setShipmentSuccess(true);
           // Clear draft from localStorage
           localStorage.removeItem('vendor_shipment_draft');
+
+          if (uploadedFiles.length > 0) {
+            setPendingDriveIds({ batchId: data.batch_id, shipmentId: data.shipment_id });
+            await uploadShipmentDocumentsToDrive(data.batch_id, data.shipment_id);
+          } else {
+            setShipmentSuccess(true);
+          }
         } else {
           setBackendError(data.message || 'Failed to create shipment');
         }
@@ -1677,12 +1786,12 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             </div>
 
             {/* Generic loading overlay for non-matching, non-allocation operations */}
-            {(reviewLoading || isCreatingShipment) && (
+            {(reviewLoading || isCreatingShipment || isUploadingDocs) && (
                 <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center">
                     <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-2xl flex flex-col items-center gap-4">
                         <ArrowPathIcon className="w-10 h-10 animate-spin text-blue-500" />
                         <p className="text-white font-bold">
-                            {isCreatingShipment ? 'Creating Shipment...' : 'Loading Review Data...'}
+                            {isUploadingDocs ? 'Uploading Documents to Drive...' : isCreatingShipment ? 'Creating Shipment...' : 'Loading Review Data...'}
                         </p>
                     </div>
                 </div>
@@ -3576,12 +3685,12 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                     {item.po_allocations.length}
                                                 </td>
                                                 <td className="px-4 py-4 text-center">
-                                                    {item.unallocated_qty > 0 ? (
+                                                    {item.total_allocated <= 0 ? (
+                                                        <Badge variant="destructive" className="text-[8px]">UNALLOCATED</Badge>
+                                                    ) : item.unallocated_qty > 0 ? (
                                                         <Badge variant="warning" className="text-[8px]">PARTIAL</Badge>
-                                                    ) : item.total_allocated > 0 ? (
-                                                        <Badge variant="success" className="text-[8px]">ALLOCATED</Badge>
                                                     ) : (
-                                                        <Badge variant="destructive" className="text-[8px]">NO PO</Badge>
+                                                        <Badge variant="success" className="text-[8px]">ALLOCATED</Badge>
                                                     )}
                                                 </td>
                                             </tr>
@@ -3654,13 +3763,26 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                         >
                             Back to ID/Price/EAN
                         </Button>
-                        <Button
-                            onClick={handleProceedToReview}
-                            disabled={allocationData.length === 0}
-                            className="bg-blue-600 hover:bg-blue-700 h-11 px-8 font-bold"
-                        >
-                            Proceed to Review
-                        </Button>
+                        <div className="flex gap-3">
+                            {allocationSummary?.total_unallocated > 0 && (
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => setShowPreviewPOModal(true)}
+                                    disabled={!vendorCode || allocationData.every(a => a.unallocated_qty <= 0)}
+                                    className="border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 h-11 px-6 font-bold"
+                                >
+                                    <PlusIcon className="w-4 h-4 mr-2" />
+                                    Create PO
+                                </Button>
+                            )}
+                            <Button
+                                onClick={handleProceedToReview}
+                                disabled={allocationData.length === 0}
+                                className="bg-blue-600 hover:bg-blue-700 h-11 px-8 font-bold"
+                            >
+                                Proceed to Review
+                            </Button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -3910,7 +4032,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                           <div>
                             <p className="text-sm font-bold text-slate-800 dark:text-white">Items without Purchase Orders</p>
                             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                              Create purchase orders for unallocated items or refresh allocation
+                              Refresh allocation, or go back to the Allocation tab to create a PO for these items
                             </p>
                           </div>
                           <div className="flex gap-2">
@@ -3922,15 +4044,6 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                             >
                               <ArrowPathIcon className={`w-4 h-4 mr-2 ${isRefreshingAllocation ? 'animate-spin' : ''}`} />
                               {isRefreshingAllocation ? 'Refreshing...' : 'Refresh Allocation'}
-                            </Button>
-
-                            <Button
-                              variant="secondary"
-                              onClick={() => setShowCreatePOModal(true)}
-                              className="border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10"
-                            >
-                              <PlusIcon className="w-4 h-4 mr-2" />
-                              Create PO
                             </Button>
                           </div>
                         </div>
@@ -4107,6 +4220,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                               onChange={(e) => setFinalShipmentAmount(parseFloat(e.target.value) || 0)}
                               className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-3 text-xl font-bold text-emerald-600 dark:text-emerald-400 focus:ring-2 focus:ring-emerald-500 outline-none"
                             />
+                            {!validationErrors.amount && finalShipmentAmount > 0 && (
+                              <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1 italic">Auto-filled from invoice — edit if needed.</p>
+                            )}
                             {validationErrors.amount && (
                               <p className="text-red-500 dark:text-red-400 text-xs mt-1">{validationErrors.amount}</p>
                             )}
@@ -4184,6 +4300,48 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     </div>
                   </div>
                   
+                  {DEV_MODE_SKIP_SHIPMENT_WRITE && (
+                    <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/30 rounded-lg px-4 py-2.5">
+                      <ExclamationTriangleIcon className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        <span className="font-bold uppercase tracking-wider">Dev Mode</span> — Finalize will not write to Batches/Vendor_Shipments/Purchase Orders. Only the Google Drive document upload will run.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Recap before final submission */}
+                  <Card className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 p-5">
+                    <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-4">
+                      Review before you finalize
+                    </h4>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                      <div>
+                        <p className="text-slate-500 dark:text-slate-400 text-[10px] uppercase font-bold mb-1">Vendor</p>
+                        <p className="text-slate-800 dark:text-white font-bold font-mono">{vendorCode || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 dark:text-slate-400 text-[10px] uppercase font-bold mb-1">Batch</p>
+                        <p className="text-slate-800 dark:text-white font-bold">
+                          {batchOption === 'new'
+                            ? `New (${shippingMode || '—'})`
+                            : (selectedBatchId || 'Not selected')}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 dark:text-slate-400 text-[10px] uppercase font-bold mb-1">Total Cartons</p>
+                        <p className="text-slate-800 dark:text-white font-bold">{cartonCount || 0}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 dark:text-slate-400 text-[10px] uppercase font-bold mb-1">Total Amount</p>
+                        <p className="text-emerald-600 dark:text-emerald-400 font-bold">¥{fmtNumber(finalShipmentAmount || 0, 2)}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 dark:text-slate-400 text-[10px] uppercase font-bold mb-1">Items</p>
+                        <p className="text-slate-800 dark:text-white font-bold">{allocationData.length} SKUs</p>
+                      </div>
+                    </div>
+                  </Card>
+
                   <div className="flex justify-between pt-8 border-t border-slate-800">
                     <Button
                       variant="secondary"
@@ -4197,14 +4355,16 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                       disabled={isCreatingShipment}
                       className="bg-blue-600 hover:bg-blue-700 font-bold h-12 px-12 shadow-xl disabled:opacity-50"
                     >
-                      {isCreatingShipment ? 'Creating...' : 'Finalize & Record Shipment'}
+                      {isCreatingShipment
+                        ? 'Processing...'
+                        : DEV_MODE_SKIP_SHIPMENT_WRITE ? 'Finalize (Dev Mode — Drive Upload Only)' : 'Finalize & Record Shipment'}
                     </Button>
                   </div>
                 </div>
             )}
 
             {/* Success Screen */}
-            {shipmentSuccess && (
+            {activeTab === 'Creation' && shipmentSuccess && (
               <div className="flex flex-col items-center justify-center py-24 animate-in fade-in duration-500">
                 <div className="w-24 h-24 bg-emerald-500/10 rounded-full flex items-center justify-center mb-6">
                   <CheckIcon className="w-12 h-12 text-emerald-400" />
@@ -4255,141 +4415,295 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
               </div>
             )}
 
-            {/* Create PO Modal */}
-            {showCreatePOModal && (
-              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <Card className="bg-slate-900 border-slate-700 p-6 max-w-2xl w-full">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-bold text-white">Create Draft PO for Unallocated Items</h3>
-                    <button onClick={() => { setShowCreatePOModal(false); setBackendError(null); }}>
-                      <XMarkIcon className="w-5 h-5 text-slate-400 hover:text-white" />
-                    </button>
-                  </div>
-                  
-                  {/* Summary Info */}
-                  <div className="bg-slate-800/50 rounded-lg p-4 mb-4">
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <p className="text-slate-500 text-xs">Vendor</p>
-                        <p className="text-white font-bold">{vendorCode}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 text-xs">Shipping Mode</p>
-                        <p className="text-white font-bold">{shippingMode}</p>
-                      </div>
+            {/* Preview PO Modal - grouped by vendor, confirm before any PO is created */}
+            {showPreviewPOModal && (() => {
+              const items = getUnallocatedItems();
+              const groups: {[vendorCode: string]: typeof items} = {};
+              items.forEach(it => {
+                if (!groups[it.vendor_code]) groups[it.vendor_code] = [];
+                groups[it.vendor_code].push(it);
+              });
+              const vendorCodes = Object.keys(groups);
+
+              return (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                  <Card className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 p-6 max-w-2xl w-full max-h-[85vh] overflow-y-auto">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-lg font-bold text-slate-800 dark:text-white">Preview Purchase Orders</h3>
+                      <button onClick={() => { setShowPreviewPOModal(false); setBackendError(null); }}>
+                        <XMarkIcon className="w-5 h-5 text-slate-400 hover:text-slate-700 dark:hover:text-white" />
+                      </button>
                     </div>
-                  </div>
-                  
-                  {/* Unallocated Items List */}
-                  <div className="mb-4">
-                    <p className="text-xs font-bold text-slate-500 uppercase mb-2">Items to Order</p>
-                    <div className="bg-slate-800/30 rounded-lg p-3 max-h-60 overflow-y-auto space-y-2">
-                      {allocationData
-                        .filter(a => a.unallocated_qty > 0)
-                        .map(item => (
-                          <div key={item.sku} className="flex justify-between items-center text-xs bg-slate-800 rounded px-3 py-2">
-                            <div>
-                              <span className="font-mono text-blue-400 font-bold">{item.sku}</span>
-                              <span className="text-slate-400 ml-2">{item.sku_name}</span>
+
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+                      Nothing is created until you confirm. One Purchase Order will be created per vendor below, and vendor emails will be sent immediately after creation.
+                    </p>
+
+                    <div className="space-y-4 mb-4">
+                      {vendorCodes.map(code => {
+                        const lines = groups[code];
+                        const vendorName = vendorMasters.find(v => v.vendor_code === code)?.vendor_name || code;
+                        const totalQty = lines.reduce((sum, l) => sum + Number(l.qty || 0), 0);
+                        const estimatedTotal = lines.reduce((sum, l) => sum + (Number(l.qty || 0) * Number(l.unit_price || 0)), 0);
+
+                        return (
+                          <div key={code} className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-transparent rounded-lg p-4">
+                            <div className="grid grid-cols-2 gap-4 text-sm mb-3">
+                              <div>
+                                <p className="text-slate-500 dark:text-slate-400 text-xs">Vendor</p>
+                                <p className="text-slate-800 dark:text-white font-bold">{vendorName}</p>
+                              </div>
+                              <div>
+                                <p className="text-slate-500 dark:text-slate-400 text-xs">Vendor Code</p>
+                                <p className="text-slate-800 dark:text-white font-bold font-mono">{code}</p>
+                              </div>
+                              <div>
+                                <p className="text-slate-500 dark:text-slate-400 text-xs">SKUs</p>
+                                <p className="text-slate-800 dark:text-white font-bold">{lines.length}</p>
+                              </div>
+                              <div>
+                                <p className="text-slate-500 dark:text-slate-400 text-xs">Total Qty</p>
+                                <p className="text-slate-800 dark:text-white font-bold">{totalQty}</p>
+                              </div>
+                              {estimatedTotal > 0 && (
+                                <div className="col-span-2">
+                                  <p className="text-slate-500 dark:text-slate-400 text-xs">Estimated Order Total</p>
+                                  <p className="text-emerald-600 dark:text-emerald-400 font-bold">{fmtNumber(estimatedTotal, 2)}</p>
+                                </div>
+                              )}
                             </div>
-                            <span className="text-white font-bold">{item.unallocated_qty} units</span>
+
+                            <div className="bg-white dark:bg-slate-800/30 border border-slate-200 dark:border-transparent rounded-lg p-3 max-h-40 overflow-y-auto space-y-2">
+                              {lines.map(item => (
+                                <div key={item.sku} className="flex justify-between items-center text-xs bg-slate-100 dark:bg-slate-800 rounded px-3 py-2">
+                                  <div>
+                                    <span className="font-mono text-blue-600 dark:text-blue-400 font-bold">{item.sku}</span>
+                                    <span className="text-slate-500 dark:text-slate-400 ml-2">{item.sku_name}</span>
+                                  </div>
+                                  <span className="text-slate-800 dark:text-white font-bold">{item.qty} units</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        ))}
+                        );
+                      })}
                     </div>
-                    <p className="text-xs text-slate-500 mt-2">
-                      Total: {allocationData.filter(a => a.unallocated_qty > 0).length} SKUs, 
-                      {' '}{allocationData.reduce((sum, a) => sum + (a.unallocated_qty || 0), 0)} units
+
+                    <div className="space-y-3">
+                      {backendError && (
+                        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded p-3">
+                          <p className="text-red-600 dark:text-red-400 text-sm">{backendError}</p>
+                        </div>
+                      )}
+
+                      <div className="flex justify-end gap-3">
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setShowPreviewPOModal(false);
+                            setBackendError(null);
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={() => handleCreatePOsDirect()}
+                          disabled={isProcessing}
+                          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {isProcessing ? (
+                            <>
+                              <ArrowPathIcon className="w-4 h-4 mr-2 animate-spin" />
+                              Creating...
+                            </>
+                          ) : (
+                            <>
+                              <PlusIcon className="w-4 h-4 mr-2" />
+                              Create Purchase Orders
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                </div>
+              );
+            })()}
+
+            {/* PO Creation Result Modal */}
+            {showPOResultModal && poCreationResults.length > 0 && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <Card className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 p-6 max-w-md w-full">
+                  <div className="text-center mb-4">
+                    <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <CheckIcon className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1">Purchase Order Creation</h3>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm">
+                      {poCreationResults.filter(r => r.success).length} of {poCreationResults.length} vendor(s) processed successfully
                     </p>
                   </div>
-                  
-                  {/* Action Buttons with Error Display */}
-                  <div className="space-y-3">
-                    {backendError && (
-                      <div className="bg-red-500/10 border border-red-500/20 rounded p-3">
-                        <p className="text-red-400 text-sm">{backendError}</p>
-                      </div>
-                    )}
-                    
-                    <div className="flex justify-end gap-3">
-                      <Button 
-                        variant="secondary" 
-                        onClick={() => {
-                          setShowCreatePOModal(false);
-                          setBackendError(null);
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button 
-                        onClick={handleCreateDraftFromReview}
-                        disabled={isProcessing}
-                        className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-                      >
-                        {isProcessing ? (
-                          <>
-                            <ArrowPathIcon className="w-4 h-4 mr-2 animate-spin" />
-                            Creating...
-                          </>
+
+                  <div className="space-y-3 mb-4">
+                    {poCreationResults.map(result => (
+                      <div key={result.vendor_code} className={`rounded-lg p-3 text-left border ${result.success ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20' : 'bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20'}`}>
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-mono font-bold text-slate-600 dark:text-slate-300">{result.vendor_code}</span>
+                          {result.success ? (
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Created & Emailed</span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase">Failed</span>
+                          )}
+                        </div>
+                        {result.success ? (
+                          <p className="text-blue-600 dark:text-blue-400 font-mono font-bold text-sm mt-1">{result.po_id}</p>
                         ) : (
                           <>
-                            <PlusIcon className="w-4 h-4 mr-2" />
-                            Create Draft Order
+                            <p className="text-red-600 dark:text-red-300 text-xs mt-1">{result.error}</p>
+                            <Button
+                              variant="secondary"
+                              onClick={() => {
+                                const retryLines = getUnallocatedItems().filter(l => l.vendor_code === result.vendor_code);
+                                handleCreatePOsDirect(retryLines, result.vendor_code);
+                              }}
+                              disabled={isRetryingVendor === result.vendor_code}
+                              className="mt-2 text-xs h-8 border-red-300 dark:border-red-500/30 text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-500/10"
+                            >
+                              <ArrowPathIcon className={`w-3 h-3 mr-1 ${isRetryingVendor === result.vendor_code ? 'animate-spin' : ''}`} />
+                              {isRetryingVendor === result.vendor_code ? 'Retrying...' : 'Retry'}
+                            </Button>
                           </>
                         )}
-                      </Button>
-                    </div>
+                      </div>
+                    ))}
                   </div>
+
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setShowPOResultModal(false);
+                      setPoCreationResults([]);
+                    }}
+                    className="w-full"
+                  >
+                    Close
+                  </Button>
                 </Card>
               </div>
             )}
 
-            {/* Draft Success Modal */}
-            {showDraftSuccessModal && createdDraftId && (
+            {/* Drive Document Upload Result Modal */}
+            {showDriveUploadModal && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <Card className="bg-slate-900 border-slate-700 p-6 max-w-md w-full">
-                  <div className="text-center">
-                    <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <CheckIcon className="w-8 h-8 text-emerald-400" />
+                <Card className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 p-6 max-w-md w-full max-h-[85vh] overflow-y-auto">
+                  <div className="text-center mb-4">
+                    <div className="w-16 h-16 bg-blue-100 dark:bg-blue-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <ArchiveBoxIcon className="w-8 h-8 text-blue-600 dark:text-blue-400" />
                     </div>
-                    
-                    <h3 className="text-xl font-bold text-white mb-2">Draft Order Created!</h3>
-                    <p className="text-slate-400 text-sm mb-1">Successfully created draft order</p>
-                    <p className="text-blue-400 font-mono font-bold text-lg mb-2">{createdDraftId}</p>
-
-                    <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 mb-4">
-                      <div className="flex items-start gap-2 text-left">
-                        <InformationCircleIcon className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
-                        <div className="text-xs text-slate-300">
-                          <p className="font-semibold text-yellow-400 mb-1 uppercase tracking-tighter">Note:</p>
-                          <p>This draft must be submitted to create a Purchase Order. Once submitted, you can return to the Review tab and click <span className="font-bold text-emerald-400 italic">"Refresh Allocation"</span> to allocate these items.</p>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-col gap-3">
-                      <Button
-                        onClick={() => {
-                          setShowDraftSuccessModal(false);
-                          // Navigate to draft edit
-                          onNavigate?.('Draft Orders');
-                        }}
-                        className="bg-blue-600 hover:bg-blue-700 w-full"
+                    <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1">Shipment Documents</h3>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm">
+                      {driveUploadResults.filter(r => r.status === 'uploaded' || r.status === 'used_existing').length} of {driveUploadResults.length} file(s) stored in Drive
+                    </p>
+                    {driveFolderInfo && (
+                      <a
+                        href={driveFolderInfo.folderUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 dark:text-blue-400 text-xs underline mt-1 inline-block"
                       >
-                        Edit Draft Now
-                      </Button>
-                      
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setShowDraftSuccessModal(false);
-                          setCreatedDraftId(null);
-                        }}
-                        className="w-full"
-                      >
-                        Submit Later
-                      </Button>
-                    </div>
+                        Open shipment folder in Drive
+                      </a>
+                    )}
                   </div>
+
+                  <div className="space-y-3 mb-4">
+                    {driveUploadResults.map(result => (
+                      <div
+                        key={result.fileName}
+                        className={`rounded-lg p-3 text-left border ${
+                          result.status === 'uploaded' || result.status === 'used_existing'
+                            ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20'
+                            : result.status === 'conflict'
+                            ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20'
+                            : 'bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center gap-2">
+                          <span className="text-xs font-mono font-bold text-slate-600 dark:text-slate-300 truncate">{result.fileName}</span>
+                          {(result.status === 'uploaded' || result.status === 'used_existing') && (
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase whitespace-nowrap">
+                              {result.status === 'used_existing' ? 'Existing File Used' : 'Uploaded'}
+                            </span>
+                          )}
+                          {result.status === 'conflict' && (
+                            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase whitespace-nowrap">Already Exists</span>
+                          )}
+                          {result.status === 'failed' && (
+                            <span className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase whitespace-nowrap">Failed</span>
+                          )}
+                        </div>
+
+                        {result.status === 'conflict' && (
+                          <div className="mt-2 space-y-2">
+                            <p className="text-amber-700 dark:text-amber-300 text-xs">
+                              A file named "{result.fileName}" already exists in this shipment's folder.
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                variant="secondary"
+                                onClick={() => handleResolveDriveConflict(result.fileName, 'replace')}
+                                disabled={resolvingConflict === result.fileName}
+                                className="text-xs h-8"
+                              >
+                                Replace
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                onClick={() => handleResolveDriveConflict(result.fileName, 'keep_both')}
+                                disabled={resolvingConflict === result.fileName}
+                                className="text-xs h-8"
+                              >
+                                Keep Both
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                onClick={() => handleResolveDriveConflict(result.fileName, 'use_existing')}
+                                disabled={resolvingConflict === result.fileName}
+                                className="text-xs h-8"
+                              >
+                                Use Existing
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {result.status === 'failed' && (
+                          <>
+                            <p className="text-red-600 dark:text-red-300 text-xs mt-1">{result.error}</p>
+                            <Button
+                              variant="secondary"
+                              onClick={() => handleRetryDriveUpload(result.fileName)}
+                              disabled={resolvingConflict === result.fileName}
+                              className="mt-2 text-xs h-8 border-red-300 dark:border-red-500/30 text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-500/10"
+                            >
+                              <ArrowPathIcon className={`w-3 h-3 mr-1 ${resolvingConflict === result.fileName ? 'animate-spin' : ''}`} />
+                              {resolvingConflict === result.fileName ? 'Retrying...' : 'Retry'}
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <Button
+                    onClick={() => {
+                      setShowDriveUploadModal(false);
+                      setShipmentSuccess(true);
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 w-full"
+                  >
+                    Continue
+                  </Button>
                 </Card>
               </div>
             )}

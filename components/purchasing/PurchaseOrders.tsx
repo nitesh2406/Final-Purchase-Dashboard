@@ -9,6 +9,7 @@ import {
 } from '../icons/Icons';
 import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
 import { ViewType } from '../../types';
+import { useQueryParam } from '../../hooks/useQueryParam';
 
 type POStatus = 'OPEN' | 'PARTIALLY_SHIPPED' | 'CLOSED' | 'CLOSED_CANCELLED';
 type EmailStatus = 'NOT_SENT' | 'SENT' | 'FAILED';
@@ -108,7 +109,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [detailsError, setDetailsError] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
-    const [activeTab, setActiveTab] = useState<'All' | POStatus>('All');
+    const [activeTab, setActiveTab] = useQueryParam<'All' | POStatus>('statusFilter', 'All');
     const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
     const mapLineToUi = (l: any): POLine => {

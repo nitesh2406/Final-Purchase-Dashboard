@@ -1,8 +1,10 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dns from "dns";
 import { GoogleGenAI } from "@google/genai";
+import { driveRouter } from "./server/driveRoutes";
 
 // Prefer IPv4 first in DNS resolution to prevent sandboxed environment IPv6 timeout fetch failures
 if (typeof dns.setDefaultResultOrder === "function") {
@@ -120,6 +122,9 @@ async function startServer() {
       res.status(500).json({ error: error.message || "Shopify pricing error." });
     }
   });
+
+  // Google Drive storage endpoints (Vendor Shipment document uploads)
+  app.use("/api/drive", driveRouter);
 
   // Apps Script Proxy Endpoint
   app.post("/api/apps-script-proxy", async (req, res) => {

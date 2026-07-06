@@ -13,6 +13,7 @@ import {
 import { Batch, BatchFilters, BatchMetrics } from '../../types';
 import { APPS_SCRIPT_URL } from '../../constants';
 import { Button } from '../ui/Button';
+import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
 
 let trackerCache: {
     batches: Batch[];
@@ -204,7 +205,17 @@ interface ShipmentTrackerProps {
 export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBatch }) => {
     const [batches, setBatches] = useState<Batch[]>(trackerCache?.batches || []);
     const [metrics, setMetrics] = useState<BatchMetrics | null>(trackerCache?.metrics || null);
-    const [filters, setFilters] = useState<BatchFilters>({ search: '', status: 'All', mode: 'All' });
+    // Filters persisted in the URL: free-text search via raw history.replaceState
+    // (hot path, no history spam), status/mode via react-router's useSearchParams.
+    const [search, setSearch] = useQueryParamFast('search', '');
+    const [status, setStatus] = useQueryParam('status', 'All');
+    const [mode, setMode] = useQueryParam('mode', 'All');
+    const filters: BatchFilters = { search, status: status as any, mode: mode as any };
+    const setFilters = useCallback((next: BatchFilters) => {
+        if (next.search !== search) setSearch(next.search);
+        if (next.status !== status) setStatus(next.status as any);
+        if (next.mode !== mode) setMode(next.mode as any);
+    }, [search, status, mode, setSearch, setStatus, setMode]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [showDebug, setShowDebug] = useState(false);
