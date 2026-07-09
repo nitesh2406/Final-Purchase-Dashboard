@@ -533,6 +533,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const [vendorCode, setVendorCode] = useState('');
     const [shippingMode, setShippingMode] = useState<'SEA' | 'AIR' | ''>('');
     const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
+    // Extra supporting files attached in the Creation tab (e.g. additional
+    // invoices, certificates, photos) — uploaded to Drive alongside the
+    // Setup tab's packing list at Finalize, into the same shipment folder.
+    const [excessFiles, setExcessFiles] = useState<{ file: File; id: string }[]>([]);
     const [shipmentDate, setShipmentDate] = useState(new Date().toISOString().split('T')[0]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
@@ -666,6 +670,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
     const clearSelection = useCallback(() => {
         setUploadedFiles([]);
+        setExcessFiles([]);
         setInvoiceNumber('');
         setValidationRows([]);
         setAllocationData([]);
@@ -1049,6 +1054,17 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                 setIsParsing(false);
             }
         }
+    };
+
+    // Excess files — attached in the Creation tab, no parsing/validation,
+    // just carried along to the Drive upload at Finalize.
+    const handleExcessFileSelect = (files: FileList | null) => {
+        if (!files || files.length === 0) return;
+        const newFiles = Array.from(files).map(f => ({
+            file: f,
+            id: `EXCESS-${Math.random().toString(36).substr(2, 9)}`
+        }));
+        setExcessFiles(prev => [...prev, ...newFiles]);
     };
 
     const handleSkipToManualEntry = () => {
@@ -1523,7 +1539,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
     const handleResolveDriveConflict = (fileName: string, strategy: 'replace' | 'keep_both' | 'use_existing') => {
       if (!pendingDriveIds) return;
-      const file = uploadedFiles.find(f => f.file.name === fileName);
+      const file = uploadedFiles.find(f => f.file.name === fileName) || excessFiles.find(f => f.file.name === fileName);
       if (!file) return;
       setResolvingConflict(fileName);
       uploadShipmentDocumentsToDrive(pendingDriveIds.batchId, pendingDriveIds.shipmentId, [file], { [fileName]: strategy })
@@ -1532,7 +1548,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
     const handleRetryDriveUpload = (fileName: string) => {
       if (!pendingDriveIds) return;
-      const file = uploadedFiles.find(f => f.file.name === fileName);
+      const file = uploadedFiles.find(f => f.file.name === fileName) || excessFiles.find(f => f.file.name === fileName);
       if (!file) return;
       setResolvingConflict(fileName);
       uploadShipmentDocumentsToDrive(pendingDriveIds.batchId, pendingDriveIds.shipmentId, [file])
@@ -1559,9 +1575,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
           setCreatedShipmentId(testShipmentId);
 
-          if (uploadedFiles.length > 0) {
+          if (uploadedFiles.length > 0 || excessFiles.length > 0) {
             setPendingDriveIds({ batchId: testBatchId, shipmentId: testShipmentId });
-            await uploadShipmentDocumentsToDrive(testBatchId, testShipmentId);
+            await uploadShipmentDocumentsToDrive(testBatchId, testShipmentId, [...uploadedFiles, ...excessFiles]);
           } else {
             setShipmentSuccess(true);
           }
@@ -1602,9 +1618,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
           // Clear draft from localStorage
           localStorage.removeItem('vendor_shipment_draft');
 
-          if (uploadedFiles.length > 0) {
+          if (uploadedFiles.length > 0 || excessFiles.length > 0) {
             setPendingDriveIds({ batchId: data.batch_id, shipmentId: data.shipment_id });
-            await uploadShipmentDocumentsToDrive(data.batch_id, data.shipment_id);
+            await uploadShipmentDocumentsToDrive(data.batch_id, data.shipment_id, [...uploadedFiles, ...excessFiles]);
           } else {
             setShipmentSuccess(true);
           }
@@ -4299,7 +4315,54 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                       </Card>
                     </div>
                   </div>
-                  
+
+                  {/* Excess / Supporting Files — uploaded to Drive alongside
+                      the Setup tab's packing list at Finalize, into the same
+                      shipment folder (uploadShipmentDocumentsToDrive merges
+                      both lists into one upload call). */}
+                  <Card className="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-6 space-y-4 shadow-sm">
+                    <h4 className="text-sm font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                      <CloudArrowUpIcon className="w-4 h-4" /> Excess / Supporting Files
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
+                      Optional — any extra files here (additional invoices, certificates, photos) upload
+                      to Drive together with the Setup tab's packing list when you finalize.
+                    </p>
+
+                    <label className="flex items-center justify-center gap-2 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg py-4 cursor-pointer hover:border-blue-400 dark:hover:border-blue-500 transition-colors">
+                      <CloudArrowUpIcon className="w-5 h-5 text-slate-400" />
+                      <span className="text-sm text-slate-500 dark:text-slate-400">Click to add files, or drag them here</span>
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => { handleExcessFileSelect(e.target.files); e.target.value = ''; }}
+                      />
+                    </label>
+
+                    {excessFiles.length > 0 && (
+                      <div className="space-y-2">
+                        {excessFiles.map(f => (
+                          <div
+                            key={f.id}
+                            className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <DocumentTextIcon className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                              <span className="text-sm text-slate-700 dark:text-slate-200 truncate">{f.file.name}</span>
+                            </div>
+                            <button
+                              onClick={() => setExcessFiles(prev => prev.filter(x => x.id !== f.id))}
+                              className="text-slate-400 hover:text-red-500 flex-shrink-0"
+                            >
+                              <TrashIcon className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+
                   {DEV_MODE_SKIP_SHIPMENT_WRITE && (
                     <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/30 rounded-lg px-4 py-2.5">
                       <ExclamationTriangleIcon className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />

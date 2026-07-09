@@ -21,6 +21,10 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   'Settlement Ledger': '/finance/settlement-ledger',
   'Amazon Forecasting': '/amazon/forecasting',
   'Create SKU': '/sku',
+  'Update SKU': '/sku/update',
+  // Must come after 'Update SKU' — matchPathToView returns the first
+  // matching template, and this parameterized route would otherwise
+  // swallow /sku/update by treating "update" as a :requestId.
   'SKU Detail': '/sku/:requestId',
 };
 

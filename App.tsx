@@ -29,6 +29,7 @@ import { Settings } from './components/settings/Settings.tsx';
 import { AmazonForecasting } from './pages/AmazonForecasting.tsx';
 import { NewSkuDashboard } from './components/dashboard/NewSkuDashboard.tsx';
 import { NewSkuDetail } from './components/dashboard/NewSkuDetail.tsx';
+import { UpdateSkuScreen } from './components/dashboard/UpdateSkuScreen.tsx';
 import { ShipmentFinance } from './components/finance/ShipmentFinance.tsx';
 import { ShipmentFinanceDetail } from './components/finance/ShipmentFinanceDetail.tsx';
 import { PaymentLedger } from './components/finance/PaymentLedger.tsx';
@@ -771,6 +772,9 @@ const App: React.FC = () => {
                     onOpenDetail={(id) => {
                         navigate(viewToPath('SKU Detail', { requestId: id }));
                     }}
+                    onOpenUpdateSku={(sku) => {
+                        navigate(`${viewToPath('Update SKU')}?sku=${encodeURIComponent(sku)}`);
+                    }}
                     cachedData={skuRequests}
                     onDataLoaded={(data) => {
                         setSkuRequests(data);
@@ -810,6 +814,11 @@ const App: React.FC = () => {
                     onDateFromChange={setSkuDateFrom}
                     dateTo={skuDateTo}
                     onDateToChange={setSkuDateTo}
+                />;
+            case 'Update SKU':
+                return <UpdateSkuScreen
+                    onBack={() => setCurrentView('Create SKU')}
+                    initialSku={new URLSearchParams(location.search).get('sku') || undefined}
                 />;
             case 'Settings':
                 return <Settings

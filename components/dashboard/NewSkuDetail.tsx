@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -8,6 +8,7 @@ import {
   CheckBadgeIcon,
   ClockIcon,
   XMarkIcon,
+  ArrowPathIcon,
 } from '../icons/Icons';
 
 // ─────────────────────────────────────────
@@ -300,77 +301,104 @@ export const NewSkuDetail: React.FC<{
     notes: '',
   });
 
+  // Extracted so it can be called both on mount/tab-switch (the effect below)
+  // and on demand from the manual refresh button in the listing tabs bar —
+  // same request, same fields, no separate fetch path to keep in sync.
+  const fetchSourceData = async () => {
+    setIsLoadingSource(true);
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID,
+          request_id: requestId
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setSourceData(result.data);
+        // Pre-fill platform status from loaded data
+        setPlatformStatus({
+          ee:       !!result.data.ee_sku,
+          zoho:     !!result.data.zoho_created_date,
+          shopify:  !!result.data.shopify_listing_url,
+          ee_po:    result.data.status === 'CREATED',
+        });
+        // Pre-fill editable form fields from saved data
+        setForm(f => ({
+          ...f,
+          ean:                   result.data.ean                  || '',
+          unit_price:            result.data.unit_price           || '',
+          suggested_sku:         result.data.suggested_sku        || '',
+          listing_name:          result.data.listing_name         || result.data.item_name || '',
+          variant:               result.data.variant              || '',
+          listing_type:          result.data.listing_type         || '',
+          parent_sku:            result.data.parent_sku           || '',
+          category:              result.data.category             || '',
+          brand:                 result.data.brand                || '',
+          mrp:                   result.data.mrp                  || '',
+          shopify_selling_price: result.data.shopify_selling_price|| '',
+          shopify_compare_price: result.data.shopify_compare_price|| '',
+          pkg_height_cm:         result.data.pkg_height_cm        || '',
+          pkg_length_cm:         result.data.pkg_length_cm        || '',
+          pkg_width_cm:          result.data.pkg_width_cm         || '',
+          pkg_weight_gm:         result.data.pkg_weight_gm        || '',
+          product_dims_mm:       result.data.product_dims_mm      || '',
+          nw_gm:                 result.data.nw_gm                || '',
+          relevant_tags:         result.data.relevant_tags        || '',
+          fnsku:                 result.data.fnsku                || '',
+          fnsku_status_ee:       result.data.fnsku_status_ee      || '',
+          remark:                result.data.remark               || '',
+          notes:                 result.data.notes                || '',
+          lead_time:             result.data.lead_time            || '',
+          moq:                   result.data.moq                  || '',
+          threshold_qty:         result.data.threshold_qty        || '',
+          supplier_code:         result.data.supplier_code        || '',
+          pack_size:             result.data.pack_size            || '',
+          factory_code_other: result.data.factory_code
+            ? String(result.data.factory_code).split('|')[0].trim()
+            : '',
+          article_number: result.data.factory_code &&
+            String(result.data.factory_code).includes('|')
+            ? String(result.data.factory_code).split('|')[1].trim()
+            : '',
+        }));
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('fetchSourceData error:', err);
+      return false;
+    } finally {
+      setIsLoadingSource(false);
+    }
+  };
+
   useEffect(() => {
     if (isNew) return;
-    const fetchRequest = async () => {
-      setIsLoadingSource(true);
-      try {
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({
-            action: API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID,
-            request_id: requestId
-          })
-        });
-        const result = await response.json();
-        if (result.success) {
-          setSourceData(result.data);
-          // Pre-fill platform status from loaded data
-          setPlatformStatus({
-            ee:       !!result.data.ee_sku,
-            zoho:     !!result.data.zoho_created_date,
-            shopify:  !!result.data.shopify_listing_url,
-            ee_po:    result.data.status === 'CREATED',
-          });
-          // Pre-fill editable form fields from saved data
-          setForm(f => ({
-            ...f,
-            ean:                   result.data.ean                  || '',
-            unit_price:            result.data.unit_price           || '',
-            suggested_sku:         result.data.suggested_sku        || '',
-            listing_name:          result.data.listing_name         || result.data.item_name || '',
-            variant:               result.data.variant              || '',
-            listing_type:          result.data.listing_type         || '',
-            parent_sku:            result.data.parent_sku           || '',
-            category:              result.data.category             || '',
-            brand:                 result.data.brand                || '',
-            mrp:                   result.data.mrp                  || '',
-            shopify_selling_price: result.data.shopify_selling_price|| '',
-            shopify_compare_price: result.data.shopify_compare_price|| '',
-            pkg_height_cm:         result.data.pkg_height_cm        || '',
-            pkg_length_cm:         result.data.pkg_length_cm        || '',
-            pkg_width_cm:          result.data.pkg_width_cm         || '',
-            pkg_weight_gm:         result.data.pkg_weight_gm        || '',
-            product_dims_mm:       result.data.product_dims_mm      || '',
-            nw_gm:                 result.data.nw_gm                || '',
-            relevant_tags:         result.data.relevant_tags        || '',
-            fnsku:                 result.data.fnsku                || '',
-            fnsku_status_ee:       result.data.fnsku_status_ee      || '',
-            remark:                result.data.remark               || '',
-            notes:                 result.data.notes                || '',
-            lead_time:             result.data.lead_time            || '',
-            moq:                   result.data.moq                  || '',
-            threshold_qty:         result.data.threshold_qty        || '',
-            supplier_code:         result.data.supplier_code        || '',
-            pack_size:             result.data.pack_size            || '',
-            factory_code_other: result.data.factory_code
-              ? String(result.data.factory_code).split('|')[0].trim()
-              : '',
-            article_number: result.data.factory_code &&
-              String(result.data.factory_code).includes('|')
-              ? String(result.data.factory_code).split('|')[1].trim()
-              : '',
-          }));
-        }
-      } catch (err) {
-        console.error('fetchRequest error:', err);
-      } finally {
-        setIsLoadingSource(false);
-      }
-    };
-    fetchRequest();
+    fetchSourceData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId, isNew]);
+
+  // Manual refresh — re-pulls this request's data from the sheet without
+  // navigating away to the dashboard and back. Warns first if there are
+  // unsaved edits, since a refresh overwrites local form state.
+  const [isRefreshingTab, setIsRefreshingTab] = useState(false);
+  const handleRefreshTab = async () => {
+    if (isDirty && !window.confirm(
+      'You have unsaved changes that will be lost. Refresh anyway?'
+    )) {
+      return;
+    }
+    setIsRefreshingTab(true);
+    try {
+      const ok = await fetchSourceData();
+      if (ok) setIsDirty(false);
+    } finally {
+      setIsRefreshingTab(false);
+    }
+  };
 
   // Pricing config (fetched from GAS in production)
   const [pricingConfig, setPricingConfig] = useState<PricingConfig | null>(null);
@@ -451,6 +479,8 @@ export const NewSkuDetail: React.FC<{
     ee: false, zoho: false, shopify: false, ee_po: false, save: false,
   });
   const [skuAssigning, setSkuAssigning] = useState(false);
+  const [skuAssignSuccess, setSkuAssignSuccess] = useState<string | null>(null);
+  const [skuAssignError, setSkuAssignError] = useState<string | null>(null);
 
   // Dirty flag
   const [isDirty, setIsDirty] = useState(false);
@@ -458,6 +488,8 @@ export const NewSkuDetail: React.FC<{
   // Save feedback
   const [showSaved, setShowSaved] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [savedRequestId, setSavedRequestId] = useState<string | null>(
     isNew ? null : requestId
   );
@@ -577,7 +609,6 @@ export const NewSkuDetail: React.FC<{
       ...f,
       mrp:                   f.mrp                   || pricing.mrp,
       shopify_selling_price: f.shopify_selling_price || pricing.suggested_sp,
-      shopify_compare_price: f.shopify_compare_price || pricing.compare_at_price,
     }));
   }, [pricing, pricingConfigLoaded]);
 
@@ -658,6 +689,8 @@ export const NewSkuDetail: React.FC<{
   const handleAutoAssignSku = async () => {
     if (!form.category) return;
     setSkuAssigning(true);
+    setSkuAssignSuccess(null);
+    setSkuAssignError(null);
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
@@ -670,13 +703,14 @@ export const NewSkuDetail: React.FC<{
       const result = await response.json();
       if (result.success) {
         updateField('suggested_sku', result.data.suggested_sku);
+        setSkuAssignSuccess(result.data.suggested_sku);
         if (result.data.warning) alert(result.data.warning);
       } else {
-        alert('SKU assignment failed: ' + result.error);
+        setSkuAssignError('SKU assignment failed: ' + result.error);
       }
     } catch (err) {
       console.error('handleAutoAssignSku error:', err);
-      alert('Network error during SKU assignment');
+      setSkuAssignError('Network error during SKU assignment');
     } finally {
       setSkuAssigning(false);
     }
@@ -758,7 +792,16 @@ export const NewSkuDetail: React.FC<{
     }
   };
 
+  // Shared save path for both the immediate on-blur save and the timed
+  // auto-save below — same request, same validation, same backend action.
+  // Guards (isDirty / isNew / loading.save) make it safe to call from
+  // either trigger without producing duplicate or overlapping saves.
   const handleBlurSave = async () => {
+    // A field-triggered save (blur or auto-save) makes any pending timer redundant.
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
     if (!isDirty || isNew || loading.save) return;
     setLoading(l => ({ ...l, save: true }));
     try {
@@ -780,15 +823,70 @@ export const NewSkuDetail: React.FC<{
       const result = await response.json();
       if (result.success) {
         setIsDirty(false);
+        setSaveError(false);
         setSavedToast(true);
         setTimeout(() => setSavedToast(false), 2000);
+      } else {
+        setSaveError(true);
       }
     } catch(err) {
       console.error('handleBlurSave error:', err);
+      setSaveError(true);
     } finally {
       setLoading(l => ({ ...l, save: false }));
     }
   };
+
+  // Brand ComboBox commit — if the user typed/picked a brand that isn't in
+  // the dropdown yet, persist it to the Vendor Masters sheet (the source
+  // apiGetBrands reads from) so it's available next time. Takes the value
+  // straight from ComboBox's onChange rather than reading form.brand, since
+  // ComboBox calls onChange then onBlur synchronously in the same click
+  // handler — form state from the enclosing render wouldn't reflect the
+  // just-picked value yet.
+  const handleNewBrand = async (val: string) => {
+    const brand = val.trim();
+    if (!brand || brandOptions.some(b => b.toLowerCase() === brand.toLowerCase())) return;
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: API_ACTIONS.ADD_BRAND, brand })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setBrandOptions(prev =>
+          prev.some(b => b.toLowerCase() === brand.toLowerCase())
+            ? prev
+            : [...prev, brand].sort()
+        );
+      } else {
+        console.error('handleNewBrand (addBrand) failed:', result.error);
+      }
+    } catch (err) {
+      console.error('handleNewBrand (addBrand) error:', err);
+    }
+  };
+
+  // Timed auto-save — while the user stays focused in a field, persist the
+  // in-progress edit after a short pause in typing. Resets on every form
+  // change and simply re-invokes the same handleBlurSave used on blur, so
+  // it goes through the exact same request shape, validation, and backend
+  // action as a normal save. On failure isDirty stays true, so the next
+  // keystroke (new timer) or the eventual blur will retry automatically.
+  useEffect(() => {
+    if (!isDirty || isNew) return;
+    autoSaveTimerRef.current = setTimeout(() => {
+      handleBlurSave();
+    }, 2500);
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, isDirty, isNew]);
 
   const handleAddVariant = async () => {
     if (isNew || !savedRequestId && requestId === 'NEW') {
@@ -860,7 +958,7 @@ export const NewSkuDetail: React.FC<{
   };
 
   // STEP 1 — EasyEcom
-  const handleCreateEE = async () => {
+  const handleCreateEE = async (): Promise<boolean> => {
     setLoading(l => ({ ...l, ee: true }));
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
@@ -876,19 +974,22 @@ export const NewSkuDetail: React.FC<{
         setPlatformStatus(p => ({ ...p, ee: true }));
         // Refresh source data to get ee_sku written back
         setSourceData(d => ({ ...d, ee_sku: result.data.ee_sku }));
+        return true;
       } else {
         alert('EasyEcom creation failed: ' + result.error);
+        return false;
       }
     } catch (err) {
       alert('Network error');
       console.error(err);
+      return false;
     } finally {
       setLoading(l => ({ ...l, ee: false }));
     }
   };
 
   // STEP 2 — Zoho
-  const handleCreateZoho = async () => {
+  const handleCreateZoho = async (): Promise<boolean> => {
     setLoading(l => ({ ...l, zoho: true }));
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
@@ -902,19 +1003,85 @@ export const NewSkuDetail: React.FC<{
       const result = await response.json();
       if (result.success) {
         setPlatformStatus(p => ({ ...p, zoho: true }));
+        return true;
       } else {
         alert('Zoho creation failed: ' + result.error);
+        return false;
       }
     } catch (err) {
       alert('Network error');
       console.error(err);
+      return false;
+    } finally {
+      setLoading(l => ({ ...l, zoho: false }));
+    }
+  };
+
+  // Attach an existing EasyEcom SKU (already created through some other path)
+  // instead of recreating it. Requires an exact match on this request's own
+  // Suggested SKU — same success shape as handleCreateEE so it unlocks the
+  // Zoho step normally.
+  const handleAttachExistingEE = async (): Promise<boolean> => {
+    setLoading(l => ({ ...l, ee: true }));
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:     API_ACTIONS.ATTACH_EXISTING_EE_SKU,
+          request_id: savedRequestId || requestId
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPlatformStatus(p => ({ ...p, ee: true }));
+        setSourceData(d => ({ ...d, ee_sku: result.data.ee_sku }));
+        return true;
+      } else {
+        alert('Attach existing EasyEcom SKU failed: ' + result.error);
+        return false;
+      }
+    } catch (err) {
+      alert('Network error');
+      console.error(err);
+      return false;
+    } finally {
+      setLoading(l => ({ ...l, ee: false }));
+    }
+  };
+
+  // Attach an existing Zoho item instead of recreating it. Requires an
+  // exact match on this request's own Suggested SKU.
+  const handleAttachExistingZoho = async (): Promise<boolean> => {
+    setLoading(l => ({ ...l, zoho: true }));
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:     API_ACTIONS.ATTACH_EXISTING_ZOHO_ITEM,
+          request_id: savedRequestId || requestId
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPlatformStatus(p => ({ ...p, zoho: true }));
+        return true;
+      } else {
+        alert('Attach existing Zoho item failed: ' + result.error);
+        return false;
+      }
+    } catch (err) {
+      alert('Network error');
+      console.error(err);
+      return false;
     } finally {
       setLoading(l => ({ ...l, zoho: false }));
     }
   };
 
   // STEP 3 — Shopify
-  const handleCreateShopify = async () => {
+  const handleCreateShopify = async (): Promise<boolean> => {
     setLoading(l => ({ ...l, shopify: true }));
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
@@ -931,24 +1098,27 @@ export const NewSkuDetail: React.FC<{
       if (result.success) {
         setPlatformStatus(p => ({ ...p, shopify: true }));
         if (result.data.shopify_listing_url) {
-          setSourceData(d => ({ 
-            ...d, 
-            shopify_listing_url: result.data.shopify_listing_url 
+          setSourceData(d => ({
+            ...d,
+            shopify_listing_url: result.data.shopify_listing_url
           }));
         }
+        return true;
       } else {
         alert('Shopify creation failed: ' + result.error);
+        return false;
       }
     } catch (err) {
       alert('Network error');
       console.error(err);
+      return false;
     } finally {
       setLoading(l => ({ ...l, shopify: false }));
     }
   };
 
   // STEP 4 — Update EE PO
-  const handleUpdateEEPO = async () => {
+  const handleUpdateEEPO = async (): Promise<boolean> => {
     setLoading(l => ({ ...l, ee_po: true }));
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
@@ -963,15 +1133,80 @@ export const NewSkuDetail: React.FC<{
       const result = await response.json();
       if (result.success) {
         setPlatformStatus(p => ({ ...p, ee_po: true }));
+        return true;
       } else {
         alert('EE PO update failed: ' + result.error);
+        return false;
       }
     } catch (err) {
       alert('Network error');
       console.error(err);
+      return false;
     } finally {
       setLoading(l => ({ ...l, ee_po: false }));
     }
+  };
+
+  // Orchestrator — runs EE, Zoho, Shopify (and EE PO update, when a shipment
+  // exists) in sequence behind a single "Create Listing" action. Stops at
+  // (and surfaces) the first failure so the user can retry just that step
+  // without re-running the prior ones.
+  const [creationStarted, setCreationStarted] = useState(false);
+  const [stepFailed, setStepFailed] = useState({ ee: false, zoho: false, shopify: false, ee_po: false });
+  // Lets the user reach the per-step list (to attach an existing EasyEcom
+  // SKU / Zoho item) without triggering the full Create Listing sequence.
+  const [manualStepsExpanded, setManualStepsExpanded] = useState(false);
+
+  // Snapshot of how each step landed on the last "Create Listing" run, shown
+  // in a summary popup once the sequence stops (either all steps attempted,
+  // or halted at the first failure).
+  type StepOutcome = { key: 'ee' | 'zoho' | 'shopify' | 'ee_po'; label: string; status: 'success' | 'failed' | 'skipped' };
+  const [runSummary, setRunSummary] = useState<StepOutcome[] | null>(null);
+
+  const handleCreateListing = async () => {
+    setCreationStarted(true);
+    setStepFailed({ ee: false, zoho: false, shopify: false, ee_po: false });
+    setRunSummary(null);
+
+    const steps: { key: 'ee' | 'zoho' | 'shopify' | 'ee_po'; label: string; alreadyDone: boolean; handler: () => Promise<boolean> }[] = [
+      { key: 'ee',      label: 'EasyEcom',           alreadyDone: platformStatus.ee,      handler: handleCreateEE },
+      { key: 'zoho',    label: 'Zoho',               alreadyDone: platformStatus.zoho,    handler: handleCreateZoho },
+      { key: 'shopify', label: 'Shopify',            alreadyDone: platformStatus.shopify, handler: handleCreateShopify },
+      ...(sourceData.shipment_id
+        ? [{ key: 'ee_po' as const, label: 'EE Purchase Order', alreadyDone: platformStatus.ee_po, handler: handleUpdateEEPO }]
+        : []),
+    ];
+
+    const results: StepOutcome[] = [];
+    let stopped = false;
+    for (const step of steps) {
+      if (stopped) {
+        results.push({ key: step.key, label: step.label, status: 'skipped' });
+        continue;
+      }
+      if (step.alreadyDone) {
+        results.push({ key: step.key, label: step.label, status: 'success' });
+        continue;
+      }
+      const ok = await step.handler();
+      if (ok) {
+        results.push({ key: step.key, label: step.label, status: 'success' });
+      } else {
+        setStepFailed(f => ({ ...f, [step.key]: true }));
+        results.push({ key: step.key, label: step.label, status: 'failed' });
+        stopped = true;
+      }
+    }
+    setRunSummary(results);
+  };
+
+  const retryPlatform = async (
+    step: 'ee' | 'zoho' | 'shopify' | 'ee_po',
+    handler: () => Promise<boolean>
+  ) => {
+    setStepFailed(f => ({ ...f, [step]: false }));
+    const ok = await handler();
+    if (!ok) setStepFailed(f => ({ ...f, [step]: true }));
   };
 
   const handleConfirmReject = async (remark: string) => {
@@ -1016,6 +1251,35 @@ export const NewSkuDetail: React.FC<{
   return (
     <div className="max-w-[1600px] mx-auto p-6 flex flex-col h-screen overflow-hidden animate-in fade-in duration-500">
 
+      {/* ─── SKU AUTO-ASSIGN STATUS BANNERS ─── */}
+      <div className="fixed top-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+        {skuAssignSuccess && (
+          <div className="bg-emerald-50 dark:bg-emerald-950/95 border border-emerald-500/55 rounded-xl p-4 text-emerald-800 dark:text-emerald-200 flex items-start justify-between shadow-xl animate-fade-in pointer-events-auto">
+            <div className="flex gap-2 w-full">
+              <CheckBadgeIcon className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+              <div className="text-sm font-semibold">
+                SKU assigned successfully: <span className="font-bold">{skuAssignSuccess}</span>
+              </div>
+            </div>
+            <button onClick={() => setSkuAssignSuccess(null)} className="text-emerald-500 hover:text-emerald-700 cursor-pointer shrink-0 ml-2">
+              <XMarkIcon className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {skuAssignError && (
+          <div className="bg-rose-50 dark:bg-rose-950/95 border border-rose-500/55 rounded-xl p-4 text-rose-800 dark:text-rose-200 flex items-start justify-between shadow-xl animate-fade-in pointer-events-auto overflow-hidden">
+            <div className="flex gap-2 w-full">
+              <ExclamationTriangleIcon className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+              <div className="text-sm font-semibold overflow-hidden text-ellipsis">{skuAssignError}</div>
+            </div>
+            <button onClick={() => setSkuAssignError(null)} className="text-rose-500 hover:text-rose-700 cursor-pointer shrink-0 ml-2">
+              <XMarkIcon className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* ─── LISTING TABS ─── */}
       {!isNew && (
         <div className="flex items-center gap-2 mb-4 px-1">
@@ -1045,6 +1309,17 @@ export const NewSkuDetail: React.FC<{
               : <span>+</span>
             }
             Add Variant
+          </button>
+
+          {/* Manual refresh — re-pull this tab's data from the sheet without
+              leaving the page (e.g. after another user edits it elsewhere) */}
+          <button
+            onClick={handleRefreshTab}
+            disabled={isRefreshingTab || isLoadingSource}
+            title="Refresh this tab's data from the sheet"
+            className="ml-auto flex items-center justify-center w-9 h-9 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 shadow-sm transition-all disabled:opacity-50"
+          >
+            <ArrowPathIcon className={`w-5 h-5 ${isRefreshingTab ? 'animate-spin' : ''}`} />
           </button>
         </div>
       )}
@@ -1224,42 +1499,16 @@ export const NewSkuDetail: React.FC<{
           <Card>
             <SectionHeader emoji="🏷️" title="Product Identity" />
             <div className="grid grid-cols-2 gap-4">
-              {/* Row 1: Suggested SKU (full width) */}
+              {/* Row 1: Suggested SKU (full width) — Auto-assign action lives in the Actions panel */}
               <div className="col-span-2">
                 <FieldLabel>Suggested SKU</FieldLabel>
-                <div className="flex gap-2">
-                  <input
-                    className={inputClasses}
-                    value={form.suggested_sku}
-                    onChange={e => updateField('suggested_sku', e.target.value)}
-                    onBlur={handleBlurSave}
-                    placeholder="Auto-assigned or manual entry"
-                  />
-                  <button
-                    onClick={handleAutoAssignSku}
-                    disabled={skuAssigning || !form.category}
-                    className={`px-4 py-2 rounded-lg text-sm font-semibold
-                                transition-all flex items-center gap-2
-                                ${skuAssigning || !form.category
-                                  ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
-                                  : 'bg-blue-600 hover:bg-blue-700 text-white'
-                                }`}>
-                    {skuAssigning ? (
-                      <>
-                        <svg className="w-3.5 h-3.5 animate-spin"
-                             fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10"
-                                  stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor"
-                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        Assigning...
-                      </>
-                    ) : (
-                      'Auto-assign'
-                    )}
-                  </button>
-                </div>
+                <input
+                  className={inputClasses}
+                  value={form.suggested_sku}
+                  onChange={e => updateField('suggested_sku', e.target.value)}
+                  onBlur={handleBlurSave}
+                  placeholder="Auto-assigned or manual entry"
+                />
               </div>
 
               {/* Row 2: Listing Name (full width) — hidden for Existing Variant when parent is found (shown below parent SKU instead) */}
@@ -1306,7 +1555,7 @@ export const NewSkuDetail: React.FC<{
                 <ComboBox
                   id="brand-combobox"
                   value={form.brand}
-                  onChange={val => updateField('brand', val)}
+                  onChange={val => { updateField('brand', val); handleNewBrand(val); }}
                   onBlur={handleBlurSave}
                   options={brandOptions}
                   placeholder="Select or type brand..." />
@@ -1413,7 +1662,7 @@ export const NewSkuDetail: React.FC<{
           {/* ─── SECTION C: Pricing ─── */}
           <Card>
             <SectionHeader emoji="💰" title="Pricing" />
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <FieldLabel>MRP (₹)</FieldLabel>
                 <input
@@ -1432,17 +1681,6 @@ export const NewSkuDetail: React.FC<{
                   className={inputClasses}
                   value={form.shopify_selling_price}
                   onChange={e => updateField('shopify_selling_price', e.target.value ? Number(e.target.value) : '')}
-                  onBlur={handleBlurSave}
-                  placeholder="0.00"
-                />
-              </div>
-              <div>
-                <FieldLabel>Compare at Price (₹)</FieldLabel>
-                <input
-                  type="number"
-                  className={inputClasses}
-                  value={form.shopify_compare_price}
-                  onChange={e => updateField('shopify_compare_price', e.target.value ? Number(e.target.value) : '')}
                   onBlur={handleBlurSave}
                   placeholder="0.00"
                 />
@@ -2003,82 +2241,116 @@ export const NewSkuDetail: React.FC<{
           <Card>
             <SectionHeader emoji="⚡" title="Actions" />
             <div className="space-y-2">
-              {/* Step 1: EasyEcom */}
-              {platformStatus.ee ? (
-                <div className="flex items-center gap-2 py-2 px-3 rounded-lg bg-green-50 dark:bg-green-900/20">
-                  <CheckBadgeIcon className="w-4 h-4 text-green-600 dark:text-green-400" />
-                  <span className="text-xs font-semibold text-green-600 dark:text-green-400">EasyEcom — Done</span>
-                </div>
-              ) : (
-                <Button
-                  variant="primary"
-                  className="w-full text-xs"
-                  disabled={!canDoStep('ee') || loading.ee}
-                  onClick={handleCreateEE}
-                  title={!canDoStep('ee') ? 'Complete previous step first' : ''}
-                >
-                  {loading.ee ? <Spinner /> : <ChevronRightIcon className="w-4 h-4 mr-1" />}
-                  Create on EasyEcom
-                </Button>
-              )}
+              {/* Auto-assign SKU — precedes listing creation so a SKU is assigned first */}
+              <Button
+                variant="secondary"
+                className="w-full text-xs"
+                disabled={skuAssigning || !form.category}
+                onClick={handleAutoAssignSku}
+                title={!form.category ? 'Select a category first' : ''}
+              >
+                {skuAssigning ? <Spinner /> : <ChevronRightIcon className="w-4 h-4 mr-1" />}
+                {skuAssigning ? 'Assigning...' : 'Auto-assign SKU'}
+              </Button>
 
-              {/* Step 2: Zoho */}
-              {platformStatus.zoho ? (
-                <div className="flex items-center gap-2 py-2 px-3 rounded-lg bg-green-50 dark:bg-green-900/20">
-                  <CheckBadgeIcon className="w-4 h-4 text-green-600 dark:text-green-400" />
-                  <span className="text-xs font-semibold text-green-600 dark:text-green-400">Zoho — Done</span>
-                </div>
-              ) : (
-                <Button
-                  variant="primary"
-                  className={`w-full text-xs ${!canDoStep('zoho') && !loading.zoho ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={!canDoStep('zoho') || loading.zoho}
-                  onClick={handleCreateZoho}
-                  title={!canDoStep('zoho') ? 'Complete previous step first' : ''}
-                >
-                  {loading.zoho ? <Spinner /> : <ChevronRightIcon className="w-4 h-4 mr-1" />}
-                  Create on Zoho
-                </Button>
-              )}
+              {/* Divider */}
+              <div className="border-t border-gray-100 dark:border-gray-700 my-3" />
 
-              {/* Step 3: Shopify */}
-              {platformStatus.shopify ? (
-                <div className="flex items-center gap-2 py-2 px-3 rounded-lg bg-green-50 dark:bg-green-900/20">
-                  <CheckBadgeIcon className="w-4 h-4 text-green-600 dark:text-green-400" />
-                  <span className="text-xs font-semibold text-green-600 dark:text-green-400">Shopify — Done</span>
-                </div>
-              ) : (
-                <Button
-                  variant="primary"
-                  className={`w-full text-xs ${!canDoStep('shopify') && !loading.shopify ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={!canDoStep('shopify') || loading.shopify}
-                  onClick={handleCreateShopify}
-                  title={!canDoStep('shopify') ? 'Complete previous step first' : ''}
-                >
-                  {loading.shopify ? <Spinner /> : <ChevronRightIcon className="w-4 h-4 mr-1" />}
-                  Create on Shopify
-                </Button>
-              )}
-
-              {/* Step 4: EE PO — only if shipment exists */}
-              {sourceData.shipment_id && (
-                platformStatus.ee_po ? (
-                  <div className="flex items-center gap-2 py-2 px-3 rounded-lg bg-green-50 dark:bg-green-900/20">
-                    <CheckBadgeIcon className="w-4 h-4 text-green-600 dark:text-green-400" />
-                    <span className="text-xs font-semibold text-green-600 dark:text-green-400">EE Purchase Order — Done</span>
-                  </div>
-                ) : (
+              {/* Create Listing — single action, or per-step status once started */}
+              {!creationStarted && !manualStepsExpanded && !platformStatus.ee && !platformStatus.zoho && !platformStatus.shopify && !platformStatus.ee_po ? (
+                <>
                   <Button
                     variant="primary"
-                    className={`w-full text-xs ${!canDoStep('ee_po') && !loading.ee_po ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    disabled={!canDoStep('ee_po') || loading.ee_po}
-                    onClick={handleUpdateEEPO}
-                    title={!canDoStep('ee_po') ? 'Complete previous step first' : ''}
+                    className="w-full text-xs"
+                    disabled={!canDoStep('ee')}
+                    onClick={handleCreateListing}
+                    title={!canDoStep('ee') ? 'Save the draft first' : ''}
                   >
-                    {loading.ee_po ? <Spinner /> : <ChevronRightIcon className="w-4 h-4 mr-1" />}
-                    Update EE PO
+                    <ChevronRightIcon className="w-4 h-4 mr-1" />
+                    Create Listing
                   </Button>
-                )
+                  {canDoStep('ee') && (
+                    <button
+                      onClick={() => setManualStepsExpanded(true)}
+                      className="w-full text-center text-xs text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 mt-1"
+                    >
+                      Already exists on EasyEcom or Zoho? Attach instead of creating →
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  {([
+                    { key: 'ee' as const,      label: 'EasyEcom',           actionLabel: 'Create on EasyEcom', handler: handleCreateEE,      attachActionLabel: 'Attach Existing EasyEcom SKU', attachHandler: handleAttachExistingEE },
+                    { key: 'zoho' as const,    label: 'Zoho',               actionLabel: 'Create on Zoho',     handler: handleCreateZoho,    attachActionLabel: 'Attach Existing Zoho Item',    attachHandler: handleAttachExistingZoho },
+                    { key: 'shopify' as const, label: 'Shopify',            actionLabel: 'Create on Shopify',  handler: handleCreateShopify, attachActionLabel: null, attachHandler: null },
+                    ...(sourceData.shipment_id
+                      ? [{ key: 'ee_po' as const, label: 'EE Purchase Order', actionLabel: 'Update EE PO', handler: handleUpdateEEPO, attachActionLabel: null, attachHandler: null }]
+                      : []),
+                  ]).map(({ key, label, actionLabel, handler, attachActionLabel, attachHandler }) => {
+                    if (platformStatus[key]) {
+                      return (
+                        <div key={key} className="flex items-center gap-2 py-2 px-3 rounded-lg bg-green-50 dark:bg-green-900/20">
+                          <CheckBadgeIcon className="w-4 h-4 text-green-600 dark:text-green-400" />
+                          <span className="text-xs font-semibold text-green-600 dark:text-green-400">{label} — Done</span>
+                        </div>
+                      );
+                    }
+                    if (loading[key]) {
+                      return (
+                        <div key={key} className="flex items-center gap-2 py-2 px-3 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                          <Spinner />
+                          <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">{label} — In Progress</span>
+                        </div>
+                      );
+                    }
+                    if (stepFailed[key]) {
+                      return (
+                        <div key={key} className="space-y-1">
+                          <div className="flex items-center gap-2 py-2 px-3 rounded-lg bg-red-50 dark:bg-red-900/20">
+                            <XMarkIcon className="w-4 h-4 text-red-600 dark:text-red-400" />
+                            <span className="text-xs font-semibold text-red-600 dark:text-red-400">{label} — Failed</span>
+                          </div>
+                          <Button
+                            variant="primary"
+                            className="w-full text-xs"
+                            onClick={() => retryPlatform(key, handler)}
+                          >
+                            <ChevronRightIcon className="w-4 h-4 mr-1" />
+                            {actionLabel}
+                          </Button>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={key} className="space-y-1">
+                        <div className="flex items-center gap-2 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/30">
+                          <ClockIcon className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                          <span className="text-xs font-semibold text-gray-400 dark:text-gray-500">{label} — Pending</span>
+                        </div>
+                        {attachHandler && (
+                          <div className="flex gap-2">
+                            <Button
+                              variant="primary"
+                              className="flex-1 text-xs"
+                              onClick={() => retryPlatform(key, handler)}
+                            >
+                              {actionLabel}
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              className="flex-1 text-xs"
+                              onClick={() => retryPlatform(key, attachHandler)}
+                              title={`Attaches this request's exact Suggested SKU — it must already exist on ${label}`}
+                            >
+                              {attachActionLabel}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
               )}
 
               {/* Divider */}
@@ -2149,16 +2421,121 @@ export const NewSkuDetail: React.FC<{
                   <span className="text-xs font-semibold text-red-600 dark:text-red-400">Request Rejected</span>
                 </div>
               )}
+
+              {/* Divider */}
+              <div className="border-t border-gray-100 dark:border-gray-700 my-3" />
+
+              {/* Done — always shown at the bottom of Actions; greyed out until
+                  every applicable creation step has succeeded, then offers a
+                  direct way back to the dashboard instead of only the header link */}
+              {(() => {
+                const allStepsDone =
+                  platformStatus.ee && platformStatus.zoho && platformStatus.shopify &&
+                  (!sourceData.shipment_id || platformStatus.ee_po);
+                return (
+                  <Button
+                    variant="primary"
+                    className="w-full text-xs"
+                    disabled={!allStepsDone}
+                    onClick={onBack}
+                    title={allStepsDone
+                      ? 'Returns you to the dashboard'
+                      : 'Complete the listing creation process to enable this button'}
+                  >
+                    <CheckBadgeIcon className="w-4 h-4 mr-1" />
+                    Done
+                  </Button>
+                );
+              })()}
             </div>
           </Card>
         </div>
       </div>
-      {savedToast && (
+      {(loading.save || saveError || savedToast) && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 bg-gray-900 dark:bg-gray-800 text-white text-xs font-semibold rounded-xl shadow-xl border border-gray-700 animate-in slide-in-from-bottom-2 duration-200">
-          <svg className="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
-          Saved
+          {loading.save ? (
+            <>
+              <Spinner />
+              Saving...
+            </>
+          ) : saveError ? (
+            <>
+              <ExclamationTriangleIcon className="w-3.5 h-3.5 text-amber-400" />
+              Save failed. Retrying...
+            </>
+          ) : (
+            <>
+              <svg className="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              Saved
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Create Listing run summary — shown once the sequence stops, either
+          after all steps were attempted or at the first failure */}
+      {runSummary && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4"
+          onClick={() => setRunSummary(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-gray-100 dark:border-gray-700">
+              <h3 className="text-sm font-bold text-gray-900 dark:text-white">
+                {runSummary.some(r => r.status === 'failed')
+                  ? 'Listing creation — action needed'
+                  : 'Listing creation complete'}
+              </h3>
+              <button
+                onClick={() => setRunSummary(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              >
+                <XMarkIcon className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              {runSummary.map(r => (
+                <div key={r.key} className="flex items-center justify-between py-1.5">
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{r.label}</span>
+                  {r.status === 'success' && (
+                    <span className="flex items-center gap-1 text-xs font-semibold text-green-600 dark:text-green-400">
+                      <CheckBadgeIcon className="w-4 h-4" /> Success
+                    </span>
+                  )}
+                  {r.status === 'failed' && (
+                    <span className="flex items-center gap-1 text-xs font-semibold text-red-600 dark:text-red-400">
+                      <XMarkIcon className="w-4 h-4" /> Failed
+                    </span>
+                  )}
+                  {r.status === 'skipped' && (
+                    <span className="flex items-center gap-1 text-xs font-semibold text-gray-400 dark:text-gray-500">
+                      <ClockIcon className="w-4 h-4" /> Skipped
+                    </span>
+                  )}
+                </div>
+              ))}
+              {runSummary.some(r => r.status === 'failed') && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 pt-1">
+                  Use the retry button under the failed step to try again — steps already
+                  marked Success won't be re-run.
+                </p>
+              )}
+            </div>
+            <div className="p-4 pt-0">
+              <Button
+                variant="secondary"
+                className="w-full text-xs"
+                onClick={() => setRunSummary(null)}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

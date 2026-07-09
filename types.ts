@@ -592,4 +592,4 @@ export type ViewType =
   | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance'
   | 'Inventory Analytics' | 'Settings' | 'Shipment Finance' | 'Shipment Finance Detail'
   | 'Payment Ledger' | 'Accounts View' | 'Settlement Ledger'
-  | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail';
+  | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU';

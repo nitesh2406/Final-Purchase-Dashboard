@@ -67,14 +67,20 @@ export const API_ACTIONS = {
     GET_PRICING_CONFIG:        'getPricingConfig',
     GET_TAGS_BY_CATEGORY:      'getTagsByCategory',
     CREATE_SKU_ON_EE:          'createSkuOnEasyEcom',
+    ATTACH_EXISTING_EE_SKU:    'attachExistingEasyEcomSku',
     CREATE_SKU_ON_ZOHO:        'createSkuOnZoho',
+    ATTACH_EXISTING_ZOHO_ITEM: 'attachExistingZohoItem',
     GET_PARENT_SKU_DETAILS:    'getParentSkuDetails',
     CREATE_SKU_ON_SHOPIFY:     'createSkuOnShopify',
     UPDATE_EE_PO:              'updateEePurchaseOrder',
     REJECT_SKU_REQUEST:        'rejectSkuRequest',
     CREATE_MANUAL_SKU:         'createManualSkuRequest',
     GET_BRANDS:                'getBrands',
+    ADD_BRAND:                 'addBrand',
     GET_VARIANTS:              'getVariants',
+    SEARCH_SKU_FOR_UPDATE:     'searchSkuForUpdate',
+    PROVISION_SKU_FOR_UPDATE:  'provisionSkuForUpdate',
+    UPDATE_SKU_FIELDS:         'updateSkuFields',
 };
 
 export const MOCK_SKUS: Sku[] = [

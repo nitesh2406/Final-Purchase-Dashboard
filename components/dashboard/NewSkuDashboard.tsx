@@ -27,7 +27,30 @@ interface SkuRequest {
   ee_po_updated: boolean;
   ee_sku: string;
   shopify_listing_url: string;
+  suggested_sku: string;
+  listing_name: string;
+  // IMP-flaggable fields — optional/non-blocking at creation time, but
+  // worth surfacing once a SKU is fully live (see "Needs Attention" filter)
+  ean: string;
+  pack_size: number;
+  nw_gm: number;
+  pkg_weight_gm: number;
+  pkg_height_cm: number;
+  pkg_length_cm: number;
+  pkg_width_cm: number;
 }
+
+// A CREATED SKU with any of these blank/zero still needs a follow-up
+// visit to Update SKU — Item Weight, Size, EAN/ID, Pkg Weight, Pkg Size.
+const hasOutstandingImpFields = (r: SkuRequest): boolean => {
+  return (
+    !r.nw_gm ||
+    !r.pack_size ||
+    !r.ean ||
+    !r.pkg_weight_gm ||
+    !r.pkg_height_cm || !r.pkg_length_cm || !r.pkg_width_cm
+  );
+};
 
 // ─────────────────────────────────────────
 // STATUS CONFIG
@@ -96,6 +119,7 @@ const formatCNY = (val: number): string => {
 
 export const NewSkuDashboard: React.FC<{
   onOpenDetail: (id: string) => void;
+  onOpenUpdateSku?: (sku: string) => void;
   cachedData: any[];
   onDataLoaded: (data: any[]) => void;
   dataLoaded: boolean;
@@ -107,12 +131,13 @@ export const NewSkuDashboard: React.FC<{
   onDateFromChange: (v: string) => void;
   dateTo: string;
   onDateToChange: (v: string) => void;
-}> = ({ onOpenDetail, cachedData, onDataLoaded, dataLoaded,
+}> = ({ onOpenDetail, onOpenUpdateSku, cachedData, onDataLoaded, dataLoaded,
         statusFilter, onStatusFilterChange,
         vendorFilter, onVendorFilterChange,
         dateFrom, onDateFromChange,
         dateTo, onDateToChange }) => {
   const [data, setData] = useState<SkuRequest[]>(() => cachedData || []);
+  const [needsAttentionOnly, setNeedsAttentionOnly] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -167,7 +192,11 @@ export const NewSkuDashboard: React.FC<{
 
   const filtered = useMemo(() => {
     return data.filter(r => {
-      if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
+      if (needsAttentionOnly) {
+        if (r.status !== 'CREATED' || !hasOutstandingImpFields(r)) return false;
+      } else {
+        if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
+      }
       if (vendorFilter !== 'ALL' && r.vendor_code !== vendorFilter) return false;
       if (dateFrom && r.requested_at < dateFrom) return false;
       if (dateTo && r.requested_at > dateTo) return false;
@@ -181,7 +210,12 @@ export const NewSkuDashboard: React.FC<{
       }
       return true;
     });
-  }, [data, statusFilter, vendorFilter, dateFrom, dateTo, searchQuery]);
+  }, [data, statusFilter, vendorFilter, dateFrom, dateTo, searchQuery, needsAttentionOnly]);
+
+  const needsAttentionCount = useMemo(
+    () => data.filter(r => r.status === 'CREATED' && hasOutstandingImpFields(r)).length,
+    [data]
+  );
 
   const toggleDebug = () => {
     setDebugMode(prev => {
@@ -246,6 +280,27 @@ export const NewSkuDashboard: React.FC<{
                 : s.charAt(0) + s.slice(1).toLowerCase()}
             </button>
           ))}
+          {/* Needs Attention — CREATED SKUs still missing an IMP field
+              (Item Weight, Size, EAN/ID, Pkg Weight, Pkg Size). Clicking a
+              row here opens Update SKU instead of the Create SKU detail
+              view, since these are already live and just need a follow-up edit. */}
+          <button
+            onClick={() => setNeedsAttentionOnly(prev => !prev)}
+            title="CREATED SKUs still missing Item Weight, Size, EAN/ID, Pkg Weight, or Pkg Size"
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 ${
+              needsAttentionOnly
+                ? 'bg-amber-500 text-white shadow-sm'
+                : 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/30'
+            }`}
+          >
+            <ExclamationTriangleIcon className="w-3.5 h-3.5" />
+            Needs Attention
+            {needsAttentionCount > 0 && (
+              <span className={`px-1.5 rounded-full text-[10px] ${needsAttentionOnly ? 'bg-white/20' : 'bg-amber-200 dark:bg-amber-800/50'}`}>
+                {needsAttentionCount}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Filter controls row */}
@@ -372,7 +427,13 @@ export const NewSkuDashboard: React.FC<{
                   <tr
                     key={r.request_id}
                     className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors cursor-pointer"
-                    onClick={() => onOpenDetail(r.request_id)}
+                    onClick={() => {
+                      if (needsAttentionOnly && onOpenUpdateSku) {
+                        onOpenUpdateSku(r.suggested_sku || r.ee_sku);
+                      } else {
+                        onOpenDetail(r.request_id);
+                      }
+                    }}
                   >
                     {/* 1. Request ID */}
                     <td className="px-4 py-3">
