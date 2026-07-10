@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { MOCK_USERS, MOCK_ROLES_PERMISSIONS, MOCK_NOTIFICATION_RULES } from '../../constants';
+import { MOCK_USERS } from '../../constants';
 
 type PrefTab = 'General' | 'Notifications' | 'Data & Security' | 'Integrations' | 'User Management' | 'Import/Export';
 

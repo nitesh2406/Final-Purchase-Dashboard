@@ -30,6 +30,7 @@ import { AmazonForecasting } from './pages/AmazonForecasting.tsx';
 import { NewSkuDashboard } from './components/dashboard/NewSkuDashboard.tsx';
 import { NewSkuDetail } from './components/dashboard/NewSkuDetail.tsx';
 import { UpdateSkuScreen } from './components/dashboard/UpdateSkuScreen.tsx';
+import { AuditLogScreen } from './components/dashboard/AuditLogScreen.tsx';
 import { ShipmentFinance } from './components/finance/ShipmentFinance.tsx';
 import { ShipmentFinanceDetail } from './components/finance/ShipmentFinanceDetail.tsx';
 import { PaymentLedger } from './components/finance/PaymentLedger.tsx';
@@ -420,8 +421,8 @@ const App: React.FC = () => {
     }, []);
 
     // Fetches finance-only data. Called lazily on first Finance tab visit, not on mount.
-    const fetchFinanceData = useCallback(async () => {
-        if (financeDataLoaded.current) return;
+    const fetchFinanceData = useCallback(async (force = false) => {
+        if (financeDataLoaded.current && !force) return;
         financeDataLoaded.current = true; // prevent double-fire
         try {
             const fetchDirect = async (payload: any) => {
@@ -513,7 +514,7 @@ const App: React.FC = () => {
         }
     }, []);
 
-    const FINANCE_VIEWS = ['Finance', 'PaymentLedger', 'AccountsView', 'SettlementLedger', 'ShipmentFinance', 'ShipmentFinanceDetail'];
+    const FINANCE_VIEWS = ['Finance', 'Payment Ledger', 'Accounts View', 'Settlement Ledger', 'Shipment Finance', 'Shipment Finance Detail'];
     useEffect(() => {
         if (!user) return;
         if (FINANCE_VIEWS.includes(currentView)) fetchFinanceData();
@@ -729,7 +730,7 @@ const App: React.FC = () => {
                 return <PaymentLedger
                     onNavigate={(v) => setCurrentView(v)}
                     vendors={displayVendorMasters}
-                    onRefresh={() => fetchAllData(true)}
+                    onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}
                 />;
             case 'Settlement Ledger':
                 return <SettlementLedger
@@ -738,7 +739,7 @@ const App: React.FC = () => {
                     settlementRecords={displaySettlementRecords}
                     vendors={displayVendorMasters}
                     onNavigate={(v) => setCurrentView(v)}
-                    onRefresh={() => fetchAllData(true)}
+                    onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}
                     setSettlementRecords={setSettlementRecords}
                     setPurchaseInvoices={setPurchaseInvoices}
                 />;
@@ -752,7 +753,7 @@ const App: React.FC = () => {
                         navigate(viewToPath('Shipment Finance Detail', { batchId: id }));
                     }}
                     onNavigate={(v) => setCurrentView(v)}
-                    onRefresh={() => fetchAllData(true)}
+                    onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}
                     setPurchaseInvoices={setPurchaseInvoices}
                     setPaymentLogs={setPaymentLogs}
                     isSyncingShipments={isSyncingShipments}
@@ -819,6 +820,13 @@ const App: React.FC = () => {
                 return <UpdateSkuScreen
                     onBack={() => setCurrentView('Create SKU')}
                     initialSku={new URLSearchParams(location.search).get('sku') || undefined}
+                    isAdmin={user?.role === 'ADMIN'}
+                />;
+            case 'Audit Log':
+                return <AuditLogScreen
+                    onOpenUpdateSku={(sku) => {
+                        navigate(`${viewToPath('Update SKU')}?sku=${encodeURIComponent(sku)}`);
+                    }}
                 />;
             case 'Settings':
                 return <Settings

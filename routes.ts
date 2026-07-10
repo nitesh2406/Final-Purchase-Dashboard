@@ -26,6 +26,7 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   // matching template, and this parameterized route would otherwise
   // swallow /sku/update by treating "update" as a :requestId.
   'SKU Detail': '/sku/:requestId',
+  'Audit Log': '/audit-log',
 };
 
 // Views not reachable from the sidebar directly, but whose path should still

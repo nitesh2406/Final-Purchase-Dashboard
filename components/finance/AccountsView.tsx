@@ -3,8 +3,7 @@ import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
 import {
   getPurchaseInvoices,
   submitPurchaseInvoice, 
-  executeEODExchangeRateEngine, 
-  resetPurchaseInvoicesDb,
+  executeEODExchangeRateEngine,
   PurchaseInvoice,
   fetchPurchaseInvoices,
   logSettlementRecord,
@@ -692,17 +691,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     }
   };
 
-  // Reset helper
-  const handleResetDb = () => {
-    if (window.confirm('Wipe and restore default purchase entries payload?')) {
-      resetPurchaseInvoicesDb();
-      onRefresh();
-      setEngineLogs([]);
-      setShowLogs(false);
-      setSuccessBanner('Accounting workspace restored to baseline seeded transactions successfully.');
-    }
-  };
-
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* SUCCESS/ERROR NOTIFICATION TOASTS - FIXED OVERLAY TO PREVENT LAYOUT REFLOW */}
@@ -848,13 +836,13 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
             )}
           </div>
 
-          <Button 
-            onClick={handleResetDb}
+          <Button
+            onClick={handleRefresh}
             variant="primary"
             className="px-3 py-2 border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
-            title="Wipe and reset baseline"
+            title="Refresh data"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
           </Button>
         </div>
       </div>

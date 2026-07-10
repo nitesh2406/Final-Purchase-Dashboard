@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
+import { ReviewRequestsTab } from './ReviewRequestsTab';
 import {
   MagnifyingGlassIcon,
   CheckBadgeIcon,
@@ -25,6 +26,7 @@ interface SearchResult {
   suggested_sku: string;
   listing_name: string;
   status?: string;
+  is_sample?: boolean;
 }
 
 interface SkuRecord {
@@ -61,6 +63,7 @@ interface SkuRecord {
   invoice_qty: number;
   vendor_code: string;
   notes: string;
+  is_sample: boolean;
 }
 
 const EDITABLE_FIELDS: (keyof SkuRecord)[] = [
@@ -69,7 +72,7 @@ const EDITABLE_FIELDS: (keyof SkuRecord)[] = [
   'pack_size', 'pkg_height_cm', 'pkg_length_cm', 'pkg_width_cm', 'pkg_weight_gm',
   'product_dims_mm', 'nw_gm', 'unit_price', 'fnsku', 'factory_code',
   'lead_time', 'moq', 'threshold_qty', 'supplier_code', 'remark',
-  'relevant_tags', 'invoice_qty', 'vendor_code', 'notes',
+  'relevant_tags', 'invoice_qty', 'vendor_code', 'notes', 'is_sample',
 ];
 
 const NUMERIC_FIELDS = new Set<keyof SkuRecord>([
@@ -96,8 +99,11 @@ const SectionHeader: React.FC<{ emoji: string; title: string }> = ({ emoji, titl
 export const UpdateSkuScreen: React.FC<{
   onBack: () => void;
   initialSku?: string;
-}> = ({ onBack, initialSku }) => {
+  isAdmin?: boolean;
+}> = ({ onBack, initialSku, isAdmin = false }) => {
+  const [activeTab, setActiveTab] = useState<'search' | 'review'>('search');
   const [query, setQuery] = useState(initialSku || '');
+  const [sampleOnly, setSampleOnly] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [results, setResults] = useState<SearchResult[] | null>(null);
@@ -112,7 +118,7 @@ export const UpdateSkuScreen: React.FC<{
     platforms: { easyecom: string; zoho: string; shopify: string };
   } | null>(null);
 
-  const runSearch = async (q: string) => {
+  const runSearch = async (q: string, sampleOnlyOverride?: boolean) => {
     if (!q.trim()) return;
     setSearching(true);
     setSearchError(null);
@@ -121,7 +127,7 @@ export const UpdateSkuScreen: React.FC<{
       const response = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: API_ACTIONS.SEARCH_SKU_FOR_UPDATE, query: q.trim() })
+        body: JSON.stringify({ action: API_ACTIONS.SEARCH_SKU_FOR_UPDATE, query: q.trim(), sample_only: sampleOnlyOverride ?? sampleOnly })
       });
       const result = await response.json();
       if (result.success) {
@@ -189,6 +195,7 @@ export const UpdateSkuScreen: React.FC<{
           invoice_qty:           result.data.invoice_qty || 0,
           vendor_code:           result.data.vendor_code || '',
           notes:                 result.data.notes || '',
+          is_sample:             !!result.data.is_sample,
         };
         setOriginal(rec);
         setForm(rec);
@@ -301,6 +308,38 @@ export const UpdateSkuScreen: React.FC<{
         <span className="text-sm font-semibold text-gray-900 dark:text-white">Update SKU</span>
       </div>
 
+      {/* Tab strip — Review Requests only shown/usable for admins, since
+          approving a request pushes live to EasyEcom master data */}
+      <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700">
+        <button
+          onClick={() => setActiveTab('search')}
+          className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+            activeTab === 'search'
+              ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          }`}
+        >
+          Search &amp; Edit
+        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setActiveTab('review')}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+              activeTab === 'review'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+            }`}
+          >
+            Review Requests
+          </button>
+        )}
+      </div>
+
+      {activeTab === 'review' && isAdmin ? (
+        <ReviewRequestsTab />
+      ) : (
+      <>
+
       {/* Search */}
       <Card>
         <SectionHeader emoji="🔍" title="Search" />
@@ -320,6 +359,19 @@ export const UpdateSkuScreen: React.FC<{
             {searching ? 'Searching...' : 'Search'}
           </Button>
         </div>
+
+        <label className="mt-3 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 cursor-pointer w-fit">
+          <input
+            type="checkbox"
+            checked={sampleOnly}
+            onChange={e => {
+              setSampleOnly(e.target.checked);
+              if (query.trim()) runSearch(query, e.target.checked);
+            }}
+            className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          />
+          Samples only
+        </label>
 
         {searchError && (
           <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-xs">
@@ -344,6 +396,11 @@ export const UpdateSkuScreen: React.FC<{
                 <div>
                   <span className="font-mono font-semibold text-blue-600 dark:text-blue-400">{r.suggested_sku}</span>
                   <span className="ml-2 text-gray-600 dark:text-gray-300">{r.listing_name}</span>
+                  {r.is_sample && (
+                    <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                      Sample
+                    </span>
+                  )}
                 </div>
                 {r.linked ? (
                   <span className="text-[10px] font-semibold text-gray-400 uppercase">{r.status}</span>
@@ -362,13 +419,25 @@ export const UpdateSkuScreen: React.FC<{
 
       {form && !loadingRecord && (
         <>
-          {/* Identity — read-only */}
+          {/* Identity — read-only, except the Sample marker */}
           <Card>
             <SectionHeader emoji="🏷️" title="Identity" />
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <FieldLabel>Suggested SKU</FieldLabel>
                 <p className="text-sm font-mono font-semibold text-gray-900 dark:text-white">{form.suggested_sku}</p>
+              </div>
+              <div>
+                <FieldLabel>Sample</FieldLabel>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.is_sample}
+                    onChange={e => updateField('is_sample', e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{form.is_sample ? 'Yes' : 'No'}</span>
+                </label>
               </div>
               <div>
                 <FieldLabel>EasyEcom</FieldLabel>
@@ -534,6 +603,8 @@ export const UpdateSkuScreen: React.FC<{
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

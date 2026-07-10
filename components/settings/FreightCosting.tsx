@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { MOCK_FREIGHT_AGENTS, MOCK_FREIGHT_RATES, MOCK_ADDITIONAL_CHARGES } from '../../constants';
+import { MOCK_FREIGHT_AGENTS, MOCK_FREIGHT_RATES } from '../../constants';
 import { FreightAgent, FreightRate } from '../../types';
 import { StarIcon } from '../icons/Icons';
 

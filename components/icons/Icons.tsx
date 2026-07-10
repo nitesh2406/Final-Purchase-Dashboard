@@ -132,12 +132,6 @@ export const CheckIcon: React.FC<IconProps> = (props) => (
     </svg>
 );
 
-export const NoSymbolIcon: React.FC<IconProps> = (props) => (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
-    </svg>
-);
-
 export const PaperClipIcon: React.FC<IconProps> = (props) => (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
         <path strokeLinecap="round" strokeLinejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3.375 3.375 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.122 2.122l7.81-7.81" />
@@ -252,12 +246,6 @@ export const ClockIcon: React.FC<IconProps> = (props) => (
     </svg>
 );
 
-export const ChatBubbleLeftRightIcon: React.FC<IconProps> = (props) => (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193l-3.72-.838c-.352-.079-.723.056-1.004.288l-2.296 1.607a3.007 3.007 0 0 1-3.454 0l-2.296-1.607a1.125 1.125 0 0 0-1.004-.288l-3.72.838A2.25 2.25 0 0 1 2.25 15v-4.286c0-.97.616-1.813 1.5-2.097m16.5 0-.005-.003-.002-.001-.002-.002-.001-.002-.002-.002-.002-.001-.002-.001-.003 0-.002.001-.002.002-.001.002-.002.002-.001.002-.002.001-.003 0-1.008-2.94-3.536-3.536-3.536-1.591 0-2.94 1.008-3.536 2.295-.284.628-.468 1.34-.468 2.097v4.286c0 .97.616 1.813 1.5 2.097L5.333 12h13.333l.002-.001.002-.002.001-.002.002-.002.001-.002Z" />
-    </svg>
-);
-
 export const LinkIcon: React.FC<IconProps> = (props) => (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
@@ -267,19 +255,6 @@ export const LinkIcon: React.FC<IconProps> = (props) => (
 export const PencilSquareIcon: React.FC<IconProps> = (props) => (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
         <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-    </svg>
-);
-
-export const PrinterIcon: React.FC<IconProps> = (props) => (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6 18.25m0 0a2.25 2.25 0 0 0 2.25 2.25h1.5a2.25 2.25 0 0 0 2.25-2.25m-7.5 0h7.5m-7.5 0a2.25 2.25 0 0 1 2.25-2.25h1.5a2.25 2.25 0 0 1 2.25 2.25m0 0l-1.473 1.473m0 0a2.25 2.25 0 0 1-3.182 0l-1.473-1.473m3.182 0l-1.473-1.473m0 0a2.25 2.25 0 0 1 0-3.182l1.473-1.473M4.5 12.75v-6a2.25 2.25 0 0 1 2.25-2.25h10.5a2.25 2.25 0 0 1 2.25 2.25v6m-15 0a2.25 2.25 0 0 1-2.25-2.25v-1.5a2.25 2.25 0 0 1 2.25-2.25H19.5a2.25 2.25 0 0 1 2.25 2.25v1.5a2.25 2.25 0 0 1-2.25 2.25m-15 0h15" />
-    </svg>
-);
-
-export const MapPinIcon: React.FC<IconProps> = (props) => (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
     </svg>
 );
 
@@ -362,12 +337,6 @@ export const PresentationChartLineIcon: React.FC<IconProps> = (props) => (
     </svg>
 );
 
-export const TableCellsIcon: React.FC<IconProps> = (props) => (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25h17.25a1.125 1.125 0 0 1 1.125 1.125v1.5a1.125 1.125 0 0 1-1.125 1.125H3.375A1.125 1.125 0 0 1 2.25 10.875v-1.5a1.125 1.125 0 0 1 1.125-1.125m19.5 0v3m-19.5 0v4.5m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 15.75h17.25a1.125 1.125 0 0 1 1.125 1.125v1.5a1.125 1.125 0 0 1-1.125 1.125H3.375a1.125 1.125 0 0 1-1.125-1.125v-1.5a1.125 1.125 0 0 1 1.125-1.125m19.5 0v3" />
-    </svg>
-);
-
 export const FunnelIcon: React.FC<IconProps> = (props) => (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
@@ -410,28 +379,6 @@ export const LockClosedIcon: React.FC<IconProps> = (props) => (
     </svg>
 );
 
-// FIX: Added missing logo components for ShipmentTracker
-export const DhlLogo: React.FC<IconProps> = (props) => (
-    <svg viewBox="0 0 100 20" fill="currentColor" {...props}><text x="0" y="15" fontSize="14" fontWeight="bold">DHL</text></svg>
-);
-export const FedexLogo: React.FC<IconProps> = (props) => (
-    <svg viewBox="0 0 100 20" fill="currentColor" {...props}><text x="0" y="15" fontSize="14" fontWeight="bold">FedEx</text></svg>
-);
-export const MaerskLogo: React.FC<IconProps> = (props) => (
-    <svg viewBox="0 0 100 20" fill="currentColor" {...props}><text x="0" y="15" fontSize="14" fontWeight="bold">MAERSK</text></svg>
-);
-export const BlueDartLogo: React.FC<IconProps> = (props) => (
-    <svg viewBox="0 0 100 20" fill="currentColor" {...props}><text x="0" y="15" fontSize="14" fontWeight="bold">BlueDart</text></svg>
-);
-export const UpsLogo: React.FC<IconProps> = (props) => (
-    <svg viewBox="0 0 100 20" fill="currentColor" {...props}><text x="0" y="15" fontSize="14" fontWeight="bold">UPS</text></svg>
-);
-export const MscLogo: React.FC<IconProps> = (props) => (
-    <svg viewBox="0 0 100 20" fill="currentColor" {...props}><text x="0" y="15" fontSize="14" fontWeight="bold">MSC</text></svg>
-);
-export const OneLogo: React.FC<IconProps> = (props) => (
-    <svg viewBox="0 0 100 20" fill="currentColor" {...props}><text x="0" y="15" fontSize="14" fontWeight="bold">ONE</text></svg>
-);
 export const FolderOpenIcon: React.FC<IconProps> = (props) => (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776" />

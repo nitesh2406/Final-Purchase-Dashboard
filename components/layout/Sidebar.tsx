@@ -6,6 +6,7 @@ import {
   CurrencyDollarIcon, ChartBarIcon, Cog6ToothIcon, ChevronDoubleLeftIcon, BeakerIcon,
   PresentationChartLineIcon, DocumentTextIcon, ClipboardDocumentIcon, ListBulletIcon, CloudArrowUpIcon,
   BriefcaseIcon, CreditCardIcon, BuildingLibraryIcon, PencilSquareIcon,
+  ClipboardDocumentCheckIcon,
   GlobeAltIcon as MapIcon, BoxIcon as PackageIcon
 } from '../icons/Icons';
 
@@ -32,6 +33,7 @@ const navItems: { name: ViewType; icon: React.ReactNode; wip?: boolean; group?: 
   { name: 'Settlement Ledger', icon: <BuildingLibraryIcon className="w-6 h-6" />, group: 'Finance', wip: true },
   { name: 'Accounts View', icon: <DocumentTextIcon className="w-6 h-6" />, group: 'Finance', wip: true },
   { name: 'Amazon Forecasting', icon: <ShoppingCartIcon className="w-6 h-6" />, group: 'Amazon' },
+  { name: 'Audit Log', icon: <ClipboardDocumentCheckIcon className="w-6 h-6" />, group: 'Other' },
   { name: 'Settings', icon: <Cog6ToothIcon className="w-6 h-6" />, group: 'Other' },
 ];
 
@@ -56,6 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollap
     if (name === 'Inventory Analytics') return tabs.includes('forecasting');
     if (name === 'Create SKU') return tabs.includes('create_sku') || tabs.includes('drafts');
     if (name === 'Update SKU') return tabs.includes('create_sku') || tabs.includes('drafts');
+    if (name === 'Audit Log') return tabs.includes('create_sku') || tabs.includes('drafts') || tabs.includes('purchase_orders') || tabs.includes('shipments');
     return false;
   };
 

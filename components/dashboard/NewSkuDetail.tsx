@@ -52,10 +52,10 @@ interface FormData {
   parent_sku: string;
   category: string;
   brand: string;
+  is_sample: boolean;
   // Section C — Pricing
   mrp: number | '';
   shopify_selling_price: number | '';
-  shopify_compare_price: number | '';
   // Section D — Physical Specs
   pkg_height_cm: number | '';
   pkg_length_cm: number | '';
@@ -88,7 +88,6 @@ interface PricingConfig {
   min_margin_pct:   number;
   cm1_brackets:     { floor: number; value: number }[];
   mrp_brackets:     { floor: number; value: number }[];
-  compare_brackets: { floor: number; value: number }[];
 }
 
 
@@ -280,9 +279,9 @@ export const NewSkuDetail: React.FC<{
     parent_sku: '',
     category: sourceData.category ?? '',
     brand: '',
+    is_sample: false,
     mrp: '',
     shopify_selling_price: '',
-    shopify_compare_price: '',
     pkg_height_cm: '',
     pkg_length_cm: '',
     pkg_width_cm: '',
@@ -337,9 +336,9 @@ export const NewSkuDetail: React.FC<{
           parent_sku:            result.data.parent_sku           || '',
           category:              result.data.category             || '',
           brand:                 result.data.brand                || '',
+          is_sample:             !!result.data.is_sample,
           mrp:                   result.data.mrp                  || '',
           shopify_selling_price: result.data.shopify_selling_price|| '',
-          shopify_compare_price: result.data.shopify_compare_price|| '',
           pkg_height_cm:         result.data.pkg_height_cm        || '',
           pkg_length_cm:         result.data.pkg_length_cm        || '',
           pkg_width_cm:          result.data.pkg_width_cm         || '',
@@ -426,7 +425,6 @@ export const NewSkuDetail: React.FC<{
             min_margin_pct:   Number(d.min_margin_pct)    || 20,
             cm1_brackets:     d.cm1_brackets,
             mrp_brackets:     d.mrp_brackets,
-            compare_brackets: d.compare_brackets,
           });
           setPricingConfigLoaded(true);
           setPricingConfigError(null);
@@ -562,11 +560,6 @@ export const NewSkuDetail: React.FC<{
     const mrpDivisor = lookupBracket(suggestedSP, config.mrp_brackets);
     const mrp        = Math.round((suggestedSP / mrpDivisor) / 50) * 50 - 1;
 
-    // Step 6: Compare At Price
-    const compareMarkup  = lookupBracket(suggestedSP, config.compare_brackets) / 100;
-    const rawCompare     = Math.min(suggestedSP * (1 + compareMarkup), mrp);
-    const compareAtPrice = Math.round(rawCompare / 50) * 50 - 1;
-
     // Step 7: CM1 actual
     const netSales  = suggestedSP / 1.05;
     const cm1Profit = netSales - landing;
@@ -583,7 +576,6 @@ export const NewSkuDetail: React.FC<{
       cm1_target:       Math.round(cm1Pct * 100),
       suggested_sp:     suggestedSP,
       mrp,
-      compare_at_price: compareAtPrice,
       actual_cm1:       Math.round(actualCM1 * 100) / 100,
       cm3:              Math.round(cm3Profit),
       actual_cm3:       Math.round(actualCM3 * 100) / 100,
@@ -910,6 +902,7 @@ export const NewSkuDetail: React.FC<{
             invoice_qty:   form.invoice_qty,
             listing_type:  'Existing Variant',
             parent_sku:    form.suggested_sku,  // current listing's EE SKU as parent
+            is_sample:     form.is_sample,      // inherit from parent listing, editable after
             // leave blank — must be set per variant
             variant:       '',
             ean:           '',
@@ -1499,6 +1492,24 @@ export const NewSkuDetail: React.FC<{
           <Card>
             <SectionHeader emoji="🏷️" title="Product Identity" />
             <div className="grid grid-cols-2 gap-4">
+              {/* Sample marker — same creation flow as any other SKU, just
+                  tagged so it's identifiable later (e.g. filterable in
+                  Update SKU search) instead of relying on a separate EAN
+                  scheme that collides once the real SKU is listed. */}
+              <div className="col-span-2 flex items-center gap-2 -mb-1">
+                <input
+                  id="is-sample-checkbox"
+                  type="checkbox"
+                  checked={form.is_sample}
+                  onChange={e => updateField('is_sample', e.target.checked)}
+                  onBlur={handleBlurSave}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="is-sample-checkbox" className="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                  This is a Sample
+                </label>
+              </div>
+
               {/* Row 1: Suggested SKU (full width) — Auto-assign action lives in the Actions panel */}
               <div className="col-span-2">
                 <FieldLabel>Suggested SKU</FieldLabel>
