@@ -102,7 +102,6 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   // ── Confirm plan state ──────────────────────────────────────────────────────
   const [isConfirming, setIsConfirming] = useState(false);
   const [confirmResult, setConfirmResult] = useState<{ success: boolean; message: string; poNumber?: string } | null>(null);
-  const [showVolumeWarning, setShowVolumeWarning] = useState(false);
 
   // ── API fetch ────────────────────────────────────────────────────────────────
   const fetchForecast = useCallback(async (forceRefresh = false) => {
@@ -235,23 +234,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   const totalUnits    = flatItems.reduce((s, i) => s + getShipQty(i), 0);
 
   // ── Confirm Plan ───────────────────────────────────────────────────────────
-  const confirmTotalUnits = useMemo(() => {
-    return flatItems
-      .filter(item =>
-        (selectedChannelSkus.size === 0 || selectedChannelSkus.has(item.channelSKU)) &&
-        getShipQty(item) > 0
-      )
-      .reduce((s, item) => s + getShipQty(item), 0);
-  }, [flatItems, selectedChannelSkus, shipQtyOverrides]);
-
   const handleConfirmPlan = async () => {
-    // Volume warning — warn if > 1000 units but allow bypass
-    if (confirmTotalUnits > 1000 && !showVolumeWarning) {
-      setShowVolumeWarning(true);
-      return; // Stop here — user must confirm warning first
-    }
-    setShowVolumeWarning(false);
-
     const itemsToConfirm = flatItems
       .filter(item =>
         (selectedChannelSkus.size === 0 || selectedChannelSkus.has(item.channelSKU)) &&
@@ -450,7 +433,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
             disabled={isConfirming || isLoading}
             className="text-xs px-3 py-1 rounded bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold flex items-center gap-1 transition-colors"
           >
-            {isConfirming ? '⏳ Confirming...' : `Confirm Plan ▶${confirmTotalUnits > 0 ? ` (${confirmTotalUnits.toLocaleString()} units)` : ''}`}
+            {isConfirming ? '⏳ Confirming...' : 'Confirm Plan ▶'}
           </button>
         </div>
       </div>
@@ -471,26 +454,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
         </div>
       )}
 
-      {/* ── VOLUME WARNING ──────────────────────────────────────────────────── */}
-      {showVolumeWarning && (
-        <div className="flex items-center justify-between px-4 py-2 text-xs border-b flex-shrink-0
-                        bg-amber-500/10 border-amber-500/20 text-amber-400">
-          <div className="flex items-center gap-2">
-            <span>⚠</span>
-            <span>
-              <strong>Large shipment: {confirmTotalUnits.toLocaleString()} units.</strong>
-              {' '}Recommended max is 1,000 units per shipment for same-day packing.
-              Click Confirm again to proceed anyway.
-            </span>
-          </div>
-          <button
-            onClick={() => setShowVolumeWarning(false)}
-            className="ml-4 opacity-60 hover:opacity-100"
-          >
-            ✕
-          </button>
-        </div>
-      )}
+
 
       {/* ── FILTER BAR ──────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 px-4 h-9 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 overflow-x-auto">
@@ -739,7 +703,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
 
                       {/* EE Avail */}
                       <td className="px-3 py-1.5 text-right text-xs text-gray-700 dark:text-gray-300">
-                        {item.warehouseCheck.availableQty.toLocaleString()}
+                        {Math.max(0, item.warehouseCheck.availableQty - (item.warehouseCheck.strictPending ?? 0)).toLocaleString()}
                       </td>
 
                       {/* Velocity */}
