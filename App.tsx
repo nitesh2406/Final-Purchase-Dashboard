@@ -389,11 +389,12 @@ const App: React.FC = () => {
             if (venMastersData?.vendors) {
                 setVendorMasters(venMastersData.vendors
                     .filter((v: any) => v.vendor_code || v.vendor_id)
+                    .filter((v: any) => v.active === 1 || v.active === '1' || v.active === true)
                     .map((v: any) => ({
                         vendor_id: v.vendor_code || v.vendor_id || '',
                         vendor_name: v.vendor_name || v.vendor_code || '',
                         vendor_code: v.vendor_code || '',
-                        is_active: v.active !== false
+                        is_active: true
                     }))
                 );
             }
