@@ -951,7 +951,7 @@ export const NewSkuDetail: React.FC<{
   };
 
   // STEP 1 — EasyEcom
-  const handleCreateEE = async (): Promise<boolean> => {
+  const handleCreateEE = async (requestIdOverride?: string): Promise<boolean> => {
     setLoading(l => ({ ...l, ee: true }));
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
@@ -959,7 +959,7 @@ export const NewSkuDetail: React.FC<{
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action:     API_ACTIONS.CREATE_SKU_ON_EE,
-          request_id: savedRequestId || requestId
+          request_id: requestIdOverride || savedRequestId || requestId
         })
       });
       const result = await response.json();
@@ -982,7 +982,7 @@ export const NewSkuDetail: React.FC<{
   };
 
   // STEP 2 — Zoho
-  const handleCreateZoho = async (): Promise<boolean> => {
+  const handleCreateZoho = async (requestIdOverride?: string): Promise<boolean> => {
     setLoading(l => ({ ...l, zoho: true }));
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
@@ -990,7 +990,7 @@ export const NewSkuDetail: React.FC<{
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action:     API_ACTIONS.CREATE_SKU_ON_ZOHO,
-          request_id: savedRequestId || requestId
+          request_id: requestIdOverride || savedRequestId || requestId
         })
       });
       const result = await response.json();
@@ -1074,7 +1074,7 @@ export const NewSkuDetail: React.FC<{
   };
 
   // STEP 3 — Shopify
-  const handleCreateShopify = async (): Promise<boolean> => {
+  const handleCreateShopify = async (requestIdOverride?: string): Promise<boolean> => {
     setLoading(l => ({ ...l, shopify: true }));
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
@@ -1082,7 +1082,7 @@ export const NewSkuDetail: React.FC<{
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action:       API_ACTIONS.CREATE_SKU_ON_SHOPIFY,
-          request_id:   savedRequestId || requestId,
+          request_id:   requestIdOverride || savedRequestId || requestId,
           parent_sku:   form.parent_sku   || '',
           listing_type: form.listing_type || '',
         })
@@ -1111,7 +1111,7 @@ export const NewSkuDetail: React.FC<{
   };
 
   // STEP 4 — Update EE PO
-  const handleUpdateEEPO = async (): Promise<boolean> => {
+  const handleUpdateEEPO = async (requestIdOverride?: string): Promise<boolean> => {
     setLoading(l => ({ ...l, ee_po: true }));
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
@@ -1119,7 +1119,7 @@ export const NewSkuDetail: React.FC<{
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action:     API_ACTIONS.UPDATE_EE_PO,
-          request_id: savedRequestId || requestId,
+          request_id: requestIdOverride || savedRequestId || requestId,
           updated_by: 'user'
         })
       });
@@ -1157,16 +1157,30 @@ export const NewSkuDetail: React.FC<{
   const [runSummary, setRunSummary] = useState<StepOutcome[] | null>(null);
 
   const handleCreateListing = async () => {
+    // Manual entry with no saved request yet — silently save the draft first
+    // (same call Save Draft makes) so the platform steps below have a real
+    // request_id to attach to, instead of forcing a separate Save Draft click.
+    let requestIdOverride: string | undefined;
+    if (isNew && !savedRequestId) {
+      setLoading(l => ({ ...l, save: true }));
+      const newId = await handleCreateManualFirst();
+      setLoading(l => ({ ...l, save: false }));
+      if (!newId) return;
+      setSavedRequestId(newId);
+      setIsDirty(false);
+      requestIdOverride = newId;
+    }
+
     setCreationStarted(true);
     setStepFailed({ ee: false, zoho: false, shopify: false, ee_po: false });
     setRunSummary(null);
 
     const steps: { key: 'ee' | 'zoho' | 'shopify' | 'ee_po'; label: string; alreadyDone: boolean; handler: () => Promise<boolean> }[] = [
-      { key: 'ee',      label: 'EasyEcom',           alreadyDone: platformStatus.ee,      handler: handleCreateEE },
-      { key: 'zoho',    label: 'Zoho',               alreadyDone: platformStatus.zoho,    handler: handleCreateZoho },
-      { key: 'shopify', label: 'Shopify',            alreadyDone: platformStatus.shopify, handler: handleCreateShopify },
+      { key: 'ee',      label: 'EasyEcom',           alreadyDone: platformStatus.ee,      handler: () => handleCreateEE(requestIdOverride) },
+      { key: 'zoho',    label: 'Zoho',               alreadyDone: platformStatus.zoho,    handler: () => handleCreateZoho(requestIdOverride) },
+      { key: 'shopify', label: 'Shopify',            alreadyDone: platformStatus.shopify, handler: () => handleCreateShopify(requestIdOverride) },
       ...(sourceData.shipment_id
-        ? [{ key: 'ee_po' as const, label: 'EE Purchase Order', alreadyDone: platformStatus.ee_po, handler: handleUpdateEEPO }]
+        ? [{ key: 'ee_po' as const, label: 'EE Purchase Order', alreadyDone: platformStatus.ee_po, handler: () => handleUpdateEEPO(requestIdOverride) }]
         : []),
     ];
 
@@ -2273,9 +2287,8 @@ export const NewSkuDetail: React.FC<{
                   <Button
                     variant="primary"
                     className="w-full text-xs"
-                    disabled={!canDoStep('ee')}
+                    disabled={loading.save}
                     onClick={handleCreateListing}
-                    title={!canDoStep('ee') ? 'Save the draft first' : ''}
                   >
                     <ChevronRightIcon className="w-4 h-4 mr-1" />
                     Create Listing
@@ -2377,12 +2390,6 @@ export const NewSkuDetail: React.FC<{
                 {loading.save ? <Spinner /> : null}
                 {isDirty ? 'Save Draft' : 'No Changes'}
               </Button>
-              {isNew && !savedRequestId && (
-                <p className="text-xs text-amber-500 dark:text-amber-400 text-center mt-2">
-                  ⚠️ Save Draft first to enable SKU creation
-                </p>
-              )}
-
               {/* Reject Request */}
               {!isNew && !isRejected && sourceData.status !== 'REJECTED' && (
                 <>
