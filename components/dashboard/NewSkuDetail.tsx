@@ -1158,17 +1158,52 @@ export const NewSkuDetail: React.FC<{
 
   const handleCreateListing = async () => {
     // Manual entry with no saved request yet — silently save the draft first
-    // (same call Save Draft makes) so the platform steps below have a real
-    // request_id to attach to, instead of forcing a separate Save Draft click.
+    // (the same two calls Save Draft makes: create the skeleton row, then
+    // write the full form) so the platform steps below have a real
+    // request_id with all fields — suggested_sku, mrp, etc. — actually
+    // persisted to attach to, instead of forcing a separate Save Draft
+    // click. CREATE_MANUAL_SKU alone only writes a bare skeleton row; the
+    // EasyEcom step re-reads the row by request_id and requires those
+    // fields, so skipping the full-form save here made it fail even when
+    // the user had filled everything in.
     let requestIdOverride: string | undefined;
     if (isNew && !savedRequestId) {
       setLoading(l => ({ ...l, save: true }));
-      const newId = await handleCreateManualFirst();
-      setLoading(l => ({ ...l, save: false }));
-      if (!newId) return;
-      setSavedRequestId(newId);
-      setIsDirty(false);
-      requestIdOverride = newId;
+      try {
+        const newId = await handleCreateManualFirst();
+        if (!newId) return;
+
+        const saveResponse = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action:     API_ACTIONS.SAVE_NEW_SKU_DRAFT,
+            request_id: newId,
+            edited_by:  'user',
+            form: {
+              ...form,
+              factory_code: [
+                form.factory_code_other,
+                form.article_number
+              ].filter(Boolean).join('|'),
+            },
+          })
+        });
+        const saveResult = await saveResponse.json();
+        if (!saveResult.success) {
+          alert('Save failed: ' + saveResult.error);
+          return;
+        }
+        setSavedRequestId(newId);
+        setIsDirty(false);
+        requestIdOverride = newId;
+      } catch (err) {
+        console.error('handleCreateListing save error:', err);
+        alert('Network error saving draft');
+        return;
+      } finally {
+        setLoading(l => ({ ...l, save: false }));
+      }
     }
 
     setCreationStarted(true);

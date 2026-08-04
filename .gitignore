@@ -25,3 +25,5 @@ dist-ssr
 AppBuilding/
 .env
 .claude/
+.mcp.json
+.playwright-mcp/
