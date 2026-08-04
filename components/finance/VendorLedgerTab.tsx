@@ -217,8 +217,8 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
           }
         } else if (hasAllocations) {
           // If the active vendor is NOT primary, but receives allocated credit: Transfer In (Positive)
-          const alloc = log.allocations?.find(a => a.vendorCode === vendorCode);
-          if (alloc) {
+          const allocs = log.allocations?.filter(a => a.vendorCode === vendorCode) || [];
+          allocs.forEach(alloc => {
             const refId = log.paymentId || '';
             const isMatch = (refId === log.vendorCode);
             const particulars = isMatch ? 'Payment' : 'Adjustment (Transfer In)';
@@ -230,7 +230,7 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
               amount: parseFloat(String(alloc.amount)) || 0,
               sourceRecord: log
             });
-          }
+          });
         }
       });
 

@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+﻿import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { viewToPath } from '../../routes';
 import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
 import {
   getPurchaseInvoices,
@@ -14,8 +16,7 @@ import {
   getSettlementRecordsLocal,
   SettlementRecord,
   VendorLedgerEntry,
-  IS_DEVELOPMENT_MODE,
-  submitAdjustmentEntry
+  IS_DEVELOPMENT_MODE
 } from '../../services/settlementService';
 import { VendorMaster, submitVendorAccount } from '../../services/settlementService';
 import { useSubmissionLock } from '../../hooks/useSubmissionLock';
@@ -23,10 +24,11 @@ import {
   Plus, 
   Sparkles, 
   ArrowRight,
-  Database, 
-  CreditCard, 
-  UserCheck, 
-  Globe, 
+  Database,
+  CreditCard,
+  UserCheck,
+  Landmark,
+  Globe,
   Terminal, 
   Calendar, 
   DollarSign, 
@@ -47,9 +49,10 @@ import {
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { VendorLedgerTab } from './VendorLedgerTab';
+import { SettlementLedger } from './SettlementLedger';
 
 // Active tab types
-type ActiveTabType = 'purchase_entries' | 'payment_entries' | 'vendor_ledger';
+type ActiveTabType = 'purchase_entries' | 'payment_entries' | 'vendor_ledger' | 'settlement_ledger';
 
 interface AccountsViewProps {
   onNavigateToDetail?: (batchId: string) => void;
@@ -87,16 +90,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEodRunning, setIsEodRunning] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
-  
-  // Adjustment entry states
-  const [isAdjustmentModalOpen, setIsAdjustmentModalOpen] = useState(false);
-  const [adjustmentPayingVendor, setAdjustmentPayingVendor] = useState('');
-  const [adjustmentAmount, setAdjustmentAmount] = useState('');
-  const [adjustmentDate, setAdjustmentDate] = useState(new Date().toISOString().split('T')[0]);
-  const [adjustmentNotes, setAdjustmentNotes] = useState('');
-  const [adjustmentAllocations, setAdjustmentAllocations] = useState<{ vendorCode: string; amount: string }[]>([
-    { vendorCode: '', amount: '' }
-  ]);
+  const navigate = useNavigate();
 
   // Dynamic list states
   const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>([]);
@@ -149,7 +143,8 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     loadSettlementRecords();
   }, []);
 
-  // Automatically trigger sync refresh when switching to the Vendor Ledger tab
+  // Automatically trigger sync refresh when switching to the Vendor Ledger tab.
+  // (Settlement Ledger refreshes itself on mount, so it's excluded here to avoid a double-fetch.)
   useEffect(() => {
     if (activeTab === 'vendor_ledger') {
       onRefresh();
@@ -163,249 +158,13 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     }
   }, [selectedVendorFilter]);
 
-  const getVendorNameLocal = (vendorCode: string): string => {
-    const match = vendors.find(v => v.vendor_id === vendorCode);
-    return match ? (match.vendor_name || match.vendor_id) : vendorCode;
-  };
-
-  const generateAdjustmentId = (allRecords: SettlementRecord[]) => {
-    const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, ''); // YYYYMMDD
-    const prefix = `ADJ-${todayStr}`;
-    const matches = allRecords.filter(r => (r.paymentId || r.id || '').startsWith(prefix));
-    const seqs = matches.map(r => {
-      const parts = (r.paymentId || r.id || '').split('-');
-      const lastPart = parseInt(parts[parts.length - 1], 10);
-      return isNaN(lastPart) ? 0 : lastPart;
-    });
-    const nextSeq = seqs.length > 0 ? Math.max(...seqs) + 1 : 1;
-    return `${prefix}-${String(nextSeq).padStart(3, '0')}`;
-  };
-
-  const getVendorBalance = (vendorCode: string): number => {
-    if (!vendorCode) return 0;
-    try {
-      if (vendorLedger && vendorLedger.length > 0) {
-        const filteredLive = vendorLedger.filter(row => row.VendorCode === vendorCode);
-        if (filteredLive.length > 0) {
-          const compiled = filteredLive.map(row => {
-            const isPurchase = row.Particulars === 'Purchase';
-            const isPayment = row.Particulars === 'Payment';
-            const isTransferOut = row.Particulars?.includes('Transfer Out');
-            const isTransferIn = row.Particulars?.includes('Transfer In');
-            const isRefund = row.Particulars?.includes('Refund');
-            const isForex = row.Particulars?.includes('Forex');
-
-            let amount = parseFloat(String(row.RMB)) || 0;
-            if (isPurchase) {
-              amount = -Math.abs(amount);
-            } else if (isPayment) {
-              amount = Math.abs(amount);
-            } else if (isTransferOut) {
-              amount = -Math.abs(amount);
-            } else if (isTransferIn) {
-              amount = Math.abs(amount);
-            } else if (isRefund) {
-              amount = Math.abs(amount);
-            } else if (isForex) {
-              amount = -amount;
-            } else {
-              amount = -amount;
-            }
-
-            return {
-              date: row.Date || '',
-              amount: amount
-            };
-          });
-
-          compiled.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-          let running = 0;
-          compiled.forEach(row => {
-            running += row.amount;
-          });
-          return running;
-        }
-      }
-
-      const rows: { date: string; amount: number }[] = [];
-
-      // 1. Invoices
-      const safeInvoices = invoices || [];
-      const matchedInvoices = safeInvoices.filter(inv => inv.vendorCode === vendorCode);
-      matchedInvoices.forEach(inv => {
-        rows.push({
-          date: inv.date || '',
-          amount: -(parseFloat(String(inv.rmb)) || 0)
-        });
-      });
-
-      // 2. Payment logs
-      const safePaymentLogs = paymentLogs || [];
-      safePaymentLogs.forEach(log => {
-        const isPrimary = log.vendorCode === vendorCode;
-        const hasAllocations = log.allocations && log.allocations.length > 0;
-
-        if (isPrimary) {
-          if (hasAllocations) {
-            rows.push({
-              date: log.date || '',
-              amount: parseFloat(String(log.rmbAmount)) || 0
-            });
-            log.allocations?.forEach(alloc => {
-              if (alloc.vendorCode !== vendorCode) {
-                rows.push({
-                  date: log.date || '',
-                  amount: -(parseFloat(String(alloc.amount)) || 0)
-                });
-              }
-            });
-          } else {
-            rows.push({
-              date: log.date || '',
-              amount: parseFloat(String(log.rmbAmount)) || 0
-            });
-          }
-        } else if (hasAllocations) {
-          const alloc = log.allocations?.find(a => a.vendorCode === vendorCode);
-          if (alloc) {
-            rows.push({
-              date: log.date || '',
-              amount: parseFloat(String(alloc.amount)) || 0
-            });
-          }
-        }
-      });
-
-      // 3. Settlement records
-      const safeSettlementRecords = settlementRecords || [];
-      safeSettlementRecords.forEach(rec => {
-        const isSource = rec.vendorNo === vendorCode && rec.invoiceId ? (rec.invoiceId.startsWith('V-') || vendors?.some(v => v.vendor_id === rec.invoiceId)) : false;
-        const isTarget = rec.invoiceId === vendorCode && rec.vendorNo ? (rec.vendorNo.startsWith('V-') || vendors?.some(v => v.vendor_id === rec.vendorNo)) : false;
-
-        if (isSource) {
-          rows.push({
-            date: rec.date || '',
-            amount: -(parseFloat(String(rec.amountRmb)) || 0)
-          });
-        } else if (isTarget) {
-          rows.push({
-            date: rec.date || '',
-            amount: parseFloat(String(rec.amountRmb)) || 0
-          });
-        } else if (rec.vendorNo === vendorCode) {
-          if (rec.txnType === 'Forex Adjustment') {
-            rows.push({
-              date: rec.date || '',
-              amount: -(parseFloat(String(rec.amountRmb)) || 0)
-            });
-          } else if (rec.txnType === 'Refund' || rec.txnType === 'Refund Adjustment') {
-            rows.push({
-              date: rec.date || '',
-              amount: parseFloat(String(rec.amountRmb)) || 0
-            });
-          }
-        }
-      });
-
-      rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-      let running = 0;
-      rows.forEach(r => {
-        running += r.amount;
-      });
-      return running;
-    } catch (e) {
-      console.error('Error calculating balance for paying vendor selection:', e);
-      return 0;
-    }
-  };
-
+  // Cross-vendor settlements (paying vendor -> one or more receiving vendors) are logged
+  // on the dedicated Cross Vendor Settlement page; this just routes there, optionally
+  // pre-selecting the paying vendor when triggered from a specific vendor's ledger row.
   const handleOpenAdjustmentModal = (payingVendor: string = '') => {
-    setAdjustmentPayingVendor(payingVendor);
-    setAdjustmentAmount('');
-    setAdjustmentDate(new Date().toISOString().split('T')[0]);
-    setAdjustmentNotes('');
-    setAdjustmentAllocations([{ vendorCode: '', amount: '' }]);
-    setIsAdjustmentModalOpen(true);
     setIsAddMenuOpen(false);
-    setErrorBanner(null);
-  };
-
-  const handleCreateAdjustment = (e: React.FormEvent) => {
-    e.preventDefault();
-    withAdjustmentGuard(async () => {
-      const totalAmountFloat = parseFloat(adjustmentAmount) || 0;
-      const totalAllocatedFloat = adjustmentAllocations.reduce((acc, alloc) => acc + (parseFloat(alloc.amount) || 0), 0);
-
-      if (Math.abs(totalAmountFloat - totalAllocatedFloat) > 0.01) {
-        setErrorBanner("Allocated amount must equal adjustment amount.");
-        return;
-      }
-
-      if (!adjustmentPayingVendor) {
-        setErrorBanner("Please select a paying vendor.");
-        return;
-      }
-
-      const invalidRow = adjustmentAllocations.some(a => !a.vendorCode || (parseFloat(a.amount) || 0) <= 0);
-      if (invalidRow) {
-        setErrorBanner("Please ensure all receiving vendor fields and positive amounts are filled correctly.");
-        return;
-      }
-
-      try {
-        const adjId = generateAdjustmentId(settlementRecords);
-
-        const promises = adjustmentAllocations.map(async (alloc) => {
-          const payload = {
-            txnType: 'Transfer',
-            paymentId: adjId,
-            sourceVendor: adjustmentPayingVendor,
-            targetVendor: alloc.vendorCode,
-            amountRmb: parseFloat(alloc.amount) || 0,
-            fxRate: 11.50,
-            date: adjustmentDate,
-            notes: adjustmentNotes || 'Adjustment Transfer'
-          };
-          return submitAdjustmentEntry(payload);
-        });
-
-        await Promise.all(promises);
-
-        const newLocalSettlementRecords: SettlementRecord[] = adjustmentAllocations.map((alloc, idx) => {
-          const amount = parseFloat(alloc.amount) || 0;
-          return {
-            id: `SET-${Date.now()}-${idx}`,
-            date: adjustmentDate,
-            invoiceId: alloc.vendorCode,
-            vendorNo: adjustmentPayingVendor,
-            vendorName: getVendorNameLocal(adjustmentPayingVendor),
-            txnType: 'Transfer',
-            amountRmb: amount,
-            amountInr: amount * 11.50,
-            exchangeRatePrimary: 11.50,
-            exchangeRateSettlement: 11.50,
-            forexGainLoss: 0,
-            notes: adjustmentNotes || 'Adjustment Transfer',
-            paymentId: adjId
-          };
-        });
-
-        if (!IS_DEVELOPMENT_MODE) {
-          const currentLocal = getSettlementRecordsLocal();
-          const updatedLocal = [...newLocalSettlementRecords, ...currentLocal];
-          localStorage.setItem('settlement_records_table', JSON.stringify(updatedLocal));
-          setSettlementRecords(updatedLocal);
-        }
-
-        await onRefresh();
-
-        setSuccessBanner(`Adjustment Entry logged successfully with Reference ID: ${adjId}`);
-        setIsAdjustmentModalOpen(false);
-      } catch (err: any) {
-        console.error('Error submitting adjustment:', err);
-        setErrorBanner(err.message || 'Failed to submit adjustment entries.');
-      }
-    });
+    const path = viewToPath('Cross Vendor Settlement');
+    navigate(payingVendor ? `${path}?payingVendor=${encodeURIComponent(payingVendor)}` : path);
   };
 
   // Filter criteria computation
@@ -474,7 +233,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   }, [invoices]);
 
   const { isSubmitting: isSubmittingInvoice, withSubmissionGuard: withInvoiceGuard } = useSubmissionLock();
-  const { isSubmitting: isSubmittingAdjustment, withSubmissionGuard: withAdjustmentGuard } = useSubmissionLock();
 
   // Handle invoice form submit
   const handleCreateInvoice = (e: React.FormEvent) => {
@@ -828,7 +586,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                       className="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2 text-gray-900 dark:text-white font-bold cursor-pointer"
                     >
                       <span className="w-2 h-2 rounded-full bg-indigo-500 shrink-0" />
-                      <span>Adjustment Entry</span>
+                      <span>Cross-Vendor Settlement</span>
                     </button>
                   </div>
                 </div>
@@ -847,7 +605,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
         </div>
       </div>
 
-      {/* TRIPLE SUB-TAB LAYOUT ARCHITECTURE */}
+      {/* SUB-TAB LAYOUT ARCHITECTURE */}
       <div className="flex border-b border-gray-200 dark:border-gray-750 bg-slate-100/50 dark:bg-slate-900/50 p-1.5 rounded-xl gap-1 max-w-full overflow-x-auto shadow-sm">
         <button
           onClick={() => setActiveTab('purchase_entries')}
@@ -888,6 +646,18 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
         >
           <UserCheck className="w-4 h-4" />
           <span>Vendor Ledger</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('settlement_ledger')}
+          className={`flex-1 md:flex-initial min-w-[180px] px-5 py-3 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2.5 ${
+            activeTab === 'settlement_ledger'
+              ? 'bg-primary-600 text-white shadow-md font-black'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-800/40'
+          }`}
+        >
+          <Landmark className="w-4 h-4" />
+          <span>Settlement Ledger</span>
         </button>
       </div>
 
@@ -1336,6 +1106,20 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
             onOpenAdjustmentModal={handleOpenAdjustmentModal}
           />
         )}
+
+        {/* --- TAB 4: SETTLEMENT LEDGER --- */}
+        {activeTab === 'settlement_ledger' && (
+          <SettlementLedger
+            invoices={invoices}
+            paymentLogs={paymentLogs}
+            settlementRecords={settlementRecords}
+            vendors={vendors}
+            onNavigate={onNavigate}
+            onRefresh={handleRefresh}
+            setSettlementRecords={setSettlementRecords}
+            setPurchaseInvoices={setPurchaseInvoices}
+          />
+        )}
       </div>
 
       {/* --- INVOICE ENTRY MODAL FORM HANDLER CONTEXT (POPUP MODAL) --- */}
@@ -1529,287 +1313,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                     </>
                   ) : (
                     'Publish Invoice'
-                  )}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* --- ADJUSTMENT ENTRY MODAL FORM --- */}
-      {isAdjustmentModalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4" id="adjustment-entry-modal">
-          <div 
-            className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity duration-300" 
-            onClick={() => setIsAdjustmentModalOpen(false)} 
-          />
-
-          <div className="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-xl w-full overflow-hidden transform transition-all animate-zoom-in">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-gray-50 to-gray-100 dark:from-slate-900 dark:to-slate-950 text-slate-800 dark:text-white border-b border-gray-200 dark:border-slate-800 px-6 py-4.5 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-black flex items-center gap-2 text-slate-800 dark:text-white">
-                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />
-                  <span>Adjustment Entry Form</span>
-                </h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                  Adjust cross-vendor allocations or transfer outstanding pre-paid credits.
-                </p>
-              </div>
-              <button 
-                onClick={() => setIsAdjustmentModalOpen(false)} 
-                className="p-1.5 rounded-lg text-slate-400 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-slate-800 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Error banner */}
-            {errorBanner && (
-              <div className="mx-6 mt-4 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-lg text-rose-500 dark:text-rose-400 text-xs font-bold font-mono">
-                Error: {errorBanner}
-              </div>
-            )}
-
-            <form onSubmit={handleCreateAdjustment} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
-              {/* First Row: Posting Date & Adjustment Amount */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
-                    Adjustment Date *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={adjustmentDate}
-                    onChange={(e) => setAdjustmentDate(e.target.value)}
-                    className="block w-full rounded-lg border border-gray-300 dark:border-gray-650 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
-                    Adjustment Amount (RMB ¥) *
-                  </label>
-                  <div className="relative">
-                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400 font-bold">
-                      ¥
-                    </span>
-                    <input
-                      type="number"
-                      required
-                      min={0.01}
-                      step="any"
-                      placeholder="e.g. 10000"
-                      value={adjustmentAmount}
-                      onChange={(e) => setAdjustmentAmount(e.target.value)}
-                      className="block w-full rounded-lg border border-gray-300 dark:border-gray-650 bg-gray-50 dark:bg-gray-900 text-gray-905 dark:text-white pl-8 pr-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500 font-bold font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Paying Vendor selection */}
-              <div>
-                <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
-                  Paying Vendor *
-                </label>
-                <select
-                  required
-                  value={adjustmentPayingVendor}
-                  onChange={(e) => setAdjustmentPayingVendor(e.target.value)}
-                  className="block w-full rounded-lg border border-gray-300 dark:border-gray-650 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
-                >
-                  <option value="">-- Select Paying Vendor --</option>
-                  {VENDOR_OPTIONS.map(v => (
-                    <option key={v.code} value={v.code}>{v.displayText}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Current Balance Preview */}
-              {adjustmentPayingVendor && (
-                <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1">
-                  <span className="text-[10px] font-bold uppercase text-gray-600 dark:text-gray-400 tracking-wider">
-                    {getVendorBalance(adjustmentPayingVendor) > 0 
-                      ? 'Advance Credit' 
-                      : getVendorBalance(adjustmentPayingVendor) < 0 
-                      ? 'Outstanding Liability' 
-                      : 'Current Balance'
-                    }
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`w-2 h-2 rounded-full ${
-                      getVendorBalance(adjustmentPayingVendor) > 0 
-                        ? 'bg-emerald-500' 
-                        : getVendorBalance(adjustmentPayingVendor) < 0 
-                        ? 'bg-rose-500' 
-                        : 'bg-gray-400'
-                    }`} />
-                    <span className={`font-mono text-sm font-black ${
-                      getVendorBalance(adjustmentPayingVendor) > 0 
-                        ? 'text-emerald-600 dark:text-emerald-400' 
-                        : getVendorBalance(adjustmentPayingVendor) < 0 
-                        ? 'text-rose-600 dark:text-rose-450' 
-                        : 'text-gray-500 dark:text-gray-400'
-                    }`}>
-                      {getVendorBalance(adjustmentPayingVendor) === 0 
-                        ? '¥0.00' 
-                        : `${getVendorBalance(adjustmentPayingVendor) > 0 ? '+¥' : '-¥'}${Math.abs(getVendorBalance(adjustmentPayingVendor)).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
-                      }
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Receiving Vendors Allocations Title */}
-              <div className="pt-2 border-t border-gray-150 dark:border-gray-700">
-                <span className="block text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-3 flex items-center justify-between">
-                  <span>Receiving Vendor Allocations</span>
-                  <span className="font-mono text-[10px] font-bold text-gray-400 normal-case bg-slate-100 dark:bg-slate-900 px-2 py-0.5 rounded">
-                    Allocated: ¥{adjustmentAllocations.reduce((sum, val) => sum + (parseFloat(val.amount) || 0), 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} / ¥{(parseFloat(adjustmentAmount) || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                  </span>
-                </span>
-
-                {/* Allocation row maps */}
-                <div className="space-y-3">
-                  {adjustmentAllocations.map((alloc, index) => (
-                    <div key={index} className="flex gap-3 items-end bg-slate-50/50 dark:bg-slate-900/10 p-3 rounded-xl border border-dashed border-gray-200 dark:border-gray-700">
-                      <div className="flex-1">
-                        <label className="block text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">
-                          Receiving Vendor {index + 1} *
-                        </label>
-                        <select
-                          required
-                          value={alloc.vendorCode}
-                          onChange={(e) => {
-                            const updated = [...adjustmentAllocations];
-                            updated[index].vendorCode = e.target.value;
-                            setAdjustmentAllocations(updated);
-                          }}
-                          className="block w-full rounded-lg border border-gray-300 dark:border-gray-650 bg-white dark:bg-gray-900 text-gray-955 dark:text-white px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
-                        >
-                          <option value="">-- Select Sourcing Vendor --</option>
-                          {/* Exclude currently selected paying vendor */}
-                          {VENDOR_OPTIONS.filter(v => v.code !== adjustmentPayingVendor).map(v => (
-                            <option key={v.code} value={v.code}>{v.displayText}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="w-[150px]">
-                        <label className="block text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">
-                          Allocated (RMB ¥) *
-                        </label>
-                        <div className="relative">
-                          <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-gray-400 text-xs font-bold">
-                            ¥
-                          </span>
-                          <input
-                            type="number"
-                            required
-                            min={0.01}
-                            step="any"
-                            placeholder="Amount"
-                            value={alloc.amount}
-                            onChange={(e) => {
-                              const updated = [...adjustmentAllocations];
-                              updated[index].amount = e.target.value;
-                              setAdjustmentAllocations(updated);
-                            }}
-                            className="block w-full rounded-lg border border-gray-300 dark:border-gray-650 bg-white dark:bg-gray-900 text-gray-950 dark:text-white pl-6 pr-2 py-1.5 text-xs focus:ring-1 focus:ring-primary-500 focus:border-primary-500 font-bold font-mono"
-                          />
-                        </div>
-                      </div>
-
-                      {adjustmentAllocations.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAdjustmentAllocations(adjustmentAllocations.filter((_, idx) => idx !== index));
-                          }}
-                          className="p-1 px-1.5 rounded-lg text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/20 border border-transparent transition"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdjustmentAllocations([...adjustmentAllocations, { vendorCode: '', amount: '' }]);
-                  }}
-                  className="mt-3 flex items-center gap-1.5 text-[11px] font-black uppercase text-indigo-650 dark:text-indigo-400 hover:text-indigo-700 hover:underline cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Add Additional Vendor Line</span>
-                </button>
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
-                  Adjustment Explanation & Notes
-                </label>
-                <textarea
-                  placeholder="Explain why this adjustment is being recorded..."
-                  rows={2}
-                  maxLength={150}
-                  value={adjustmentNotes}
-                  onChange={(e) => setAdjustmentNotes(e.target.value)}
-                  className="block w-full rounded-lg border border-gray-300 dark:border-gray-650 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
-                />
-              </div>
-
-              {/* Validation Warning State */}
-              {(() => {
-                const totalAmountFloat = parseFloat(adjustmentAmount) || 0;
-                const totalAllocatedFloat = adjustmentAllocations.reduce((acc, alloc) => acc + (parseFloat(alloc.amount) || 0), 0);
-                const hasMismatch = Math.abs(totalAmountFloat - totalAllocatedFloat) > 0.01;
-                
-                if (hasMismatch && totalAmountFloat > 0) {
-                  return (
-                    <div className="p-3 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/40 rounded-xl flex items-center gap-2 text-rose-600 dark:text-rose-400 text-[11px] font-bold">
-                      <AlertCircle className="w-4 h-4 shrink-0" />
-                      <span>Allocated amount must equal adjustment amount.</span>
-                    </div>
-                  );
-                }
-                return null;
-              })()}
-
-              {/* Dialog controls */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAdjustmentModalOpen(false);
-                    setErrorBanner(null);
-                  }}
-                  className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-600 dark:text-gray-400 bg-gray-50 hover:bg-gray-100 dark:bg-slate-700/60 dark:hover:bg-slate-700 rounded-lg shadow-sm transition"
-                >
-                  Cancel
-                </button>
-                <Button
-                  type="submit"
-                  disabled={isSubmittingAdjustment || (() => {
-                    const totalAmountFloat = parseFloat(adjustmentAmount) || 0;
-                    const totalAllocatedFloat = adjustmentAllocations.reduce((acc, alloc) => acc + (parseFloat(alloc.amount) || 0), 0);
-                    return totalAmountFloat <= 0 || Math.abs(totalAmountFloat - totalAllocatedFloat) > 0.01;
-                  })()}
-                  className="px-5 py-2.5 text-xs font-bold uppercase tracking-wider text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-md transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
-                >
-                  {isSubmittingAdjustment ? (
-                    <>
-                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      Processing Adjustment...
-                    </>
-                  ) : (
-                    'Submit Adjustment'
                   )}
                 </Button>
               </div>

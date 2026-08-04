@@ -36,6 +36,7 @@ import { ShipmentFinanceDetail } from './components/finance/ShipmentFinanceDetai
 import { PaymentLedger } from './components/finance/PaymentLedger.tsx';
 import { AccountsView } from './components/finance/AccountsView.tsx';
 import { SettlementLedger } from './components/finance/SettlementLedger.tsx';
+import { CrossVendorSettlement } from './components/finance/CrossVendorSettlement.tsx';
 import { Sku, PurchaseOrder, Shipment, Invoice, Vendor, Notification, DraftOrder, VendorMaster } from './types.ts';
 import { APPS_SCRIPT_URL, API_ACTIONS } from './constants.ts';
 import { ViewType } from './types';
@@ -515,7 +516,7 @@ const App: React.FC = () => {
         }
     }, []);
 
-    const FINANCE_VIEWS = ['Finance', 'Payment Ledger', 'Accounts View', 'Settlement Ledger', 'Shipment Finance', 'Shipment Finance Detail'];
+    const FINANCE_VIEWS = ['Finance', 'Payment Ledger', 'Accounts View', 'Settlement Ledger', 'Cross Vendor Settlement', 'Shipment Finance', 'Shipment Finance Detail'];
     useEffect(() => {
         if (!user) return;
         if (FINANCE_VIEWS.includes(currentView)) fetchFinanceData();
@@ -743,6 +744,16 @@ const App: React.FC = () => {
                     onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}
                     setSettlementRecords={setSettlementRecords}
                     setPurchaseInvoices={setPurchaseInvoices}
+                />;
+            case 'Cross Vendor Settlement':
+                return <CrossVendorSettlement
+                    invoices={displayPurchaseInvoices}
+                    paymentLogs={displayPaymentLogs}
+                    settlementRecords={displaySettlementRecords}
+                    vendorLedger={vendorLedger}
+                    vendors={displayVendorMasters}
+                    onNavigate={(v) => setCurrentView(v)}
+                    onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}
                 />;
             case 'Accounts View':
                 return <AccountsView

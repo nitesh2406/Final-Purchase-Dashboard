@@ -672,6 +672,19 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
                       <span className="w-2 h-2 rounded-full bg-cyan-500 shrink-0" />
                       <span>Payment Entry</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddMenuOpen(false);
+                        if (onNavigate) {
+                          onNavigate('Cross Vendor Settlement');
+                        }
+                      }}
+                      className="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2 text-gray-900 dark:text-white font-bold cursor-pointer"
+                    >
+                      <span className="w-2 h-2 rounded-full bg-indigo-500 shrink-0" />
+                      <span>Cross-Vendor Settlement</span>
+                    </button>
                   </div>
                 </div>
               </>

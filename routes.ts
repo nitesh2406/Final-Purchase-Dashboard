@@ -19,6 +19,7 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   'Payment Ledger': '/finance/payment-ledger',
   'Accounts View': '/finance/accounts',
   'Settlement Ledger': '/finance/settlement-ledger',
+  'Cross Vendor Settlement': '/finance/cross-vendor-settlement',
   'Amazon Forecasting': '/amazon/forecasting',
   'Create SKU': '/sku',
   'Update SKU': '/sku/update',
