@@ -737,17 +737,27 @@ export const NewSkuDetail: React.FC<{
   const handleSaveDraft = async () => {
     setLoading(l => ({ ...l, save: true }));
     try {
-      const requestIdToUse = isNew
-        ? await handleCreateManualFirst()
-        : requestId;
-      if (!requestIdToUse) return;
+      // Brand-new entry: handleCreateManualFirst alone creates the row AND
+      // writes the full form in one Apps Script call — nothing further
+      // needed. (Previously followed by a separate saveNewSkuDraft call;
+      // firing two Apps Script requests back-to-back for the same new row
+      // was unreliable, see handleCreateManualFirst.)
+      if (isNew) {
+        const newId = await handleCreateManualFirst();
+        if (!newId) return;
+        setSavedRequestId(newId);
+        setIsDirty(false);
+        setShowSaved(true);
+        setTimeout(() => setShowSaved(false), 2000);
+        return;
+      }
 
       const response = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action:     API_ACTIONS.SAVE_NEW_SKU_DRAFT,
-          request_id: requestIdToUse,
+          request_id: requestId,
           edited_by:  'user', // replace with user?.name if passed as prop
           form: {
             ...form,
@@ -765,11 +775,6 @@ export const NewSkuDetail: React.FC<{
       const result = await response.json();
       if (result.success) {
         setIsDirty(false);
-        // Store the real request_id returned from GAS
-        // This unlocks platform creation buttons for manual entry
-        if (result.data?.request_id || result.data?.status) {
-          setSavedRequestId(requestIdToUse);
-        }
         console.log('Draft saved:', result.data);
         setShowSaved(true);
         setTimeout(() => setShowSaved(false), 2000);
@@ -928,7 +933,12 @@ export const NewSkuDetail: React.FC<{
     }
   };
 
-  // Helper: create manual request first if this is a new entry
+  // Helper: create manual request first if this is a new entry. Sends the
+  // full form in one call — the backend (apiCreateManualSkuRequest) writes
+  // every field, not just the skeleton, so this alone is a complete save
+  // for a brand-new entry. (A prior version split this into create-then-
+  // saveNewSkuDraft; firing those two Apps Script calls back-to-back was
+  // unreliable and could silently drop fields like suggested_sku/mrp.)
   const handleCreateManualFirst = async (): Promise<string | null> => {
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
@@ -937,7 +947,13 @@ export const NewSkuDetail: React.FC<{
         body: JSON.stringify({
           action:     API_ACTIONS.CREATE_MANUAL_SKU,
           created_by:  'user',
-          form,
+          form: {
+            ...form,
+            factory_code: [
+              form.factory_code_other,
+              form.article_number
+            ].filter(Boolean).join('|'),
+          },
         })
       });
       const result = await response.json();
@@ -1158,52 +1174,17 @@ export const NewSkuDetail: React.FC<{
 
   const handleCreateListing = async () => {
     // Manual entry with no saved request yet — silently save the draft first
-    // (the same two calls Save Draft makes: create the skeleton row, then
-    // write the full form) so the platform steps below have a real
-    // request_id with all fields — suggested_sku, mrp, etc. — actually
-    // persisted to attach to, instead of forcing a separate Save Draft
-    // click. CREATE_MANUAL_SKU alone only writes a bare skeleton row; the
-    // EasyEcom step re-reads the row by request_id and requires those
-    // fields, so skipping the full-form save here made it fail even when
-    // the user had filled everything in.
+    // (same call Save Draft makes) so the platform steps below have a real
+    // request_id to attach to, instead of forcing a separate Save Draft click.
     let requestIdOverride: string | undefined;
     if (isNew && !savedRequestId) {
       setLoading(l => ({ ...l, save: true }));
-      try {
-        const newId = await handleCreateManualFirst();
-        if (!newId) return;
-
-        const saveResponse = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({
-            action:     API_ACTIONS.SAVE_NEW_SKU_DRAFT,
-            request_id: newId,
-            edited_by:  'user',
-            form: {
-              ...form,
-              factory_code: [
-                form.factory_code_other,
-                form.article_number
-              ].filter(Boolean).join('|'),
-            },
-          })
-        });
-        const saveResult = await saveResponse.json();
-        if (!saveResult.success) {
-          alert('Save failed: ' + saveResult.error);
-          return;
-        }
-        setSavedRequestId(newId);
-        setIsDirty(false);
-        requestIdOverride = newId;
-      } catch (err) {
-        console.error('handleCreateListing save error:', err);
-        alert('Network error saving draft');
-        return;
-      } finally {
-        setLoading(l => ({ ...l, save: false }));
-      }
+      const newId = await handleCreateManualFirst();
+      setLoading(l => ({ ...l, save: false }));
+      if (!newId) return;
+      setSavedRequestId(newId);
+      setIsDirty(false);
+      requestIdOverride = newId;
     }
 
     setCreationStarted(true);
