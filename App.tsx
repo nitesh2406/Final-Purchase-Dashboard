@@ -760,6 +760,8 @@ const App: React.FC = () => {
                 return <AccountsView
                     invoices={displayPurchaseInvoices}
                     paymentLogs={displayPaymentLogs}
+                    settlementRecords={displaySettlementRecords}
+                    setSettlementRecords={setSettlementRecords}
                     vendorLedger={vendorLedger}
                     vendors={displayVendorMasters}
                     onNavigateToDetail={(id) => {

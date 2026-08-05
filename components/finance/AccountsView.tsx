@@ -12,8 +12,6 @@ import {
   fetchPaymentLogs,
   getPaymentLogs,
   PaymentLog,
-  fetchSettlementRecords,
-  getSettlementRecordsLocal,
   SettlementRecord,
   VendorLedgerEntry,
   IS_DEVELOPMENT_MODE
@@ -59,6 +57,8 @@ interface AccountsViewProps {
   onNavigate?: (view: any) => void;
   invoices: (PurchaseInvoice & { temp?: boolean })[];
   paymentLogs: (PaymentLog & { temp?: boolean })[];
+  settlementRecords: (SettlementRecord & { temp?: boolean })[];
+  setSettlementRecords: React.Dispatch<React.SetStateAction<(SettlementRecord & { temp?: boolean })[]>>;
   vendorLedger: VendorLedgerEntry[];
   vendors: VendorMaster[];
   onRefresh: () => Promise<void> | void;
@@ -70,11 +70,13 @@ interface AccountsViewProps {
   syncError?: string | null;
 }
 
-export const AccountsView: React.FC<AccountsViewProps> = ({ 
-  onNavigateToDetail, 
+export const AccountsView: React.FC<AccountsViewProps> = ({
+  onNavigateToDetail,
   onNavigate,
   invoices,
   paymentLogs,
+  settlementRecords,
+  setSettlementRecords,
   vendorLedger,
   vendors,
   onRefresh,
@@ -93,7 +95,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   const navigate = useNavigate();
 
   // Dynamic list states
-  const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>([]);
   const [searchQuery, setSearchQuery] = useQueryParamFast('search', '');
   const [selectedVendorFilter, setSelectedVendorFilter] = useQueryParam<string>('vendor', '');
   const [configError, setConfigError] = useState<string | null>(null);
@@ -129,22 +130,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     onRefresh();
   };
 
-  const loadSettlementRecords = async () => {
-    try {
-      const list = await fetchSettlementRecords();
-      setSettlementRecords(list);
-    } catch (e) {
-      console.warn('Could not load live settlement records, using localStorage fallback');
-      setSettlementRecords(getSettlementRecordsLocal());
-    }
-  };
-
-  useEffect(() => {
-    loadSettlementRecords();
-  }, []);
-
   // Automatically trigger sync refresh when switching to the Vendor Ledger tab.
-  // (Settlement Ledger refreshes itself on mount, so it's excluded here to avoid a double-fetch.)
   useEffect(() => {
     if (activeTab === 'vendor_ledger') {
       onRefresh();
@@ -243,13 +229,12 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
       try {
         await logSettlementRecord(recordPayload);
 
-        // Optimistic local insert for instant feedback; loadSettlementRecords() below
+        // Optimistic local insert for instant feedback; onRefresh() below
         // reconciles with the backend-assigned id shortly after.
         setSettlementRecords(prev => [{ id: `SET-TEMP-${Date.now()}`, ...recordPayload }, ...prev]);
         setSuccessBanner(`Settlement of ¥${amountRmb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} logged against invoice "${inv.invoiceId}".`);
         setSettleModalInvoice(null);
 
-        loadSettlementRecords();
         onRefresh();
       } catch (err: any) {
         setErrorBanner(`Sync Failure: Could not log the settlement (${err.message || err}). Please try again.`);
