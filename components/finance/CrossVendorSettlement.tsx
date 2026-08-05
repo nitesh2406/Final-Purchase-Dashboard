@@ -32,8 +32,8 @@ interface CrossVendorSettlementProps {
   vendors: VendorMaster[];
   invoices: (PurchaseInvoice & { temp?: boolean })[];
   paymentLogs: (PaymentLog & { temp?: boolean })[];
-  settlementRecords: SettlementRecord[];
-  setSettlementRecords: React.Dispatch<React.SetStateAction<SettlementRecord[]>>;
+  settlementRecords: (SettlementRecord & { temp?: boolean; createdAtTimestamp?: number })[];
+  setSettlementRecords: React.Dispatch<React.SetStateAction<(SettlementRecord & { temp?: boolean; createdAtTimestamp?: number })[]>>;
   vendorLedger: VendorLedgerEntry[];
   onRefresh: () => Promise<void> | void;
 }
@@ -152,7 +152,7 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
         // generateAdjustmentId() call sees them and can't recompute a colliding sequence
         // number — App.tsx's onRefresh() fires the real fetch without awaiting it, so it
         // cannot be relied on alone to make the next ID generation see fresh data in time.
-        const newLocalRecords: SettlementRecord[] = allocations.map((alloc, idx) => {
+        const newLocalRecords: (SettlementRecord & { temp?: boolean; createdAtTimestamp?: number })[] = allocations.map((alloc, idx) => {
           const amount = parseFloat(alloc.amount) || 0;
           return {
             id: `SET-${Date.now()}-${idx}`,
@@ -167,7 +167,8 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
             exchangeRateSettlement: 11.50,
             forexGainLoss: 0,
             notes: notes || 'Cross-Vendor Settlement Transfer',
-            paymentId: adjId
+            paymentId: adjId,
+            temp: true
           };
         });
         setSettlementRecords(prev => [...newLocalRecords, ...prev]);

@@ -694,6 +694,31 @@ export function generateAdjustmentId(allRecords: SettlementRecord[]): string {
 }
 
 /**
+ * Merges a freshly-fetched list with any local optimistic ("temp") records not yet
+ * reflected in it, so an in-flight optimistic insert survives a refresh that lands
+ * before the backend write is visible on read-back. A temp record is a client-side
+ * placeholder with a generated id that can never equal the real backend-assigned id,
+ * so matching by key alone would let it persist forever once the real record has
+ * actually arrived under a different id — maxAgeMs bounds that lifetime so a stale
+ * temp record eventually drops out even without ever being matched.
+ */
+export function reconcileTempRecords<T extends { temp?: boolean; createdAtTimestamp?: number }>(
+  prev: T[],
+  fresh: T[],
+  getKey: (record: T) => string,
+  maxAgeMs: number = 20000
+): T[] {
+  const remoteKeys = new Set(fresh.map(r => getKey(r).trim().toLowerCase()));
+  const now = Date.now();
+  const remainingTemp = prev.filter(r =>
+    r.temp &&
+    !remoteKeys.has(getKey(r).trim().toLowerCase()) &&
+    (now - (r.createdAtTimestamp || 0)) < maxAgeMs
+  );
+  return [...remainingTemp, ...fresh];
+}
+
+/**
  * Computes a vendor's running RMB balance (positive = advance credit owed to them,
  * negative = outstanding liability) from live vendor-ledger rows when available, falling
  * back to reconstructing it from raw invoices/payment logs/settlement records. Shared by

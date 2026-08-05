@@ -38,11 +38,11 @@ import { ViewType } from '../../types';
 interface SettlementLedgerProps {
   invoices: (PurchaseInvoice & { temp?: boolean })[];
   paymentLogs: (PaymentLog & { temp?: boolean })[];
-  settlementRecords: (SettlementRecord & { temp?: boolean })[];
+  settlementRecords: (SettlementRecord & { temp?: boolean; createdAtTimestamp?: number })[];
   vendors?: (Vendor | VendorMaster)[];
   onNavigate?: (view: ViewType) => void;
   onRefresh: () => void;
-  setSettlementRecords: React.Dispatch<React.SetStateAction<(SettlementRecord & { temp?: boolean })[]>>;
+  setSettlementRecords: React.Dispatch<React.SetStateAction<(SettlementRecord & { temp?: boolean; createdAtTimestamp?: number })[]>>;
   setPurchaseInvoices: React.Dispatch<React.SetStateAction<(PurchaseInvoice & { temp?: boolean })[]>>;
 }
 
@@ -500,7 +500,7 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
 
       if (!IS_DEVELOPMENT_MODE) {
         // 1. OPTIMISTIC LOCAL REGISTER FLIP
-        setSettlementRecords(prev => [{ ...tempRecord, temp: true }, ...prev]);
+        setSettlementRecords(prev => [{ ...tempRecord, temp: true, createdAtTimestamp: Date.now() }, ...prev]);
         setIsFormOpen(false);
 
         // Reset local data form inputs instantly

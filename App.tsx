@@ -14,6 +14,7 @@ import {
     fetchVendorLedger,
     fetchVendorMasters,
     syncInvoicesFromShipments,
+    reconcileTempRecords,
     IS_DEVELOPMENT_MODE
 } from './services/settlementService.ts';
 import { DraftOrdersTable } from './components/logistics/DraftOrdersTable.tsx';
@@ -84,7 +85,7 @@ const App: React.FC = () => {
     // Financial Data State
     const [purchaseInvoices, setPurchaseInvoices] = useState<(PurchaseInvoice & { temp?: boolean })[]>([]);
     const [paymentLogs, setPaymentLogs] = useState<(PaymentLog & { temp?: boolean })[]>([]);
-    const [settlementRecords, setSettlementRecords] = useState<(SettlementRecord & { temp?: boolean })[]>([]);
+    const [settlementRecords, setSettlementRecords] = useState<(SettlementRecord & { temp?: boolean; createdAtTimestamp?: number })[]>([]);
     const [vendorLedger, setVendorLedger] = useState<VendorLedgerEntry[]>([]);
     const [isSyncingShipments, setIsSyncingShipments] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
@@ -480,10 +481,17 @@ const App: React.FC = () => {
                 });
             }
 
+            // Reconcile rather than blind-replace: an optimistic settlement insert (Settle
+            // Invoice, Cross-Vendor Settlement) can otherwise be wiped by this refetch if it
+            // runs before the backend write is visible on read-back. Shared across both
+            // branches so the two can't silently diverge.
+            const reconcileSettlements = (prev: (SettlementRecord & { temp?: boolean; createdAtTimestamp?: number })[]) =>
+                reconcileTempRecords(prev, finSettlements, (s: any) => String(s.id || ''));
+
             if (IS_DEVELOPMENT_MODE) {
                 setPurchaseInvoices(mergedInvoices);
                 setPaymentLogs(finPayments);
-                setSettlementRecords(finSettlements);
+                setSettlementRecords(reconcileSettlements);
             } else {
                 setPurchaseInvoices(prev => {
                     const remoteIds = new Set(mergedInvoices.map((i: any) => i.invoiceId ? String(i.invoiceId).trim().toLowerCase() : ''));
@@ -496,11 +504,7 @@ const App: React.FC = () => {
                     const remainingTemp = prev.filter(p => p.temp && !remoteIds.has(String(p.paymentId || '').trim().toLowerCase()));
                     return Array.from(new Map([...remainingTemp, ...finPayments].map(p => [String(p.paymentId || '').trim().toLowerCase(), p])).values());
                 });
-                setSettlementRecords(prev => {
-                    const remoteIds = new Set(finSettlements.map((s: any) => String(s.id || '').trim().toLowerCase()));
-                    const remainingTemp = prev.filter(s => s.temp && !remoteIds.has(String(s.id || '').trim().toLowerCase()));
-                    return Array.from(new Map([...remainingTemp, ...finSettlements].map(s => [String(s.id || '').trim().toLowerCase(), s])).values());
-                });
+                setSettlementRecords(reconcileSettlements);
             }
 
             setIsSyncingShipments(true);

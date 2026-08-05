@@ -57,8 +57,8 @@ interface AccountsViewProps {
   onNavigate?: (view: any) => void;
   invoices: (PurchaseInvoice & { temp?: boolean })[];
   paymentLogs: (PaymentLog & { temp?: boolean })[];
-  settlementRecords: (SettlementRecord & { temp?: boolean })[];
-  setSettlementRecords: React.Dispatch<React.SetStateAction<(SettlementRecord & { temp?: boolean })[]>>;
+  settlementRecords: (SettlementRecord & { temp?: boolean; createdAtTimestamp?: number })[];
+  setSettlementRecords: React.Dispatch<React.SetStateAction<(SettlementRecord & { temp?: boolean; createdAtTimestamp?: number })[]>>;
   vendorLedger: VendorLedgerEntry[];
   vendors: VendorMaster[];
   onRefresh: () => Promise<void> | void;
@@ -94,7 +94,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const navigate = useNavigate();
 
-  // Dynamic list states
+  // URL-synced filter state
   const [searchQuery, setSearchQuery] = useQueryParamFast('search', '');
   const [selectedVendorFilter, setSelectedVendorFilter] = useQueryParam<string>('vendor', '');
   const [configError, setConfigError] = useState<string | null>(null);
@@ -131,6 +131,8 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   };
 
   // Automatically trigger sync refresh when switching to the Vendor Ledger tab.
+  // (Settlement Ledger is excluded: it already refreshes itself on mount via its
+  // own useEffect in SettlementLedger.tsx, so including it here would double-fetch.)
   useEffect(() => {
     if (activeTab === 'vendor_ledger') {
       onRefresh();
@@ -229,9 +231,10 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
       try {
         await logSettlementRecord(recordPayload);
 
-        // Optimistic local insert for instant feedback; onRefresh() below
-        // reconciles with the backend-assigned id shortly after.
-        setSettlementRecords(prev => [{ id: `SET-TEMP-${Date.now()}`, ...recordPayload }, ...prev]);
+        // Optimistic local insert for instant feedback; onRefresh() below fetches the
+        // backend-assigned record shortly after, and reconcileTempRecords() (App.tsx)
+        // ages this placeholder out once that's happened (or after its own timeout).
+        setSettlementRecords(prev => [{ id: `SET-TEMP-${Date.now()}`, ...recordPayload, temp: true, createdAtTimestamp: Date.now() }, ...prev]);
         setSuccessBanner(`Settlement of ¥${amountRmb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} logged against invoice "${inv.invoiceId}".`);
         setSettleModalInvoice(null);
 
