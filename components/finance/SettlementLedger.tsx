@@ -221,10 +221,10 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
       // Text generic query search matching invoice or vendor name/code
       if (searchQuery) {
         const cleanQuery = searchQuery.toLowerCase().trim();
-        const matchesInvoice = rec.invoiceId.toLowerCase().includes(cleanQuery);
-        const matchesVendorCode = rec.vendorNo.toLowerCase().includes(cleanQuery);
-        const matchesVendorName = rec.vendorName.toLowerCase().includes(cleanQuery);
-        const matchesType = rec.txnType.toLowerCase().includes(cleanQuery);
+        const matchesInvoice = (rec.invoiceId || '').toLowerCase().includes(cleanQuery);
+        const matchesVendorCode = (rec.vendorNo || '').toLowerCase().includes(cleanQuery);
+        const matchesVendorName = (rec.vendorName || '').toLowerCase().includes(cleanQuery);
+        const matchesType = (rec.txnType || '').toLowerCase().includes(cleanQuery);
         if (!matchesInvoice && !matchesVendorCode && !matchesVendorName && !matchesType) {
           return false;
         }
@@ -1036,11 +1036,11 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
                 <div className="grid grid-cols-3 gap-2 bg-slate-50 dark:bg-slate-900/30 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/40 text-center text-xs font-mono">
                   <div>
                     <span className="block text-[9px] text-gray-400 dark:text-gray-500 uppercase font-semibold">Primary ex</span>
-                    <span className="text-gray-700 dark:text-gray-300 font-medium">{rec.exchangeRatePrimary.toFixed(2)}</span>
+                    <span className="text-gray-700 dark:text-gray-300 font-medium">{(rec.exchangeRatePrimary ?? 0).toFixed(2)}</span>
                   </div>
                   <div>
                     <span className="block text-[9px] text-gray-400 dark:text-gray-500 uppercase font-semibold">Settlement ex</span>
-                    <span className="text-gray-900 dark:text-white font-medium">{rec.exchangeRateSettlement.toFixed(2)}</span>
+                    <span className="text-gray-900 dark:text-white font-medium">{(rec.exchangeRateSettlement ?? 0).toFixed(2)}</span>
                   </div>
                   <div>
                     <span className="block text-[9px] text-gray-400 dark:text-gray-500 uppercase font-semibold">Forex G/L</span>
@@ -1211,12 +1211,12 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
  
                        {/* Exchange rate Primary */}
                        <td className="px-3 xl:px-5 lg:px-2.5 py-3.5 text-center font-mono text-sm text-gray-500 dark:text-gray-400">
-                         {rec.exchangeRatePrimary.toFixed(2)}
+                         {(rec.exchangeRatePrimary ?? 0).toFixed(2)}
                        </td>
- 
+
                        {/* Exchange rate Settlement */}
                        <td className="px-3 xl:px-5 lg:px-2.5 py-3.5 text-center font-mono text-sm font-medium text-gray-700 dark:text-gray-300">
-                         {rec.exchangeRateSettlement.toFixed(2)}
+                         {(rec.exchangeRateSettlement ?? 0).toFixed(2)}
                        </td>
  
                        {/* Forex Gain/Loss color badges */}

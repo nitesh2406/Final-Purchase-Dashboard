@@ -296,18 +296,26 @@ const App: React.FC = () => {
                 if (q.status === 'synced') return;
                 const payload = q.payload;
                 const idx = list.findIndex(s => String(s.id).trim().toLowerCase() === String(q.id).trim().toLowerCase());
+                // Queued payload shape varies by origin screen: SettlementLedger's own
+                // adjustment form sends exchangeRatePrimary/exchangeRateSettlement, while
+                // Cross-Vendor Settlement sends a single fxRate and sourceVendor/targetVendor
+                // instead of vendorNo/vendorName (it settles two accounts, not one). Resolve
+                // every field defensively so this placeholder never carries an undefined
+                // value into SettlementLedger's render, which crashes on unguarded
+                // rec.exchangeRatePrimary.toFixed(2) while the queue item is still pending.
+                const resolvedRate = payload.exchangeRatePrimary ?? payload.exchangeRateSettlement ?? payload.fxRate ?? 0;
                 const optimisticItem = {
                     id: q.id,
                     date: payload.date,
-                    invoiceId: payload.invoiceId,
-                    vendorNo: payload.vendorNo,
-                    vendorName: payload.vendorName,
-                    txnType: payload.txnType,
-                    amountRmb: payload.amountRmb,
-                    amountInr: payload.amountInr,
-                    exchangeRatePrimary: payload.exchangeRatePrimary,
-                    exchangeRateSettlement: payload.exchangeRateSettlement,
-                    forexGainLoss: payload.forexGainLoss,
+                    invoiceId: payload.invoiceId || '',
+                    vendorNo: payload.vendorNo || payload.sourceVendor || payload.targetVendor || '',
+                    vendorName: payload.vendorName || payload.sourceVendor || payload.targetVendor || '',
+                    txnType: payload.txnType || 'Invoice Settlement',
+                    amountRmb: payload.amountRmb ?? 0,
+                    amountInr: payload.amountInr ?? (payload.amountRmb || 0) * resolvedRate,
+                    exchangeRatePrimary: resolvedRate,
+                    exchangeRateSettlement: resolvedRate,
+                    forexGainLoss: payload.forexGainLoss ?? 0,
                     notes: payload.notes || 'Sync pending...',
                     paymentId: payload.paymentId || '',
                     syncStatus: q.status,
