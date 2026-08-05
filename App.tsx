@@ -750,6 +750,7 @@ const App: React.FC = () => {
                     invoices={displayPurchaseInvoices}
                     paymentLogs={displayPaymentLogs}
                     settlementRecords={displaySettlementRecords}
+                    setSettlementRecords={setSettlementRecords}
                     vendorLedger={vendorLedger}
                     vendors={displayVendorMasters}
                     onNavigate={(v) => setCurrentView(v)}

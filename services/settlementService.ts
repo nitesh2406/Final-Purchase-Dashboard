@@ -1,5 +1,6 @@
 import { APPS_SCRIPT_URL } from '../constants.ts';
 import { SyncQueueManager } from './syncQueue.ts';
+import type { VendorMaster } from '../types';
 export type { VendorMaster } from '../types';
 
 export const IS_DEVELOPMENT_MODE = true;
@@ -296,73 +297,35 @@ export async function executeAppsScriptRequest<T = any>(
   }
 }
 
-/**
- * A deterministic mock GOOGLEFINANCE("CURRENCY:CNYINR") rate generator based on date string.
- */
-export function fetchGoogleFinanceRate(dateStr: string): { rate: number; isHoliday: boolean; isWeekend: boolean } {
-  const d = new Date(dateStr);
-  const day = d.getDay();
-  const isWeekend = day === 0 || day === 6; // Sunday = 0, Saturday = 6
-  
-  // Prominent bank holidays (MM-DD)
-  const month = d.getMonth() + 1;
-  const date = d.getDate();
-  const dateKey = `${month}-${date}`;
-  const bankHolidays = [
-    '1-1',   // New Year's Day
-    '5-1',   // Labour Day
-    '10-1',  // National Day
-    '12-25', // Christmas Holiday
-  ];
-  const isHoliday = bankHolidays.includes(dateKey);
-  
-  // Consistent pseudo-random closing rate around ~11.50 based on date hash
-  let hash = 0;
-  for (let i = 0; i < dateStr.length; i++) {
-    hash = dateStr.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const variance = (hash % 100) / 1500; // variance from -0.06 to +0.06
-  const rate = 11.52 + variance;
-  
-  return { rate, isHoliday, isWeekend };
+export interface HistoricalFxRate {
+  rate: number;
+  resolvedDate: string;
+  success: boolean;
 }
 
 /**
- * Resolves day closing exchange rate, with automated sequential cascading rollback for holidays/weekends.
+ * Fetches real historical CNY/INR closing rates for a batch of dates from the Apps Script
+ * backend (GOOGLEFINANCE-backed, with server-side weekend/holiday cascade to the nearest
+ * prior trading day). Keyed by the exact date strings passed in.
  */
-export function getClosingRateWithFallback(dateStr: string): { 
-  resolvedDate: string; 
-  rate: number; 
-  cascadeLogs: string[];
-} {
-  const logs: string[] = [];
-  let current = new Date(dateStr);
-  
-  // Defensive cascade steps matching standard finance practices
-  for (let i = 0; i < 15; i++) {
-    const formatted = current.toISOString().split('T')[0];
-    const { rate, isHoliday, isWeekend } = fetchGoogleFinanceRate(formatted);
-    
-    if (isWeekend) {
-      logs.push(`Date ${formatted} lands on a Weekend. Cascading backward...`);
-      current.setDate(current.getDate() - 1);
-      continue;
+export async function fetchHistoricalFxRates(dates: string[]): Promise<Record<string, HistoricalFxRate>> {
+  const uniqueDates = Array.from(new Set(dates.filter(Boolean)));
+  if (!appsScriptUrl || uniqueDates.length === 0) return {};
+  try {
+    const response = await executeAppsScriptProxy<any>(
+      appsScriptUrl,
+      'get_historical_fx_rates',
+      'PurchaseInvoices',
+      'POST',
+      { dates: uniqueDates }
+    );
+    if (response && response.status === 'success' && response.rates) {
+      return response.rates;
     }
-    if (isHoliday) {
-      logs.push(`Date ${formatted} is a Bank Holiday. Cascading backward...`);
-      current.setDate(current.getDate() - 1);
-      continue;
-    }
-    
-    logs.push(`Successfully resolved closing exchange rate on ${formatted}: ${rate} INR/RMB (via GOOGLEFINANCE("CURRENCY:CNYINR"))`);
-    return {
-      resolvedDate: formatted,
-      rate,
-      cascadeLogs: logs
-    };
+  } catch (err) {
+    console.error('Failed to fetch historical FX rates:', err);
   }
-  
-  return { resolvedDate: dateStr, rate: 11.50, cascadeLogs: ["Defaulted fallback rate due to limit bounds."] };
+  return {};
 }
 
 let purchaseInvoicesMemory: PurchaseInvoice[] = [];
@@ -500,20 +463,39 @@ export async function executeEODExchangeRateEngine(
 }> {
   const logs: string[] = [];
   logs.push(`[EOD Engine] Starting sequential lookup processing at ${new Date().toLocaleTimeString()}...`);
-  
+
   const records = currentInvoices && currentInvoices.length > 0 ? currentInvoices : getPurchaseInvoices();
+  const normalizeDate = (d: string) => (d || '').split('T')[0];
+
+  // Resolve every needed date's real closing rate in one batched backend round-trip,
+  // rather than one call per invoice.
+  const uncalculatedDates = records
+    .filter(rec => rec.status === 'Pending EOD' || !rec.er1 || !rec.inr)
+    .map(rec => normalizeDate(rec.date));
+  const rateMap = await fetchHistoricalFxRates(uncalculatedDates);
+
   let count = 0;
   const updatesList: { invoiceId: string; er1: number }[] = [];
   const updatedRecordsForSweep: PurchaseInvoice[] = [];
-  
+
   const updated = records.map(rec => {
     // Treat invoice as uncalculated if status is 'Pending EOD' or missing ER1/INR valuation
     if (rec.status === 'Pending EOD' || !rec.er1 || !rec.inr) {
       logs.push(`\nProcessing Invoice: ${rec.invoiceId} (Date: ${rec.date}, RMB: ¥${rec.rmb})`);
-      
-      const { rate, cascadeLogs } = getClosingRateWithFallback(rec.date);
-      cascadeLogs.forEach(l => logs.push(`  ↳ ${l}`));
-      
+
+      const dateKey = normalizeDate(rec.date);
+      const resolved = rateMap[dateKey];
+      const rate = resolved && resolved.success ? resolved.rate : 11.50;
+
+      if (resolved && resolved.success) {
+        if (resolved.resolvedDate !== dateKey) {
+          logs.push(`  ↳ ${dateKey} had no trading data. Cascaded back to nearest prior trading day: ${resolved.resolvedDate}.`);
+        }
+        logs.push(`  ↳ Resolved closing exchange rate on ${resolved.resolvedDate}: ${rate} INR/RMB (via GOOGLEFINANCE historical lookup)`);
+      } else {
+        logs.push(`  ↳ Historical rate lookup failed for ${dateKey}. Defaulted to fallback rate ${rate}.`);
+      }
+
       const inr = rec.rmb * rate;
       logs.push(`  ↳ Calculated Settlement valuation: ₹${inr.toLocaleString('en-IN', { maximumFractionDigits: 2 })} INR`);
       
@@ -690,6 +672,150 @@ export async function submitAdjustmentEntry(record: any): Promise<any> {
   } catch (err: any) {
     console.error('Failed to queue adjustment:', err);
     throw err;
+  }
+}
+
+/**
+ * Next sequential ADJ-YYYYMMDD-NNN reference ID for a cross-vendor settlement/adjustment
+ * batch, scoped to today's date. Shared by every screen that creates adjustment entries so
+ * there's a single place to fix sequencing bugs instead of drifting copies.
+ */
+export function generateAdjustmentId(allRecords: SettlementRecord[]): string {
+  const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
+  const prefix = `ADJ-${todayStr}`;
+  const matches = allRecords.filter(r => (r.paymentId || r.id || '').startsWith(prefix));
+  const seqs = matches.map(r => {
+    const parts = (r.paymentId || r.id || '').split('-');
+    const lastPart = parseInt(parts[parts.length - 1], 10);
+    return isNaN(lastPart) ? 0 : lastPart;
+  });
+  const nextSeq = seqs.length > 0 ? Math.max(...seqs) + 1 : 1;
+  return `${prefix}-${String(nextSeq).padStart(3, '0')}`;
+}
+
+/**
+ * Computes a vendor's running RMB balance (positive = advance credit owed to them,
+ * negative = outstanding liability) from live vendor-ledger rows when available, falling
+ * back to reconstructing it from raw invoices/payment logs/settlement records. Shared by
+ * every screen that previews a vendor's balance so the sign/allocation rules only live once.
+ */
+export function computeVendorBalance(
+  vendorCode: string,
+  data: {
+    invoices?: PurchaseInvoice[];
+    paymentLogs?: PaymentLog[];
+    settlementRecords?: SettlementRecord[];
+    vendorLedger?: VendorLedgerEntry[];
+    vendors?: VendorMaster[];
+  }
+): number {
+  if (!vendorCode) return 0;
+  const { invoices, paymentLogs, settlementRecords, vendorLedger, vendors } = data;
+  try {
+    if (vendorLedger && vendorLedger.length > 0) {
+      const filteredLive = vendorLedger.filter(row => row.VendorCode === vendorCode);
+      if (filteredLive.length > 0) {
+        const compiled = filteredLive.map(row => {
+          const isPurchase = row.Particulars === 'Purchase';
+          const isPayment = row.Particulars === 'Payment';
+          const isTransferOut = row.Particulars?.includes('Transfer Out');
+          const isTransferIn = row.Particulars?.includes('Transfer In');
+          const isRefund = row.Particulars?.includes('Refund');
+          const isForex = row.Particulars?.includes('Forex');
+
+          let amount = parseFloat(String(row.RMB)) || 0;
+          if (isPurchase) {
+            amount = -Math.abs(amount);
+          } else if (isPayment) {
+            amount = Math.abs(amount);
+          } else if (isTransferOut) {
+            amount = -Math.abs(amount);
+          } else if (isTransferIn) {
+            amount = Math.abs(amount);
+          } else if (isRefund) {
+            amount = Math.abs(amount);
+          } else if (isForex) {
+            amount = -amount;
+          } else {
+            amount = -amount;
+          }
+
+          return { date: row.Date || '', amount };
+        });
+
+        // Union in any invoice for this vendor not already mirrored into VendorLedger
+        // (see matching fix in VendorLedgerTab.compileLedger for why this is necessary).
+        const representedInvoiceIds = new Set(
+          filteredLive
+            .filter(row => row.Particulars === 'Purchase')
+            .map(row => row.ReferenceId)
+        );
+        const safeInvoicesForLive = invoices || [];
+        safeInvoicesForLive
+          .filter(inv => inv.vendorCode === vendorCode && !representedInvoiceIds.has(inv.invoiceId))
+          .forEach(inv => {
+            compiled.push({ date: inv.date || '', amount: -(parseFloat(String(inv.rmb)) || 0) });
+          });
+
+        compiled.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+        return compiled.reduce((running, row) => running + row.amount, 0);
+      }
+    }
+
+    const rows: { date: string; amount: number }[] = [];
+
+    const safeInvoices = invoices || [];
+    safeInvoices.filter(inv => inv.vendorCode === vendorCode).forEach(inv => {
+      rows.push({ date: inv.date || '', amount: -(parseFloat(String(inv.rmb)) || 0) });
+    });
+
+    const safePaymentLogs = paymentLogs || [];
+    safePaymentLogs.forEach(log => {
+      const isPrimary = log.vendorCode === vendorCode;
+      const hasAllocations = log.allocations && log.allocations.length > 0;
+
+      if (isPrimary) {
+        if (hasAllocations) {
+          rows.push({ date: log.date || '', amount: parseFloat(String(log.rmbAmount)) || 0 });
+          log.allocations?.forEach(alloc => {
+            if (alloc.vendorCode !== vendorCode) {
+              rows.push({ date: log.date || '', amount: -(parseFloat(String(alloc.amount)) || 0) });
+            }
+          });
+        } else {
+          rows.push({ date: log.date || '', amount: parseFloat(String(log.rmbAmount)) || 0 });
+        }
+      } else if (hasAllocations) {
+        const allocs = log.allocations?.filter(a => a.vendorCode === vendorCode) || [];
+        allocs.forEach(alloc => {
+          rows.push({ date: log.date || '', amount: parseFloat(String(alloc.amount)) || 0 });
+        });
+      }
+    });
+
+    const safeSettlementRecords = settlementRecords || [];
+    safeSettlementRecords.forEach(rec => {
+      const isSource = rec.vendorNo === vendorCode && rec.invoiceId ? (rec.invoiceId.startsWith('V-') || vendors?.some(v => v.vendor_id === rec.invoiceId)) : false;
+      const isTarget = rec.invoiceId === vendorCode && rec.vendorNo ? (rec.vendorNo.startsWith('V-') || vendors?.some(v => v.vendor_id === rec.vendorNo)) : false;
+
+      if (isSource) {
+        rows.push({ date: rec.date || '', amount: -(parseFloat(String(rec.amountRmb)) || 0) });
+      } else if (isTarget) {
+        rows.push({ date: rec.date || '', amount: parseFloat(String(rec.amountRmb)) || 0 });
+      } else if (rec.vendorNo === vendorCode) {
+        if (rec.txnType === 'Forex Adjustment') {
+          rows.push({ date: rec.date || '', amount: -(parseFloat(String(rec.amountRmb)) || 0) });
+        } else if (rec.txnType === 'Refund' || rec.txnType === 'Refund Adjustment') {
+          rows.push({ date: rec.date || '', amount: parseFloat(String(rec.amountRmb)) || 0 });
+        }
+      }
+    });
+
+    rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    return rows.reduce((running, r) => running + r.amount, 0);
+  } catch (e) {
+    console.error('Error calculating vendor balance:', e);
+    return 0;
   }
 }
 
@@ -1049,7 +1175,8 @@ export function runFIFOReverseSweepForInvoice(invoice: PurchaseInvoice) {
   const settlements = getSettlementRecordsLocal();
   const newSettlementRecords: SettlementRecord[] = [];
 
-  const er1 = targetInvoice.er1 || getClosingRateWithFallback(targetInvoice.date).rate;
+  // The guard clause above already returned early if er1 were missing, so it's always set here.
+  const er1 = targetInvoice.er1 as number;
 
   for (const advance of openAdvances) {
     if (targetInvoice.balance <= 0) break;

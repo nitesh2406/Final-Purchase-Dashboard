@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { viewToPath } from '../../routes';
 import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
@@ -165,6 +165,96 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     setIsAddMenuOpen(false);
     const path = viewToPath('Cross Vendor Settlement');
     navigate(payingVendor ? `${path}?payingVendor=${encodeURIComponent(payingVendor)}` : path);
+  };
+
+  // Derives an invoice's outstanding balance from actual 'Invoice Settlement' records
+  // (the invoice's own stored balance/settledAmount fields aren't kept in sync by the
+  // settlement-logging backend action, so the ledger is the source of truth here).
+  const getInvoiceSettlementInfo = (inv: PurchaseInvoice) => {
+    const relevantSettlements = settlementRecords.filter(s => s.invoiceId === inv.invoiceId && s.txnType === 'Invoice Settlement');
+    const totalSettledRmb = relevantSettlements.reduce((sum, s) => sum + s.amountRmb, 0);
+    const balance = Math.max(0, (inv.rmb || 0) - totalSettledRmb);
+    const status: 'Unpaid' | 'Partial' | 'Settled' = totalSettledRmb <= 0 ? 'Unpaid' : balance <= 0.01 ? 'Settled' : 'Partial';
+    return { totalSettledRmb, balance, status };
+  };
+
+  // Settle Invoice modal state
+  const [settleModalInvoice, setSettleModalInvoice] = useState<PurchaseInvoice | null>(null);
+  const [settleForm, setSettleForm] = useState({
+    date: new Date().toISOString().split('T')[0],
+    amountRmb: '',
+    exchangeRateSettlement: '',
+    notes: ''
+  });
+  const { isSubmitting: isSubmittingSettlement, withSubmissionGuard: withSettlementGuard } = useSubmissionLock();
+
+  const handleOpenSettleModal = (inv: PurchaseInvoice, balance: number) => {
+    setSettleModalInvoice(inv);
+    setSettleForm({
+      date: new Date().toISOString().split('T')[0],
+      amountRmb: balance.toFixed(2),
+      exchangeRateSettlement: inv.er1 ? String(inv.er1) : '',
+      notes: ''
+    });
+    setErrorBanner(null);
+    setIsAddMenuOpen(false);
+  };
+
+  const handleConfirmSettlement = (e: React.FormEvent) => {
+    e.preventDefault();
+    const inv = settleModalInvoice;
+    if (!inv) return;
+
+    withSettlementGuard(async () => {
+      setErrorBanner(null);
+
+      const amountRmb = parseFloat(settleForm.amountRmb) || 0;
+      const { balance } = getInvoiceSettlementInfo(inv);
+
+      if (amountRmb <= 0) {
+        setErrorBanner('Settlement amount must be a positive number.');
+        return;
+      }
+      if (amountRmb > balance + 0.01) {
+        setErrorBanner(`Settlement amount cannot exceed the outstanding balance of ¥${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`);
+        return;
+      }
+
+      const exchangeRatePrimary = inv.er1 || 0;
+      const exchangeRateSettlement = parseFloat(settleForm.exchangeRateSettlement) || exchangeRatePrimary;
+      const amountInr = amountRmb * exchangeRateSettlement;
+      const forexGainLoss = (amountRmb * exchangeRatePrimary) - (amountRmb * exchangeRateSettlement);
+      const vendorName = VENDOR_OPTIONS.find(v => v.code === inv.vendorCode)?.name || inv.vendorCode;
+
+      const recordPayload = {
+        date: settleForm.date,
+        invoiceId: inv.invoiceId,
+        vendorNo: inv.vendorCode,
+        vendorName,
+        txnType: 'Invoice Settlement' as const,
+        amountRmb,
+        amountInr,
+        exchangeRatePrimary,
+        exchangeRateSettlement,
+        forexGainLoss,
+        notes: settleForm.notes || undefined
+      };
+
+      try {
+        await logSettlementRecord(recordPayload);
+
+        // Optimistic local insert for instant feedback; loadSettlementRecords() below
+        // reconciles with the backend-assigned id shortly after.
+        setSettlementRecords(prev => [{ id: `SET-TEMP-${Date.now()}`, ...recordPayload }, ...prev]);
+        setSuccessBanner(`Settlement of ¥${amountRmb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} logged against invoice "${inv.invoiceId}".`);
+        setSettleModalInvoice(null);
+
+        loadSettlementRecords();
+        onRefresh();
+      } catch (err: any) {
+        setErrorBanner(`Sync Failure: Could not log the settlement (${err.message || err}). Please try again.`);
+      }
+    });
   };
 
   // Filter criteria computation
@@ -918,16 +1008,36 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                               )}
                             </td>
 
-                            {/* Balance */}
-                            <td className="px-5 py-4 text-xs font-bold font-mono text-right">
-                              <span className="text-indigo-600 dark:text-indigo-400">
-                                {(() => {
-                                  const relevantSettlements = settlementRecords.filter(s => s.invoice_no === inv.invoiceId && s.txnType === 'Invoice Settlement');
-                                  const totalSettledRmb = relevantSettlements.reduce((sum, s) => sum + s.amountRmb, 0);
-                                  const calculatedBalance = Math.max(0, (inv.rmb || 0) - totalSettledRmb);
-                                  return `¥${calculatedBalance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-                                })()}
-                              </span>
+                            {/* Balance & Settlement Status */}
+                            <td className="px-5 py-4 text-xs text-right">
+                              {(() => {
+                                const { balance, status } = getInvoiceSettlementInfo(inv);
+                                const badgeClass =
+                                  status === 'Settled'
+                                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900/40'
+                                    : status === 'Partial'
+                                    ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200 dark:border-amber-900/40'
+                                    : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 border-rose-200 dark:border-rose-900/40';
+                                return (
+                                  <div className="flex flex-col items-end gap-1.5">
+                                    <span className="font-bold font-mono text-indigo-600 dark:text-indigo-400">
+                                      ¥{balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${badgeClass}`}>
+                                      {status}
+                                    </span>
+                                    {balance > 0.01 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenSettleModal(inv, balance)}
+                                        className="text-[10px] font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 hover:underline cursor-pointer"
+                                      >
+                                        Settle
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </td>
 
                             {/* Note */}
@@ -1044,7 +1154,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                               const totalSettledRmb = invoiceSettlementRecords.reduce((sum, s) => sum + s.amountRmb, 0);
                               
                               // Checking if there is an explicit advance record in the Settlement Ledger
-                              const hasAdvanceRecord = relevantRecords.some(s => s.invoice_no === 'ADVANCE' || s.txnType === 'Advance Payment');
+                              const hasAdvanceRecord = relevantRecords.some(s => s.invoiceId === 'ADVANCE' || s.txnType === 'Advance Payment');
                               
                               // Checking if there is any partial settlement (some settled, but not all)
                               const isPartiallySettled = totalSettledRmb > 0 && totalSettledRmb < log.rmbAmount;
@@ -1313,6 +1423,152 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                     </>
                   ) : (
                     'Publish Invoice'
+                  )}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* SETTLE INVOICE MODAL */}
+      {settleModalInvoice && (
+        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity duration-300"
+            onClick={() => setSettleModalInvoice(null)}
+          />
+
+          <div className="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-lg w-full overflow-hidden transform transition-all animate-zoom-in">
+            <div className="bg-gradient-to-r from-gray-50 to-gray-100 dark:from-slate-900 dark:to-slate-950 text-slate-800 dark:text-white border-b border-gray-200 dark:border-slate-800 px-6 py-4.5 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-black flex items-center gap-2 text-slate-800 dark:text-white">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>Settle Invoice</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                  Logs an Invoice Settlement record against <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{settleModalInvoice.invoiceId}</span>.
+                </p>
+              </div>
+              <button
+                onClick={() => setSettleModalInvoice(null)}
+                className="p-1.5 rounded-lg text-slate-400 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {errorBanner && (
+              <div className="mx-6 mt-4 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-lg text-rose-500 dark:text-rose-400 text-xs font-bold font-mono">
+                Error: {errorBanner}
+              </div>
+            )}
+
+            <form onSubmit={handleConfirmSettlement} className="p-6 space-y-4">
+              {/* Invoice summary */}
+              <div className="grid grid-cols-2 gap-3 bg-slate-50 dark:bg-slate-900/50 border border-slate-200/60 dark:border-slate-700/60 rounded-xl p-3.5 text-xs">
+                <div>
+                  <span className="block text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Vendor</span>
+                  <span className="font-mono font-bold text-gray-800 dark:text-gray-200">{settleModalInvoice.vendorCode}</span>
+                </div>
+                <div className="text-right">
+                  <span className="block text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Outstanding Balance</span>
+                  <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                    ¥{getInvoiceSettlementInfo(settleModalInvoice).balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
+                    Settlement Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={settleForm.date}
+                    onChange={(e) => setSettleForm(prev => ({ ...prev, date: e.target.value }))}
+                    className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-950 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
+                    Settled Rate (ER2)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    placeholder={settleModalInvoice.er1 ? String(settleModalInvoice.er1) : 'e.g. 11.50'}
+                    value={settleForm.exchangeRateSettlement}
+                    onChange={(e) => setSettleForm(prev => ({ ...prev, exchangeRateSettlement: e.target.value }))}
+                    className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
+                  Settlement Amount (RMB ¥) *
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400 font-bold">¥</span>
+                  <input
+                    type="number"
+                    required
+                    step="0.01"
+                    min={0.01}
+                    value={settleForm.amountRmb}
+                    onChange={(e) => setSettleForm(prev => ({ ...prev, amountRmb: e.target.value }))}
+                    className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-950 dark:text-white pl-8 pr-3 py-2.5 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500 font-bold font-mono"
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Defaults to the full outstanding balance — reduce this for a partial settlement.</p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
+                  Reference & Notes
+                </label>
+                <textarea
+                  placeholder="e.g. Wire transfer reference, batch note..."
+                  rows={2}
+                  maxLength={150}
+                  value={settleForm.notes}
+                  onChange={(e) => setSettleForm(prev => ({ ...prev, notes: e.target.value }))}
+                  className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+
+              {!settleModalInvoice.er1 && (
+                <div className="bg-amber-50 dark:bg-slate-900 p-3.5 rounded-xl border border-amber-200/60 dark:border-slate-800 flex items-start gap-2 text-slate-500 dark:text-slate-400">
+                  <ShieldAlert className="w-4.5 h-4.5 text-amber-500 shrink-0 mt-0.5" />
+                  <span className="text-[10.5px] leading-relaxed">
+                    This invoice hasn't been through the EOD engine yet, so it has no Primary Rate to compare against — forex gain/loss for this settlement will show as ¥0 until it has.
+                  </span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                <button
+                  type="button"
+                  onClick={() => setSettleModalInvoice(null)}
+                  className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-600 dark:text-gray-400 bg-gray-50 hover:bg-gray-100 dark:bg-slate-700/60 dark:hover:bg-slate-700 rounded-lg shadow-sm transition"
+                >
+                  Cancel
+                </button>
+                <Button
+                  type="submit"
+                  disabled={isSubmittingSettlement}
+                  className="px-5 py-2.5 text-xs font-bold uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-md transition flex items-center gap-2"
+                >
+                  {isSubmittingSettlement ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Logging Settlement...
+                    </>
+                  ) : (
+                    'Log Settlement'
                   )}
                 </Button>
               </div>

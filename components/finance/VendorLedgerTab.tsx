@@ -141,6 +141,28 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
             };
           });
 
+          // The VendorLedger sheet only gets a row when specific backend paths mirror
+          // an invoice into it — some PurchaseInvoices rows never make it there. Union
+          // in any invoice for this vendor not already represented so the ledger
+          // reflects the full PurchaseInvoices sheet, not just what got mirrored.
+          const representedInvoiceIds = new Set(
+            filteredLive
+              .filter(row => row.Particulars === 'Purchase')
+              .map(row => row.ReferenceId)
+          );
+          const safeInvoicesForLive = invoices || [];
+          safeInvoicesForLive
+            .filter(inv => inv.vendorCode === vendorCode && !representedInvoiceIds.has(inv.invoiceId))
+            .forEach(inv => {
+              compiled.push({
+                date: inv.date || '',
+                particulars: 'Purchase',
+                referenceId: inv.invoiceId || '',
+                amount: -(parseFloat(String(inv.rmb)) || 0),
+                sourceRecord: inv
+              });
+            });
+
           // Sort combined dataset globally by Date in absolute ascending order
           compiled.sort((a, b) => {
             const dateA = a.date || '';

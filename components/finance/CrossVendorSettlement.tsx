@@ -17,6 +17,8 @@ import {
 import { ViewType } from '../../types';
 import {
   submitAdjustmentEntry,
+  computeVendorBalance,
+  generateAdjustmentId,
   VendorMaster,
   PurchaseInvoice,
   PaymentLog,
@@ -31,6 +33,7 @@ interface CrossVendorSettlementProps {
   invoices: (PurchaseInvoice & { temp?: boolean })[];
   paymentLogs: (PaymentLog & { temp?: boolean })[];
   settlementRecords: SettlementRecord[];
+  setSettlementRecords: React.Dispatch<React.SetStateAction<SettlementRecord[]>>;
   vendorLedger: VendorLedgerEntry[];
   onRefresh: () => Promise<void> | void;
 }
@@ -46,6 +49,7 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
   invoices,
   paymentLogs,
   settlementRecords,
+  setSettlementRecords,
   vendorLedger,
   onRefresh
 }) => {
@@ -63,117 +67,6 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
   const getVendorName = (vendorCode: string): string => {
     const match = vendors.find(v => v.vendor_id === vendorCode);
     return match ? (match.vendor_name || match.vendor_id) : vendorCode;
-  };
-
-  // Reproduces the running vendor balance used across Accounts View, so the paying
-  // vendor's current position is visible before committing a transfer out of it.
-  const getVendorBalance = (vendorCode: string): number => {
-    if (!vendorCode) return 0;
-    try {
-      if (vendorLedger && vendorLedger.length > 0) {
-        const filteredLive = vendorLedger.filter(row => row.VendorCode === vendorCode);
-        if (filteredLive.length > 0) {
-          const compiled = filteredLive.map(row => {
-            const isPurchase = row.Particulars === 'Purchase';
-            const isPayment = row.Particulars === 'Payment';
-            const isTransferOut = row.Particulars?.includes('Transfer Out');
-            const isTransferIn = row.Particulars?.includes('Transfer In');
-            const isRefund = row.Particulars?.includes('Refund');
-            const isForex = row.Particulars?.includes('Forex');
-
-            let amount = parseFloat(String(row.RMB)) || 0;
-            if (isPurchase) {
-              amount = -Math.abs(amount);
-            } else if (isPayment) {
-              amount = Math.abs(amount);
-            } else if (isTransferOut) {
-              amount = -Math.abs(amount);
-            } else if (isTransferIn) {
-              amount = Math.abs(amount);
-            } else if (isRefund) {
-              amount = Math.abs(amount);
-            } else if (isForex) {
-              amount = -amount;
-            } else {
-              amount = -amount;
-            }
-
-            return { date: row.Date || '', amount };
-          });
-
-          compiled.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-          return compiled.reduce((running, row) => running + row.amount, 0);
-        }
-      }
-
-      const rows: { date: string; amount: number }[] = [];
-
-      const safeInvoices = invoices || [];
-      safeInvoices.filter(inv => inv.vendorCode === vendorCode).forEach(inv => {
-        rows.push({ date: inv.date || '', amount: -(parseFloat(String(inv.rmb)) || 0) });
-      });
-
-      const safePaymentLogs = paymentLogs || [];
-      safePaymentLogs.forEach(log => {
-        const isPrimary = log.vendorCode === vendorCode;
-        const hasAllocations = log.allocations && log.allocations.length > 0;
-
-        if (isPrimary) {
-          if (hasAllocations) {
-            rows.push({ date: log.date || '', amount: parseFloat(String(log.rmbAmount)) || 0 });
-            log.allocations?.forEach(alloc => {
-              if (alloc.vendorCode !== vendorCode) {
-                rows.push({ date: log.date || '', amount: -(parseFloat(String(alloc.amount)) || 0) });
-              }
-            });
-          } else {
-            rows.push({ date: log.date || '', amount: parseFloat(String(log.rmbAmount)) || 0 });
-          }
-        } else if (hasAllocations) {
-          const allocs = log.allocations?.filter(a => a.vendorCode === vendorCode) || [];
-          allocs.forEach(alloc => {
-            rows.push({ date: log.date || '', amount: parseFloat(String(alloc.amount)) || 0 });
-          });
-        }
-      });
-
-      const safeSettlementRecords = settlementRecords || [];
-      safeSettlementRecords.forEach(rec => {
-        const isSource = rec.vendorNo === vendorCode && rec.invoiceId ? (rec.invoiceId.startsWith('V-') || vendors?.some(v => v.vendor_id === rec.invoiceId)) : false;
-        const isTarget = rec.invoiceId === vendorCode && rec.vendorNo ? (rec.vendorNo.startsWith('V-') || vendors?.some(v => v.vendor_id === rec.vendorNo)) : false;
-
-        if (isSource) {
-          rows.push({ date: rec.date || '', amount: -(parseFloat(String(rec.amountRmb)) || 0) });
-        } else if (isTarget) {
-          rows.push({ date: rec.date || '', amount: parseFloat(String(rec.amountRmb)) || 0 });
-        } else if (rec.vendorNo === vendorCode) {
-          if (rec.txnType === 'Forex Adjustment') {
-            rows.push({ date: rec.date || '', amount: -(parseFloat(String(rec.amountRmb)) || 0) });
-          } else if (rec.txnType === 'Refund' || rec.txnType === 'Refund Adjustment') {
-            rows.push({ date: rec.date || '', amount: parseFloat(String(rec.amountRmb)) || 0 });
-          }
-        }
-      });
-
-      rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-      return rows.reduce((running, r) => running + r.amount, 0);
-    } catch (e) {
-      console.error('Error calculating paying vendor balance:', e);
-      return 0;
-    }
-  };
-
-  const generateAdjustmentId = (allRecords: SettlementRecord[]) => {
-    const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
-    const prefix = `ADJ-${todayStr}`;
-    const matches = allRecords.filter(r => (r.paymentId || r.id || '').startsWith(prefix));
-    const seqs = matches.map(r => {
-      const parts = (r.paymentId || r.id || '').split('-');
-      const lastPart = parseInt(parts[parts.length - 1], 10);
-      return isNaN(lastPart) ? 0 : lastPart;
-    });
-    const nextSeq = seqs.length > 0 ? Math.max(...seqs) + 1 : 1;
-    return `${prefix}-${String(nextSeq).padStart(3, '0')}`;
   };
 
   // Form state
@@ -194,7 +87,7 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
     return allocations.reduce((sum, row) => sum + (parseFloat(row.amount) || 0), 0);
   }, [allocations]);
 
-  const payingVendorBalance = getVendorBalance(payingVendor);
+  const payingVendorBalance = computeVendorBalance(payingVendor, { invoices, paymentLogs, settlementRecords, vendorLedger, vendors });
 
   const handleAddRow = () => {
     setAllocations(prev => [...prev, { vendorCode: '', amount: '' }]);
@@ -254,6 +147,31 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
 
         await Promise.all(promises);
 
+        // Merge the new records into local state immediately (synchronously, ahead of
+        // the network refresh below) so that a same-session "Log Another" submission's
+        // generateAdjustmentId() call sees them and can't recompute a colliding sequence
+        // number — App.tsx's onRefresh() fires the real fetch without awaiting it, so it
+        // cannot be relied on alone to make the next ID generation see fresh data in time.
+        const newLocalRecords: SettlementRecord[] = allocations.map((alloc, idx) => {
+          const amount = parseFloat(alloc.amount) || 0;
+          return {
+            id: `SET-${Date.now()}-${idx}`,
+            date,
+            invoiceId: alloc.vendorCode,
+            vendorNo: payingVendor,
+            vendorName: getVendorName(payingVendor),
+            txnType: 'Transfer',
+            amountRmb: amount,
+            amountInr: amount * 11.50,
+            exchangeRatePrimary: 11.50,
+            exchangeRateSettlement: 11.50,
+            forexGainLoss: 0,
+            notes: notes || 'Cross-Vendor Settlement Transfer',
+            paymentId: adjId
+          };
+        });
+        setSettlementRecords(prev => [...newLocalRecords, ...prev]);
+
         if (onRefresh) {
           await onRefresh();
         }
@@ -297,7 +215,7 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
                   [{payingVendor}] {getVendorName(payingVendor)}
                 </p>
                 <p className="text-3xl font-black text-gray-900 dark:text-white mt-1 font-mono">
-                  ¥{totalAllocated.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  ¥{totalAllocated.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               </div>
 
@@ -313,7 +231,7 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
                         </span>
                       </div>
                       <span className="font-mono font-black text-gray-900 dark:text-white shrink-0 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded border border-emerald-100 dark:border-emerald-950">
-                        ¥{(parseFloat(alloc.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        ¥{(parseFloat(alloc.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                   ))}
@@ -448,7 +366,7 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
                 </h3>
                 {/* Auto-populated running total — the maker-checker review figure */}
                 <span id="cvs-total-allocated" className="font-mono text-xs font-black text-gray-900 dark:text-white bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-950">
-                  Total: ¥{totalAllocated.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  Total: ¥{totalAllocated.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
 
@@ -580,13 +498,13 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
                     {allocations.map((alloc, id) => (
                       <div key={id} className="flex items-center justify-between px-3 py-2">
                         <span className="font-semibold text-gray-800 dark:text-gray-200">[{alloc.vendorCode}] {getVendorName(alloc.vendorCode)}</span>
-                        <span className="font-mono font-bold text-gray-900 dark:text-white">¥{(parseFloat(alloc.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        <span className="font-mono font-bold text-gray-900 dark:text-white">¥{(parseFloat(alloc.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     ))}
                   </div>
                   <div className="flex items-center justify-between bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900 rounded-lg px-3 py-2">
                     <span className="font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-300 text-[11px]">Total Settlement Amount</span>
-                    <span className="font-mono font-black text-indigo-700 dark:text-indigo-300">¥{totalAllocated.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    <span className="font-mono font-black text-indigo-700 dark:text-indigo-300">¥{totalAllocated.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </div>
 
