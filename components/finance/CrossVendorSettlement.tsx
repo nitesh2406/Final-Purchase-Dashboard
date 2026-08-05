@@ -173,10 +173,13 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
         });
         setSettlementRecords(prev => [...newLocalRecords, ...prev]);
 
-        if (onRefresh) {
-          await onRefresh();
-        }
-
+        // Deliberately NOT calling onRefresh() here: each queued adjustment write
+        // (one per allocation row) already triggers its own vendorLedger/settlementRecords
+        // refresh via SyncQueueManager's success callback as it lands (see App.tsx). Firing
+        // the app-wide onRefresh() on top of that piles a redundant ~14-request burst
+        // (fetchAllData + fetchFinanceData) onto a backend that's already processing the
+        // queued writes, which can overwhelm the single-threaded Apps Script Web App badly
+        // enough that even an unrelated fresh page load gets stuck behind the backlog.
         setLastAdjId(adjId);
         setShowSuccessScreen(true);
       } catch (err: any) {

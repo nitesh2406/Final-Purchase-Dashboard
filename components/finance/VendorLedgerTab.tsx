@@ -14,6 +14,8 @@ import {
   Package, 
   CreditCard,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   X,
   FileText,
   Database,
@@ -357,17 +359,33 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
     return stats;
   }, [invoices, paymentLogs, settlementRecords, masterVendors]);
 
-  // Compute active filtered vendor's ledger rows
+  // Compute active filtered vendor's ledger rows. Running balances only make sense computed
+  // oldest-first, so compileLedger keeps that order — display order (newest-first) is a
+  // separate derived reversal, never fed back into the balance calculation itself.
   const activeLedgerRows = useMemo(() => {
     if (!selectedVendorCode) return [];
     return compileLedger(selectedVendorCode);
   }, [selectedVendorCode, invoices, paymentLogs, settlementRecords]);
+
+  const displayLedgerRows = useMemo(() => {
+    return [...activeLedgerRows].reverse();
+  }, [activeLedgerRows]);
+
+  // Pagination over the display-ordered (newest-first) rows
+  const PAGE_SIZE = 10;
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(displayLedgerRows.length / PAGE_SIZE));
+  const paginatedLedgerRows = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return displayLedgerRows.slice(start, start + PAGE_SIZE);
+  }, [displayLedgerRows, currentPage]);
 
   // Handle manual input selection from Dropdown Search
   const selectVendor = (code: string) => {
     setSelectedVendorCode(code);
     setIsDropdownOpen(false);
     setDropdownSearchQuery('');
+    setCurrentPage(1);
   };
 
   // Reset search filter action
@@ -375,6 +393,7 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
     setSelectedVendorCode('');
     setDropdownSearchQuery('');
     setIsDropdownOpen(false);
+    setCurrentPage(1);
   };
 
   return (
@@ -710,7 +729,7 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
               </span>
               <div className="flex items-center gap-2">
                 <span className="px-2.5 py-0.5 text-[10px] font-bold font-mono bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 border border-sky-100 dark:border-sky-950/50 rounded-md">
-                  Sorted Chronologically
+                  Newest First
                 </span>
                 {onOpenAdjustmentModal && selectedVendor && (
                   <button
@@ -740,14 +759,14 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-150 dark:divide-slate-700/50">
-                  {activeLedgerRows.length === 0 ? (
+                  {paginatedLedgerRows.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-12 text-center text-gray-400 dark:text-gray-500 italic">
                         No transactions reconciled for this partner yet. Check your purchase entries or payment logs.
                       </td>
                     </tr>
                   ) : (
-                    activeLedgerRows.map((row, index) => {
+                    paginatedLedgerRows.map((row, index) => {
                       const isPurchase = row.particulars === 'Purchase';
                       const isPayment = row.particulars === 'Payment';
                       const isAdjustment = !isPurchase && !isPayment;
@@ -835,6 +854,39 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination footer */}
+            {displayLedgerRows.length > 0 && (
+              <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 bg-slate-50/70 dark:bg-slate-900/40 flex items-center justify-between text-xs">
+                <span className="text-slate-500 dark:text-slate-400 font-medium">
+                  Showing {(currentPage - 1) * PAGE_SIZE + 1}
+                  –{Math.min(currentPage * PAGE_SIZE, displayLedgerRows.length)} of {displayLedgerRows.length}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="p-1.5 rounded-md border border-slate-250 dark:border-gray-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent transition"
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="font-mono font-bold text-slate-700 dark:text-slate-300 px-1">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="p-1.5 rounded-md border border-slate-250 dark:border-gray-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent transition"
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

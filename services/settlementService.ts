@@ -659,6 +659,29 @@ export async function logSettlementRecord(record: Omit<SettlementRecord, 'id'>):
 }
 
 /**
+ * Logs a vendor-to-vendor transfer directly (awaited, not queued) via the same backend
+ * action Cross-Vendor Settlement uses (add_adjustment_entry), which — unlike
+ * logSettlementRecord — mirrors both sides into VendorLedger so the paying and receiving
+ * vendors' live balances actually move. Used for "Settle Invoice" (a single transfer, so a
+ * direct awaited call is safe and gives the modal a real success/failure signal without the
+ * queue-processing overhead a multi-line batch would carry).
+ */
+export async function logAdjustmentTransfer(record: {
+  paymentId: string;
+  sourceVendor: string;
+  targetVendor: string;
+  amountRmb: number;
+  fxRate: number;
+  date: string;
+  notes?: string;
+  invoiceId?: string;
+}): Promise<any> {
+  return executeAppsScriptProxy<any>(appsScriptUrl, 'add_adjustment_entry', 'SettlementLedger', 'POST', {
+    record: { txnType: 'Transfer', ...record }
+  });
+}
+
+/**
  * Submits an adjustment entry (Forex, Refund, or Transfer).
  */
 export async function submitAdjustmentEntry(record: any): Promise<any> {

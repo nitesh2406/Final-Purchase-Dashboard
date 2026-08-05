@@ -8,7 +8,8 @@ import {
   executeEODExchangeRateEngine,
   PurchaseInvoice,
   fetchPurchaseInvoices,
-  logSettlementRecord,
+  logAdjustmentTransfer,
+  generateAdjustmentId,
   fetchPaymentLogs,
   getPaymentLogs,
   PaymentLog,
@@ -166,12 +167,17 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     return { totalSettledRmb, balance, status };
   };
 
-  // Settle Invoice modal state
+  // Settle Invoice modal state. In practice every invoice settlement here is actually paid
+  // by a different vendor's credit (a cross-vendor transfer), not the invoice's own vendor
+  // paying directly — so this logs via the same Transfer mechanism Cross-Vendor Settlement
+  // uses (add_adjustment_entry, mirrored into VendorLedger for both sides) instead of the
+  // old direct logSettlementRecord call, which only ever wrote to SettlementLedger and never
+  // actually moved the paying/receiving vendors' live Vendor Ledger balances.
   const [settleModalInvoice, setSettleModalInvoice] = useState<PurchaseInvoice | null>(null);
   const [settleForm, setSettleForm] = useState({
     date: new Date().toISOString().split('T')[0],
     amountRmb: '',
-    exchangeRateSettlement: '',
+    payingVendor: '',
     notes: ''
   });
   const { isSubmitting: isSubmittingSettlement, withSubmissionGuard: withSettlementGuard } = useSubmissionLock();
@@ -181,7 +187,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     setSettleForm({
       date: new Date().toISOString().split('T')[0],
       amountRmb: balance.toFixed(2),
-      exchangeRateSettlement: inv.er1 ? String(inv.er1) : '',
+      payingVendor: '',
       notes: ''
     });
     setErrorBanner(null);
@@ -199,6 +205,10 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
       const amountRmb = parseFloat(settleForm.amountRmb) || 0;
       const { balance } = getInvoiceSettlementInfo(inv);
 
+      if (!settleForm.payingVendor) {
+        setErrorBanner('Please select the vendor that is paying for this invoice.');
+        return;
+      }
       if (amountRmb <= 0) {
         setErrorBanner('Settlement amount must be a positive number.');
         return;
@@ -208,34 +218,42 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
         return;
       }
 
-      const exchangeRatePrimary = inv.er1 || 0;
-      const exchangeRateSettlement = parseFloat(settleForm.exchangeRateSettlement) || exchangeRatePrimary;
-      const amountInr = amountRmb * exchangeRateSettlement;
-      const forexGainLoss = (amountRmb * exchangeRatePrimary) - (amountRmb * exchangeRateSettlement);
-      const vendorName = VENDOR_OPTIONS.find(v => v.code === inv.vendorCode)?.name || inv.vendorCode;
-
-      const recordPayload = {
-        date: settleForm.date,
-        invoiceId: inv.invoiceId,
-        vendorNo: inv.vendorCode,
-        vendorName,
-        txnType: 'Invoice Settlement' as const,
-        amountRmb,
-        amountInr,
-        exchangeRatePrimary,
-        exchangeRateSettlement,
-        forexGainLoss,
-        notes: settleForm.notes || undefined
-      };
+      const payingVendor = settleForm.payingVendor;
+      const payingVendorName = VENDOR_OPTIONS.find(v => v.code === payingVendor)?.name || payingVendor;
+      const fxRate = inv.er1 || 11.50;
+      const adjId = generateAdjustmentId(settlementRecords);
 
       try {
-        await logSettlementRecord(recordPayload);
+        await logAdjustmentTransfer({
+          paymentId: adjId,
+          sourceVendor: payingVendor,
+          targetVendor: inv.vendorCode,
+          amountRmb,
+          fxRate,
+          date: settleForm.date,
+          notes: settleForm.notes || undefined,
+          invoiceId: inv.invoiceId
+        });
 
         // Optimistic local insert for instant feedback; onRefresh() below fetches the
         // backend-assigned record shortly after, and reconcileTempRecords() (App.tsx)
         // ages this placeholder out once that's happened (or after its own timeout).
+        const recordPayload = {
+          date: settleForm.date,
+          invoiceId: inv.invoiceId,
+          vendorNo: payingVendor,
+          vendorName: payingVendorName,
+          txnType: 'Invoice Settlement' as const,
+          amountRmb,
+          amountInr: amountRmb * fxRate,
+          exchangeRatePrimary: fxRate,
+          exchangeRateSettlement: fxRate,
+          forexGainLoss: 0,
+          notes: settleForm.notes || undefined,
+          paymentId: adjId
+        };
         setSettlementRecords(prev => [{ id: `SET-TEMP-${Date.now()}`, ...recordPayload, temp: true, createdAtTimestamp: Date.now() }, ...prev]);
-        setSuccessBanner(`Settlement of ¥${amountRmb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} logged against invoice "${inv.invoiceId}".`);
+        setSuccessBanner(`Settlement of ¥${amountRmb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} logged against invoice "${inv.invoiceId}", paid by ${payingVendor}.`);
         setSettleModalInvoice(null);
 
         onRefresh();
@@ -1435,7 +1453,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   <span>Settle Invoice</span>
                 </h3>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                  Logs an Invoice Settlement record against <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{settleModalInvoice.invoiceId}</span>.
+                  Logs a cross-vendor transfer settling <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{settleModalInvoice.invoiceId}</span>, paid on {settleModalInvoice.vendorCode}'s behalf by another vendor's credit.
                 </p>
               </div>
               <button
@@ -1482,16 +1500,19 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
-                    Settled Rate (ER2)
+                    Paying Vendor *
                   </label>
-                  <input
-                    type="number"
-                    step="0.0001"
-                    placeholder={settleModalInvoice.er1 ? String(settleModalInvoice.er1) : 'e.g. 11.50'}
-                    value={settleForm.exchangeRateSettlement}
-                    onChange={(e) => setSettleForm(prev => ({ ...prev, exchangeRateSettlement: e.target.value }))}
-                    className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500 font-mono"
-                  />
+                  <select
+                    required
+                    value={settleForm.payingVendor}
+                    onChange={(e) => setSettleForm(prev => ({ ...prev, payingVendor: e.target.value }))}
+                    className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-950 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="">Select vendor...</option>
+                    {VENDOR_OPTIONS.filter(v => v.code !== settleModalInvoice.vendorCode).map(v => (
+                      <option key={v.code} value={v.code}>{v.displayText}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -1527,15 +1548,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
                 />
               </div>
-
-              {!settleModalInvoice.er1 && (
-                <div className="bg-amber-50 dark:bg-slate-900 p-3.5 rounded-xl border border-amber-200/60 dark:border-slate-800 flex items-start gap-2 text-slate-500 dark:text-slate-400">
-                  <ShieldAlert className="w-4.5 h-4.5 text-amber-500 shrink-0 mt-0.5" />
-                  <span className="text-[10.5px] leading-relaxed">
-                    This invoice hasn't been through the EOD engine yet, so it has no Primary Rate to compare against — forex gain/loss for this settlement will show as ¥0 until it has.
-                  </span>
-                </div>
-              )}
 
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
                 <button

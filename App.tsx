@@ -149,6 +149,12 @@ const App: React.FC = () => {
     // Tracks whether finance data has been fetched this session (avoid re-fetching on tab switch)
     const financeDataLoaded = React.useRef(false);
 
+    // Debounce timers for the sync-queue success callback below, keyed by item type — a
+    // multi-line submission (e.g. a 3-way Cross-Vendor Settlement) queues one item per line,
+    // and each one landing would otherwise fire its own refetch pair independently, piling
+    // redundant concurrent requests onto the single-threaded Apps Script backend.
+    const queueRefreshTimers = React.useRef<Partial<Record<QueueItem['type'], ReturnType<typeof setTimeout>>>>({});
+
     // Keep-warm: fire a lightweight GAS ping every 4 minutes to prevent cold starts
     useEffect(() => {
         if (!user) return;
@@ -183,7 +189,7 @@ const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        SyncQueueManager.registerSuccessCallback(async (type, _payload) => {
+        const runRefreshFor = async (type: QueueItem['type']) => {
             console.log(`[Sync Queue Targeted Sync Callback] Silent table refresh trigger for: ${type}`);
             if (type === 'purchase') {
                 const refreshedInvoices = await fetchPurchaseInvoices();
@@ -206,6 +212,18 @@ const App: React.FC = () => {
                 const refreshedMasters = await fetchVendorMasters();
                 if (refreshedMasters.length > 0) setVendorMasters(refreshedMasters);
             }
+        };
+
+        SyncQueueManager.registerSuccessCallback(async (type) => {
+            // Coalesce rapid-fire completions of the same type (e.g. every line of a
+            // multi-vendor settlement) into a single refresh, fired shortly after the
+            // last one lands, instead of one redundant refresh per queue item.
+            const existing = queueRefreshTimers.current[type];
+            if (existing) clearTimeout(existing);
+            queueRefreshTimers.current[type] = setTimeout(() => {
+                delete queueRefreshTimers.current[type];
+                runRefreshFor(type);
+            }, 600);
         });
     }, []);
 
