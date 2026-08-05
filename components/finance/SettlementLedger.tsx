@@ -61,17 +61,17 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
 
   const records = settlementRecords;
   
-  // A PurchaseInvoice is eligible for settlement only if:
-  // ER1 is populated AND INR is populated AND Status != Pending EOD
+  // A PurchaseInvoice counts toward settlement metrics once ER1 and INR are populated.
+  // Pending EOD status does NOT exclude it: invoices can be (and routinely are) settled
+  // while still pending EOD, so excluding them here undercounts real outstanding liability.
   const localInvoices = useMemo(() => {
-    return invoices.filter(purchase => 
+    return invoices.filter(purchase =>
       purchase.er1 !== undefined &&
       purchase.er1 !== null &&
       String(purchase.er1).trim() !== "" &&
       purchase.inr !== undefined &&
       purchase.inr !== null &&
-      String(purchase.inr).trim() !== "" &&
-      purchase.status !== 'Pending EOD'
+      String(purchase.inr).trim() !== ""
     );
   }, [invoices]);
 
@@ -258,41 +258,51 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
 
   // --- Real-time Dynamic Metrics Aggregation ---
   const dynamicMetrics = useMemo(() => {
+    // An invoice's real paid/unpaid state comes from actual 'Invoice Settlement' ledger
+    // records logged against it, not its own stored `status` field — that field only
+    // tracks EOD conversion and is never updated by the settlement-logging backend
+    // action (it only writes settledAmount/balance), so it can't tell us if an invoice
+    // has actually been paid off.
+    const getOutstandingBalance = (inv: PurchaseInvoice) => {
+      const settledRmb = records
+        .filter(r => r.invoiceId === inv.invoiceId && r.txnType === 'Invoice Settlement')
+        .reduce((sum, r) => sum + r.amountRmb, 0);
+      return Math.max(0, (inv.rmb || 0) - settledRmb);
+    };
+
     // 1. Total Unpaid Invoices & Total Liability
-    // Filter unpaid liability entries matching selected vendor or specific invoice
-    let unpaidList: any[] = localInvoices
-      ? localInvoices.filter(i => i.status !== 'Processed')
-      : [];
+    let candidateInvoices = localInvoices;
 
     if (selectedVendor) {
-      const vendName = activeVendors.find(v => v.code === selectedVendor)?.name || '';
-      unpaidList = unpaidList.filter(u => {
-        if ('vendorCode' in u) {
-          return (u as any).vendorCode === selectedVendor;
-        }
-        return u.vendor === vendName || u.vendor === selectedVendor;
-      });
+      candidateInvoices = candidateInvoices.filter(inv => inv.vendorCode === selectedVendor);
     }
 
     if (selectedInvoiceId) {
-      unpaidList = unpaidList.filter(u => u.id === selectedInvoiceId);
+      candidateInvoices = candidateInvoices.filter(inv => inv.invoiceId === selectedInvoiceId);
     }
 
+    const unpaidList = candidateInvoices
+      .map(inv => ({ inv, balance: getOutstandingBalance(inv) }))
+      .filter(({ balance }) => balance > 0.01);
+
     const unpaidCount = unpaidList.length;
-    
-    // Sum the liability values (INR basis)
-    const liabilitySumInr = unpaidList.reduce((sum, item) => {
-      if ('balance' in item) {
-        return sum + item.balance; // Real-time Invoice balance
-      }
-      return sum + (item as any).balanceInr; // Fallback invoice balance
-    }, 0);
+    const unpaidSumRmb = unpaidList.reduce((sum, { balance }) => sum + balance, 0);
+
+    // INR liability scales the *outstanding* RMB balance by the invoice's own EOD rate,
+    // rather than reusing the invoice's stored INR figure (which values the full original
+    // amount, not what's still owed).
+    const liabilitySumInr = unpaidList.reduce((sum, { inv, balance }) => sum + balance * (inv.er1 || 0), 0);
 
     // 2. Advance Payments Total
-    // Sum up advance payment transactions in current filtered ledger subset
+    // Sum up advance payment transactions in current filtered ledger subset. The backend
+    // never populates an INR amount for these rows, so derive it from RMB x exchange rate
+    // the same way the rest of the app does.
     const totalAdvanceInr = filteredRecords
       .filter(rec => rec.txnType === 'Advance Payment')
-      .reduce((sum, rec) => sum + Math.abs(rec.amountInr), 0);
+      .reduce((sum, rec) => {
+        const rate = rec.exchangeRateSettlement || rec.exchangeRatePrimary || 0;
+        return sum + Math.abs(rec.amountRmb) * rate;
+      }, 0);
 
     // 3. Forex Gain / Loss Balance
     // Sum of net forex performance over the current active filtered records
@@ -300,17 +310,12 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
 
     return {
       unpaidCount,
-      unpaidSumRmb: unpaidList.reduce((sum, item) => {
-        if ('amount' in item && item.currency === 'CNY') {
-          return sum + item.balance;
-        }
-        return sum + ((item as any).balanceRmb || 0);
-      }, 0),
+      unpaidSumRmb,
       liabilitySumInr,
       totalAdvanceInr,
       netForexGainLoss
     };
-  }, [filteredRecords, localInvoices, selectedVendor, selectedInvoiceId, activeVendors]);
+  }, [filteredRecords, localInvoices, records, selectedVendor, selectedInvoiceId]);
 
   // Trigger sorting column change
   const handleSort = (field: keyof SettlementRecord) => {

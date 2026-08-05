@@ -602,21 +602,30 @@ export async function fetchSettlementRecords(): Promise<SettlementRecord[]> {
     const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_settlement_records', 'SettlementLedger', 'POST');
     
     if (response && response.status === 'success' && Array.isArray(response.records)) {
-      const mappedRecords: SettlementRecord[] = response.records.map((row: any) => ({
-        id: row.id || row.ID || `SET-MOCK-${Date.now()}-${Math.random()}`,
-        date: row.Date || row.date || '',
-        invoiceId: row.invoice_no || row.InvoiceID || row['Invoice ID'] || row.invoiceId || row.invoiceNo || '',
-        vendorNo: row.vendor_code || row.VendorID || row['Vendor ID'] || row['Vendor Code'] || row.VendorCode || row.vendorCode || row.vendorNo || '',
-        vendorName: row.VendorName || row.vendorName || getVendorName(row.vendor_code || row.VendorID || row['Vendor ID'] || row['Vendor Code'] || row.VendorCode || row.vendorCode || row.vendorNo),
-        txnType: row.TxnType || row.txnType || (row.InvoiceID === 'ADVANCE' ? 'Advance Payment' : 'Invoice Settlement'),
-        amountRmb: parseFloat(row.RMB || row.amountRmb || '0') || 0,
-        amountInr: parseFloat(row.AmountINR || row.amountInr || '0') || 0,
-        exchangeRatePrimary: parseFloat(row.ER1 || row.exchangeRatePrimary || '0') || 0,
-        exchangeRateSettlement: parseFloat(row.ER2 || row.exchangeRateSettlement || '0') || 0,
-        forexGainLoss: parseFloat(row['Forex Gain / Loss'] || row['Forex Gain/Loss'] || row.forexGainLoss || '0') || 0,
-        notes: row.Notes || row.notes || '',
-        paymentId: row['Payment ID'] || row.paymentId || ''
-      }));
+      const mappedRecords: SettlementRecord[] = response.records.map((row: any) => {
+        // The SettlementLedger sheet has no TxnType column, so the invoiceId is the
+        // only signal for distinguishing an advance payment row (invoiceId === 'ADVANCE')
+        // from a regular invoice settlement. Resolve it once so both fields agree —
+        // checking row.InvoiceID here (rather than the resolved invoiceId) previously
+        // missed every real row, since the sheet's header is 'Invoice ID' with a space.
+        const invoiceId = row.invoice_no || row.InvoiceID || row['Invoice ID'] || row.invoiceId || row.invoiceNo || '';
+        const vendorNo = row.vendor_code || row.VendorID || row['Vendor ID'] || row['Vendor Code'] || row.VendorCode || row.vendorCode || row.vendorNo || '';
+        return {
+          id: row.id || row.ID || `SET-MOCK-${Date.now()}-${Math.random()}`,
+          date: row.Date || row.date || '',
+          invoiceId,
+          vendorNo,
+          vendorName: row.VendorName || row.vendorName || getVendorName(vendorNo),
+          txnType: row.TxnType || row.txnType || (String(invoiceId).trim().toUpperCase() === 'ADVANCE' ? 'Advance Payment' : 'Invoice Settlement'),
+          amountRmb: parseFloat(row.RMB || row.amountRmb || '0') || 0,
+          amountInr: parseFloat(row.AmountINR || row.amountInr || '0') || 0,
+          exchangeRatePrimary: parseFloat(row.ER1 || row.exchangeRatePrimary || '0') || 0,
+          exchangeRateSettlement: parseFloat(row.ER2 || row.exchangeRateSettlement || '0') || 0,
+          forexGainLoss: parseFloat(row['Forex Gain / Loss'] || row['Forex Gain/Loss'] || row.forexGainLoss || '0') || 0,
+          notes: row.Notes || row.notes || '',
+          paymentId: row['Payment ID'] || row.paymentId || ''
+        };
+      });
       localStorage.setItem('settlement_records_table', JSON.stringify(mappedRecords));
       return mappedRecords;
     }
