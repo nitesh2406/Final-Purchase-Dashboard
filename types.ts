@@ -587,6 +587,12 @@ export interface ShipmentFinanceData {
   account_type?: 'Trade' | 'Pool';
 }
 
+export interface CnfCommissionRate {
+  id: string;
+  label: string;   // e.g. "Wooden Toys", "Plastic Toys" — user-extensible
+  ratePct: number;
+}
+
 export type ViewType =
   | 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders'
   | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance'
