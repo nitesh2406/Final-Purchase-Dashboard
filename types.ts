@@ -68,7 +68,7 @@ export interface VendorMaster {
   vendor_id: string;
   vendor_name: string;
   vendor_code?: string;
-  currency?: string;
+  currency?: 'RMB' | 'INR';
   country?: string;
   payment_terms?: string;
   is_active?: boolean | string;
