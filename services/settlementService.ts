@@ -1,6 +1,6 @@
 import { APPS_SCRIPT_URL } from '../constants.ts';
 import { SyncQueueManager } from './syncQueue.ts';
-import type { VendorMaster } from '../types';
+import type { VendorMaster, CnfCommissionRate } from '../types';
 export type { VendorMaster } from '../types';
 
 export const IS_DEVELOPMENT_MODE = true;
@@ -711,6 +711,58 @@ export async function saveConversionCharge(chargePercent: number): Promise<numbe
     throw new Error((response && response.message) || 'Failed to save conversion charge %');
   }
   return response.chargePercent;
+}
+
+/**
+ * Fetches the global IGST % applied to CNF agent commission invoices' Taxable Amount.
+ */
+export async function fetchIgstRate(): Promise<number> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_igst_rate', 'Config', 'POST');
+    if (response && response.status === 'success' && typeof response.igstPercent === 'number') {
+      return response.igstPercent;
+    }
+  } catch (error) {
+    console.warn('Could not fetch IGST %:', error);
+  }
+  return 5;
+}
+
+/**
+ * Saves the global IGST %. Applies to CNF ledger entries logged going forward only.
+ */
+export async function saveIgstRate(igstPercent: number): Promise<number> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'save_igst_rate', 'Config', 'POST', { igstPercent });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to save IGST %');
+  }
+  return response.igstPercent;
+}
+
+/**
+ * Fetches the CNF agent commission-rate-by-category table (Settings > Charges & Taxes).
+ */
+export async function fetchCnfCommissionRates(): Promise<CnfCommissionRate[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_commission_rates', 'CNF_Commission_Rates', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.rates)) {
+      return response.rates;
+    }
+  } catch (error) {
+    console.warn('Could not fetch CNF commission rates:', error);
+  }
+  return [];
+}
+
+/**
+ * Saves the full CNF commission-rate table (full replace, not incremental).
+ */
+export async function saveCnfCommissionRates(rates: CnfCommissionRate[]): Promise<CnfCommissionRate[]> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'save_cnf_commission_rates', 'CNF_Commission_Rates', 'POST', { rates });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to save commission rates');
+  }
+  return response.rates;
 }
 
 /**
