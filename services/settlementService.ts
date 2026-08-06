@@ -456,7 +456,8 @@ export async function fetchPurchaseInvoices(): Promise<PurchaseInvoice[]> {
  */
 export async function executeEODExchangeRateEngine(
   currentInvoices?: PurchaseInvoice[],
-  onImmediateUIUpdate?: (updated: PurchaseInvoice[]) => void
+  onImmediateUIUpdate?: (updated: PurchaseInvoice[]) => void,
+  vendors?: VendorMaster[]
 ): Promise<{
   processedCount: number;
   logs: string[];
@@ -468,10 +469,15 @@ export async function executeEODExchangeRateEngine(
   const records = currentInvoices && currentInvoices.length > 0 ? currentInvoices : getPurchaseInvoices();
   const normalizeDate = (d: string) => (d || '').split('T')[0];
 
+  // Vendors billed in INR never need a real market rate — they're paid 1:1 in INR.
+  const inrVendorCodes = new Set(
+    (vendors || []).filter(v => v.currency === 'INR').map(v => v.vendor_id)
+  );
+
   // Resolve every needed date's real closing rate in one batched backend round-trip,
   // rather than one call per invoice.
   const uncalculatedDates = records
-    .filter(rec => rec.status === 'Pending EOD' || !rec.er1 || !rec.inr)
+    .filter(rec => (rec.status === 'Pending EOD' || !rec.er1 || !rec.inr) && !inrVendorCodes.has(rec.vendorCode))
     .map(rec => normalizeDate(rec.date));
   const rateMap = await fetchHistoricalFxRates(uncalculatedDates);
 
@@ -482,21 +488,32 @@ export async function executeEODExchangeRateEngine(
   const updated = records.map(rec => {
     // Treat invoice as uncalculated if status is 'Pending EOD' or missing ER1/INR valuation
     if (rec.status === 'Pending EOD' || !rec.er1 || !rec.inr) {
-      logs.push(`\nProcessing Invoice: ${rec.invoiceId} (Date: ${rec.date}, RMB: ¥${rec.rmb})`);
+      const isInrVendor = inrVendorCodes.has(rec.vendorCode);
+      logs.push(`\nProcessing Invoice: ${rec.invoiceId} (Date: ${rec.date}, RMB: ${isInrVendor ? '₹' : '¥'}${rec.rmb})`);
 
-      const dateKey = normalizeDate(rec.date);
-      const resolved = rateMap[dateKey];
-      const rate = resolved && resolved.success ? resolved.rate : 11.50;
+      let rate: number;
 
-      if (resolved && resolved.success) {
-        if (resolved.resolvedDate !== dateKey) {
-          logs.push(`  ↳ ${dateKey} had no trading data. Cascaded back to nearest prior trading day: ${resolved.resolvedDate}.`);
-        }
-        logs.push(`  ↳ Resolved closing exchange rate on ${resolved.resolvedDate}: ${rate} INR/RMB (via GOOGLEFINANCE historical lookup)`);
+      if (isInrVendor) {
+        rate = 1;
+        logs.push(`  ↳ Vendor is INR-native — skipping forex lookup, rate fixed at 1.0000.`);
       } else {
-        logs.push(`  ↳ Historical rate lookup failed for ${dateKey}. Defaulted to fallback rate ${rate}.`);
+        const dateKey = normalizeDate(rec.date);
+        const resolved = rateMap[dateKey];
+        rate = resolved && resolved.success ? resolved.rate : 11.50;
+
+        if (resolved && resolved.success) {
+          if (resolved.resolvedDate !== dateKey) {
+            logs.push(`  ↳ ${dateKey} had no trading data. Cascaded back to nearest prior trading day: ${resolved.resolvedDate}.`);
+          }
+          logs.push(`  ↳ Resolved closing exchange rate on ${resolved.resolvedDate}: ${rate} INR/RMB (via GOOGLEFINANCE historical lookup)`);
+        } else {
+          logs.push(`  ↳ Historical rate lookup failed for ${dateKey}. Defaulted to fallback rate ${rate}.`);
+        }
       }
 
+      // Note: for INR-native vendors, rec.rmb is repurposed to hold the raw INR amount
+      // entered at Purchase-entry time — not an actual RMB figure. With rate = 1 above,
+      // this multiplication is a passthrough, not a currency conversion.
       const inr = rec.rmb * rate;
       logs.push(`  ↳ Calculated Settlement valuation: ₹${inr.toLocaleString('en-IN', { maximumFractionDigits: 2 })} INR`);
       
