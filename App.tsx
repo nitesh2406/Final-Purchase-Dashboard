@@ -422,6 +422,7 @@ const App: React.FC = () => {
                         vendor_id: v.vendor_code || v.vendor_id || '',
                         vendor_name: v.vendor_name || v.vendor_code || '',
                         vendor_code: v.vendor_code || '',
+                        currency: (v.currency === 'INR' ? 'INR' : 'RMB') as 'RMB' | 'INR',
                         is_active: true
                     }))
                 );
