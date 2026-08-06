@@ -8,6 +8,7 @@ import { TaxConfiguration } from './TaxConfiguration';
 import { FreightCosting } from './FreightCosting';
 import { PaymentTerms } from './PaymentTerms';
 import { AmazonConfig } from './AmazonConfig';
+import { ChargesConfig } from './ChargesConfig';
 import {
     Cog6ToothIcon,
     CheckBadgeIcon,
@@ -18,7 +19,7 @@ import {
     ShoppingCartIcon
 } from '../icons/Icons';
 
-type SettingsView = 'Forecasting Config' | 'Pricing Config' | 'System Preferences' | 'Approval Workflows' | 'Tax Configuration' | 'Freight Costing' | 'Payment Terms' | 'Amazon Config';
+type SettingsView = 'Forecasting Config' | 'Pricing Config' | 'System Preferences' | 'Approval Workflows' | 'Tax Configuration' | 'Freight Costing' | 'Payment Terms' | 'Amazon Config' | 'Charges';
 
 interface NavItem {
     name: SettingsView;
@@ -71,6 +72,12 @@ const settingsNav: NavItem[] = [
         description: 'FBA coverage targets, MMA settings, velocity bands',
         isLive: true
     },
+    {
+        name: 'Charges',
+        icon: <BanknotesIcon className="w-5 h-5" />,
+        description: 'Conversion charge % for settled-rate calculations',
+        isLive: true
+    },
 ];
 
 export const Settings: React.FC<{
@@ -105,6 +112,8 @@ export const Settings: React.FC<{
                     onRefreshExternal={onRefreshAmazonConfig}
                     lastLoaded={amazonConfigLastLoaded}
                 />;
+            case 'Charges':
+                return <ChargesConfig />;
             default:
                 return <ForecastingConfig />;
         }

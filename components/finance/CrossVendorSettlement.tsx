@@ -134,13 +134,15 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
       try {
         const adjId = generateAdjustmentId(settlementRecords);
 
+        // No fxRate is sent here — the backend derives the real settled rate itself by
+        // draining the paying vendor's own unspent payment wallets FIFO (falling back to
+        // a GOOGLEFINANCE lookup for any shortfall), per the Settlement Ledger design.
         const promises = allocations.map(alloc => submitAdjustmentEntry({
           txnType: 'Transfer',
           paymentId: adjId,
           sourceVendor: payingVendor,
           targetVendor: alloc.vendorCode,
           amountRmb: parseFloat(alloc.amount) || 0,
-          fxRate: 11.50,
           date,
           notes: notes || 'Cross-Vendor Settlement Transfer'
         }));
@@ -162,9 +164,11 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
             vendorName: getVendorName(payingVendor),
             txnType: 'Transfer',
             amountRmb: amount,
-            amountInr: amount * 11.50,
-            exchangeRatePrimary: 11.50,
-            exchangeRateSettlement: 11.50,
+            // Settled rate is computed server-side (wallet FIFO / GOOGLEFINANCE fallback) —
+            // left at 0 here as a "pending" placeholder until the real fetch replaces it.
+            amountInr: 0,
+            exchangeRatePrimary: 0,
+            exchangeRateSettlement: 0,
             forexGainLoss: 0,
             notes: notes || 'Cross-Vendor Settlement Transfer',
             paymentId: adjId,

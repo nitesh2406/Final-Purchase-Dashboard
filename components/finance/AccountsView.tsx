@@ -220,16 +220,18 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
 
       const payingVendor = settleForm.payingVendor;
       const payingVendorName = VENDOR_OPTIONS.find(v => v.code === payingVendor)?.name || payingVendor;
-      const fxRate = inv.er1 || 11.50;
       const adjId = generateAdjustmentId(settlementRecords);
 
       try {
+        // No fxRate is sent here — the backend derives the real settled rate itself by
+        // draining the paying vendor's own unspent payment wallets FIFO (falling back to
+        // a GOOGLEFINANCE lookup for any shortfall), and computes real forex gain/loss
+        // against this invoice's own ER1.
         await logAdjustmentTransfer({
           paymentId: adjId,
           sourceVendor: payingVendor,
           targetVendor: inv.vendorCode,
           amountRmb,
-          fxRate,
           date: settleForm.date,
           notes: settleForm.notes || undefined,
           invoiceId: inv.invoiceId
@@ -238,6 +240,8 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
         // Optimistic local insert for instant feedback; onRefresh() below fetches the
         // backend-assigned record shortly after, and reconcileTempRecords() (App.tsx)
         // ages this placeholder out once that's happened (or after its own timeout).
+        // Settled rate/forex are left at 0 as a "pending" placeholder since the real
+        // values are computed server-side.
         const recordPayload = {
           date: settleForm.date,
           invoiceId: inv.invoiceId,
@@ -245,9 +249,9 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
           vendorName: payingVendorName,
           txnType: 'Invoice Settlement' as const,
           amountRmb,
-          amountInr: amountRmb * fxRate,
-          exchangeRatePrimary: fxRate,
-          exchangeRateSettlement: fxRate,
+          amountInr: 0,
+          exchangeRatePrimary: 0,
+          exchangeRateSettlement: 0,
           forexGainLoss: 0,
           notes: settleForm.notes || undefined,
           paymentId: adjId
@@ -1077,14 +1081,37 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                 </p>
               </div>
 
-              {/* Refresh trigger button */}
-              <Button 
-                onClick={onRefresh} 
-                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-805 text-gray-700 dark:text-gray-300 font-bold px-3.5 py-1.5 rounded-lg border border-gray-250 dark:border-gray-800 text-xs active:scale-98 transition shrink-0"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Re-Load Payments</span>
-              </Button>
+              {/* Vendor filter + Refresh trigger */}
+              <div className="flex items-center gap-3 shrink-0 w-full md:w-auto justify-end">
+                <select
+                  value={selectedVendorFilter}
+                  onChange={e => setSelectedVendorFilter(e.target.value)}
+                  className="bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition cursor-pointer"
+                >
+                  <option value="" className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white">All active vendors</option>
+                  {VENDOR_OPTIONS.map(v => (
+                    <option key={v.code} value={v.code} className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white">{v.displayText}</option>
+                  ))}
+                </select>
+
+                {selectedVendorFilter && (
+                  <button
+                    onClick={() => setSelectedVendorFilter('')}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white bg-slate-50 hover:bg-slate-100 dark:bg-slate-700 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 rounded-lg shadow-sm transition active:scale-95 cursor-pointer"
+                    title="Reset Vendor Filter"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
+                  </button>
+                )}
+
+                <Button
+                  onClick={onRefresh}
+                  className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-805 text-gray-700 dark:text-gray-300 font-bold px-3.5 py-1.5 rounded-lg border border-gray-250 dark:border-gray-800 text-xs active:scale-98 transition shrink-0"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Re-Load Payments</span>
+                </Button>
+              </div>
             </div>
 
             {/* Live table container */}

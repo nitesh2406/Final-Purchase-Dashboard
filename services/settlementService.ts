@@ -668,6 +668,34 @@ export async function logSettlementRecord(record: Omit<SettlementRecord, 'id'>):
 }
 
 /**
+ * Fetches the global Conversion Charge % applied when deriving a payment's Settled ER2
+ * from its raw entered rate.
+ */
+export async function fetchConversionCharge(): Promise<number> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_conversion_charge', 'Config', 'POST');
+    if (response && response.status === 'success' && typeof response.chargePercent === 'number') {
+      return response.chargePercent;
+    }
+  } catch (error) {
+    console.warn('Could not fetch conversion charge %:', error);
+  }
+  return 0;
+}
+
+/**
+ * Saves the global Conversion Charge %. Applies to payments logged going forward only —
+ * already-logged payments keep the Settled ER2 that was computed at the time they were made.
+ */
+export async function saveConversionCharge(chargePercent: number): Promise<number> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'save_conversion_charge', 'Config', 'POST', { chargePercent });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to save conversion charge %');
+  }
+  return response.chargePercent;
+}
+
+/**
  * Logs a vendor-to-vendor transfer directly (awaited, not queued) via the same backend
  * action Cross-Vendor Settlement uses (add_adjustment_entry), which — unlike
  * logSettlementRecord — mirrors both sides into VendorLedger so the paying and receiving
@@ -680,7 +708,6 @@ export async function logAdjustmentTransfer(record: {
   sourceVendor: string;
   targetVendor: string;
   amountRmb: number;
-  fxRate: number;
   date: string;
   notes?: string;
   invoiceId?: string;
