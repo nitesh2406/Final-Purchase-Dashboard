@@ -905,6 +905,34 @@ export async function fetchCnfInvoiceBatches(): Promise<CnfInvoiceBatch[]> {
 }
 
 /**
+ * Approves a CNF invoice batch, triggering server-side creation of the corresponding
+ * Purchase Invoice. Direct awaited call (not SyncQueueManager) — same shape as
+ * createCnfInvoiceBatch, consistent with logAdjustmentTransfer's pattern for single,
+ * backend-authoritative writes.
+ */
+export async function approveCnfInvoiceBatch(batchId: string, approvedBy: string): Promise<{ purchaseInvoiceId: string }> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'approve_cnf_invoice_batch', 'CNF_Invoice_Batches', 'POST', {
+    batchId, approvedBy
+  });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to approve invoice batch');
+  }
+  return { purchaseInvoiceId: response.purchaseInvoiceId };
+}
+
+/**
+ * Rejects a CNF invoice batch, recording the rejection reason server-side.
+ */
+export async function rejectCnfInvoiceBatch(batchId: string, rejectionReason: string): Promise<void> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'reject_cnf_invoice_batch', 'CNF_Invoice_Batches', 'POST', {
+    batchId, rejectionReason
+  });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to reject invoice batch');
+  }
+}
+
+/**
  * Logs a vendor-to-vendor transfer directly (awaited, not queued) via the same backend
  * action Cross-Vendor Settlement uses (add_adjustment_entry), which — unlike
  * logSettlementRecord — mirrors both sides into VendorLedger so the paying and receiving
