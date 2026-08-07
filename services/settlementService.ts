@@ -1,6 +1,6 @@
 import { APPS_SCRIPT_URL } from '../constants.ts';
 import { SyncQueueManager } from './syncQueue.ts';
-import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch } from '../types';
+import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch, CnfInvoiceBatch } from '../types';
 export type { VendorMaster } from '../types';
 
 export const IS_DEVELOPMENT_MODE = true;
@@ -860,6 +860,48 @@ export async function addCnfLedgerEntry(entry: Omit<CnfLedgerEntry, 'id'>): Prom
     throw new Error((response && response.message) || 'Failed to log CNF entry');
   }
   return { ...entry, id: response.id };
+}
+
+function generateCnfInvoiceBatchId(): string {
+  return 'CNFBATCH-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+}
+
+/**
+ * Creates a new CNF invoice batch, reconciling the billed amount against the
+ * computed total of the selected ledger entries server-side.
+ */
+export async function createCnfInvoiceBatch(entry: {
+  entryIds: string[];
+  billNo: string;
+  billDate: string;
+  billedAmount: number;
+  fileUrl?: string;
+  overrideReason?: string;
+  submittedBy: string;
+}): Promise<{ id: string; computedTotal: number }> {
+  const id = generateCnfInvoiceBatchId();
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'create_cnf_invoice_batch', 'CNF_Invoice_Batches', 'POST', {
+    entry: { id, ...entry }
+  });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to create invoice batch');
+  }
+  return { id: response.id, computedTotal: response.computedTotal };
+}
+
+/**
+ * Fetches all CNF invoice batches.
+ */
+export async function fetchCnfInvoiceBatches(): Promise<CnfInvoiceBatch[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_invoice_batches', 'CNF_Invoice_Batches', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.batches)) {
+      return response.batches;
+    }
+  } catch (err) {
+    console.error('Failed to fetch CNF invoice batches:', err);
+  }
+  return [];
 }
 
 /**
