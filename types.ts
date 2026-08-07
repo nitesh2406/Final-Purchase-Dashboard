@@ -631,6 +631,21 @@ export interface CnfCommissionRate {
   ratePct: number;
 }
 
+export interface CnfInvoiceBatch {
+  id: string;
+  entryIds: string[];
+  billNo: string;
+  billDate: string;
+  billedAmount: number;
+  computedTotal: number;
+  fileUrl?: string;
+  status: 'Pending Approval' | 'Approved' | 'Rejected';
+  overrideReason?: string;
+  submittedBy: string;
+  approvedBy?: string;
+  rejectionReason?: string;
+}
+
 export type ViewType =
   | 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders'
   | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance'
