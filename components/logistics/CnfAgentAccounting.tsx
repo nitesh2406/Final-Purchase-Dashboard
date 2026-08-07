@@ -380,6 +380,7 @@ export const CnfAgentAccounting: React.FC = () => {
         <GenerateBillModal
           selectedEntries={selectedEntries}
           computedTotal={selectedTotalPayable}
+          submittedBy="internal-admin"
           onClose={() => setIsBillModalOpen(false)}
           onSuccess={() => { setIsBillModalOpen(false); setSelectedEntryIds(new Set()); loadAll(); }}
         />
@@ -440,12 +441,13 @@ export const CnfAgentAccounting: React.FC = () => {
   );
 };
 
-const GenerateBillModal: React.FC<{
+export const GenerateBillModal: React.FC<{
   selectedEntries: CnfLedgerEntry[];
   computedTotal: number;
+  submittedBy: string;
   onClose: () => void;
   onSuccess: () => void;
-}> = ({ selectedEntries, computedTotal, onClose, onSuccess }) => {
+}> = ({ selectedEntries, computedTotal, submittedBy, onClose, onSuccess }) => {
   const [billNo, setBillNo] = useState('');
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
   const [billedAmount, setBilledAmount] = useState('');
@@ -526,7 +528,7 @@ const GenerateBillModal: React.FC<{
         billedAmount: parsedAmount,
         fileUrl: uploadedFileUrl || undefined,
         overrideReason: withinTolerance ? undefined : overrideReason.trim(),
-        submittedBy: 'internal' // Phase 6 replaces this with the real logged-in user's email
+        submittedBy,
       });
       onSuccess();
     } catch (err: any) {
