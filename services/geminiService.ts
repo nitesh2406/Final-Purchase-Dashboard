@@ -91,3 +91,50 @@ export const getSuggestedShopifyPrice = async (landingCost: number, name: string
     return "Shopify pricing error.";
   }
 };
+
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // result is "data:<mime>;base64,<data>" — strip the prefix, Gemini wants raw base64
+      const base64 = result.split(',')[1] || '';
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
+/**
+ * Extracts a suggested total invoice amount from an uploaded CNF agent invoice
+ * file (PDF/image). Always treat the result as a suggestion to review, never as
+ * authoritative — OCR can misread scans, and this feeds a real financial
+ * reconciliation check.
+ */
+export const extractInvoiceAmount = async (file: File): Promise<{ amount: number | null; rawText: string }> => {
+  const ai = getAI();
+  if (!ai) return { amount: null, rawText: NO_KEY_MSG };
+  try {
+    const base64Data = await fileToBase64(file);
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [
+        { inlineData: { mimeType: file.type, data: base64Data } },
+        { text: 'This is an invoice document. Extract only the final total/grand total amount as a plain number, no currency symbols, no commas, no explanatory text. If you cannot find a clear total, respond with exactly: UNKNOWN' }
+      ],
+      config: {
+        systemInstruction: 'You are an invoice-reading assistant. Your only job is to return a single numerical total amount, or the literal word UNKNOWN if none is found.',
+        temperature: 0.1,
+      }
+    });
+    const rawText = (response.text || '').trim();
+    if (rawText === 'UNKNOWN') return { amount: null, rawText };
+    const cleaned = rawText.replace(/[^0-9.]/g, '');
+    const amount = parseFloat(cleaned);
+    return { amount: !isNaN(amount) ? amount : null, rawText };
+  } catch (error) {
+    console.error('Error calling Gemini API for invoice extraction:', error);
+    return { amount: null, rawText: error instanceof Error ? error.message : 'Unknown error' };
+  }
+};
