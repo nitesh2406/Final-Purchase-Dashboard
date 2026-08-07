@@ -22,6 +22,7 @@ import { PurchaseOrders } from './components/purchasing/PurchaseOrders.tsx';
 import { VendorShipments } from './components/logistics/VendorShipments.tsx';
 import { ShipmentTracker } from './components/logistics/ShipmentTracker.tsx';
 import { BatchDetail } from './components/logistics/BatchDetail.tsx';
+import { CnfAgentAccounting } from './components/logistics/CnfAgentAccounting.tsx';
 import { Logistics } from './components/logistics/Logistics.tsx';
 import { Finance } from './components/finance/Finance.tsx';
 import { InventoryAnalytics } from './components/inventory/InventoryAnalytics.tsx';
@@ -725,6 +726,8 @@ const App: React.FC = () => {
                 return <ShipmentTracker onNavigateToBatch={(id) => {
                     navigate(viewToPath('Batch Detail', { batchId: id }));
                 }} />;
+            case 'CNF Agent Accounting':
+                return <CnfAgentAccounting />;
             case 'Batch Detail':
                 return selectedBatchId ? (
                     <BatchDetail
