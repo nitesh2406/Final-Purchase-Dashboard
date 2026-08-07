@@ -1,6 +1,6 @@
 import { APPS_SCRIPT_URL } from '../constants.ts';
 import { SyncQueueManager } from './syncQueue.ts';
-import type { VendorMaster, CnfCommissionRate } from '../types';
+import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch } from '../types';
 export type { VendorMaster } from '../types';
 
 export const IS_DEVELOPMENT_MODE = true;
@@ -763,6 +763,103 @@ export async function saveCnfCommissionRates(rates: CnfCommissionRate[]): Promis
     throw new Error((response && response.message) || 'Failed to save commission rates');
   }
   return response.rates;
+}
+
+/**
+ * Fetches all CNF-eligible batches (batches that have completed vendor shipments and are
+ * candidates for a CNF ledger entry). Mirrors ShipmentTracker.tsx's plain-fetch pattern for
+ * get_batches/get_batch_details, keeping this new action consistent with its sibling actions
+ * rather than the executeAppsScriptProxy style used elsewhere in this file.
+ */
+export async function fetchCnfEligibleBatches(): Promise<CnfEligibleBatch[]> {
+  if (!appsScriptUrl) return [];
+  try {
+    const response = await fetch(appsScriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'get_cnf_eligible_batches' })
+    });
+    const result = await response.json();
+    if (result.status === 'success' && Array.isArray(result.batches)) {
+      return result.batches;
+    }
+  } catch (err) {
+    console.error('Failed to fetch CNF-eligible batches:', err);
+  }
+  return [];
+}
+
+/**
+ * Returns true if every invoice linked to this batch's vendor_shipments is fully
+ * settled — recomputed from raw SettlementRecords (txnType === 'Invoice Settlement'),
+ * not from PurchaseInvoice.balance/.status, which don't reliably reflect real payment
+ * state (see components/finance/SettlementLedger.tsx's getOutstandingBalance for the
+ * same technique applied to a single invoice).
+ */
+export function isBatchFullySettled(
+  batch: CnfEligibleBatch,
+  purchaseInvoices: PurchaseInvoice[],
+  settlementRecords: SettlementRecord[]
+): boolean {
+  const linkedInvoiceIds = batch.vendor_shipments.map(vs => (vs.invoiceId || '').trim()).filter(Boolean);
+  if (linkedInvoiceIds.length === 0) return false;
+
+  return linkedInvoiceIds.every(invoiceId => {
+    const invoice = purchaseInvoices.find(inv => (inv.invoiceId || '').trim() === invoiceId);
+    if (!invoice) return false;
+    const settledRmb = settlementRecords
+      .filter(r => (r.invoiceId || '').trim() === invoiceId && r.txnType === 'Invoice Settlement')
+      .reduce((sum, r) => sum + r.amountRmb, 0);
+    const outstanding = Math.max(0, (invoice.rmb || 0) - settledRmb);
+    return outstanding < 0.01; // same rounding tolerance as PaymentLedger.tsx's balanced-allocation check
+  });
+}
+
+/**
+ * RMB-weighted average of exchangeRateSettlement across every 'Invoice Settlement'
+ * SettlementRecord tied to any invoice linked to this batch. This is the actual RMB
+ * payment rate (exchangeRateSettlement, i.e. ER2), not the Conversion-Charge-adjusted
+ * rate used elsewhere for forex gain/loss — see Settings > Charges & Taxes for that
+ * distinction. No prior function in this codebase computes this.
+ */
+export function computeCnfBatchRate(
+  batch: CnfEligibleBatch,
+  settlementRecords: SettlementRecord[]
+): number {
+  const linkedInvoiceIds = new Set(batch.vendor_shipments.map(vs => (vs.invoiceId || '').trim()).filter(Boolean));
+  const relevant = settlementRecords.filter(
+    r => linkedInvoiceIds.has((r.invoiceId || '').trim()) && r.txnType === 'Invoice Settlement'
+  );
+  const totalRmb = relevant.reduce((sum, r) => sum + r.amountRmb, 0);
+  if (totalRmb === 0) return 0;
+  const weightedSum = relevant.reduce((sum, r) => sum + r.amountRmb * r.exchangeRateSettlement, 0);
+  return weightedSum / totalRmb;
+}
+
+/**
+ * Fetches all logged CNF ledger entries.
+ */
+export async function fetchCnfLedgerEntries(): Promise<CnfLedgerEntry[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_ledger', 'CNF_Ledger', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.entries)) {
+      return response.entries;
+    }
+  } catch (err) {
+    console.error('Failed to fetch CNF ledger:', err);
+  }
+  return [];
+}
+
+/**
+ * Logs a new CNF ledger entry.
+ */
+export async function addCnfLedgerEntry(entry: Omit<CnfLedgerEntry, 'id'>): Promise<CnfLedgerEntry> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'add_cnf_ledger_entry', 'CNF_Ledger', 'POST', { entry });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to log CNF entry');
+  }
+  return { ...entry, id: response.id };
 }
 
 /**
