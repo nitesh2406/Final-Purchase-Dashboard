@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import {
@@ -11,9 +11,11 @@ import {
   fetchIgstRate,
   isBatchFullySettled,
   computeCnfBatchRate,
+  createCnfInvoiceBatch,
   PurchaseInvoice,
   SettlementRecord
 } from '../../services/settlementService';
+import { extractInvoiceAmount } from '../../services/geminiService';
 import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate } from '../../types';
 
 export const CnfAgentAccounting: React.FC = () => {
@@ -25,6 +27,8 @@ export const CnfAgentAccounting: React.FC = () => {
   const [igstPct, setIgstPct] = useState<number>(5);
   const [isLoading, setIsLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
+  const [isBillModalOpen, setIsBillModalOpen] = useState(false);
 
   const loadAll = async () => {
     setIsLoading(true);
@@ -55,6 +59,26 @@ export const CnfAgentAccounting: React.FC = () => {
       b => !loggedBatchIds.has(b.batch_id) && isBatchFullySettled(b, purchaseInvoices, settlementRecords)
     );
   }, [eligibleBatches, loggedBatchIds, purchaseInvoices, settlementRecords]);
+
+  const unbilledEntries = useMemo(() => ledgerEntries.filter(e => !e.invoiceBatchId), [ledgerEntries]);
+
+  const selectedEntries = useMemo(
+    () => unbilledEntries.filter(e => selectedEntryIds.has(e.id)),
+    [unbilledEntries, selectedEntryIds]
+  );
+
+  const selectedTotalPayable = useMemo(
+    () => selectedEntries.reduce((sum, e) => sum + e.totalPayable, 0),
+    [selectedEntries]
+  );
+
+  const toggleEntrySelection = (id: string) => {
+    setSelectedEntryIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const [selectedBatchId, setSelectedBatchId] = useState<string>('');
   const [categoryId, setCategoryId] = useState<string>('');
@@ -239,11 +263,30 @@ export const CnfAgentAccounting: React.FC = () => {
         </Card>
       )}
 
+      {isBillModalOpen && (
+        <GenerateBillModal
+          selectedEntries={selectedEntries}
+          computedTotal={selectedTotalPayable}
+          onClose={() => setIsBillModalOpen(false)}
+          onSuccess={() => { setIsBillModalOpen(false); setSelectedEntryIds(new Set()); loadAll(); }}
+        />
+      )}
+
+      {selectedEntryIds.size > 0 && (
+        <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-lg px-4 py-3">
+          <span className="text-sm">
+            {selectedEntryIds.size} entr{selectedEntryIds.size === 1 ? 'y' : 'ies'} selected — running total ₹{selectedTotalPayable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+          <Button onClick={() => setIsBillModalOpen(true)}>Generate Bill</Button>
+        </div>
+      )}
+
       <Card className="p-0 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm border-collapse">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 text-[11px] uppercase tracking-wider border-b">
+                <th className="px-4 py-3 w-8"></th>
                 <th className="px-4 py-3">Shipment</th>
                 <th className="px-4 py-3">Created At</th>
                 <th className="px-4 py-3 text-right">Rate</th>
@@ -254,11 +297,20 @@ export const CnfAgentAccounting: React.FC = () => {
             </thead>
             <tbody className="divide-y">
               {isLoading ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
               ) : ledgerEntries.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No CNF entries logged yet.</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No CNF entries logged yet.</td></tr>
               ) : ledgerEntries.map(entry => (
                 <tr key={entry.id}>
+                  <td className="px-4 py-3">
+                    {!entry.invoiceBatchId && (
+                      <input
+                        type="checkbox"
+                        checked={selectedEntryIds.has(entry.id)}
+                        onChange={() => toggleEntrySelection(entry.id)}
+                      />
+                    )}
+                  </td>
                   <td className="px-4 py-3 font-mono">{entry.batchId}</td>
                   <td className="px-4 py-3">{entry.createdAt}</td>
                   <td className="px-4 py-3 text-right">{entry.rate.toFixed(4)}</td>
@@ -271,6 +323,169 @@ export const CnfAgentAccounting: React.FC = () => {
           </table>
         </div>
       </Card>
+    </div>
+  );
+};
+
+const GenerateBillModal: React.FC<{
+  selectedEntries: CnfLedgerEntry[];
+  computedTotal: number;
+  onClose: () => void;
+  onSuccess: () => void;
+}> = ({ selectedEntries, computedTotal, onClose, onSuccess }) => {
+  const [billNo, setBillNo] = useState('');
+  const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
+  const [billedAmount, setBilledAmount] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadedFileUrl, setUploadedFileUrl] = useState<string | null>(null);
+  const [overrideChecked, setOverrideChecked] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const fileSelectionRef = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFileChange = async (f: File | null) => {
+    setError(null);
+    setFile(f);
+    setUploadedFileUrl(null);
+    if (!f) return;
+
+    const selectionToken = ++fileSelectionRef.current;
+
+    try {
+      await Promise.all([
+        (async () => {
+          setIsUploading(true);
+          try {
+            const formData = new FormData();
+            formData.append('file', f);
+            const uploadResp = await fetch('/api/drive/upload-cnf-invoice', { method: 'POST', body: formData });
+            const uploadData = await uploadResp.json();
+            if (selectionToken !== fileSelectionRef.current) return;
+            if (uploadData.success) {
+              setUploadedFileUrl(uploadData.file.viewUrl);
+            } else {
+              setError(uploadData.error || 'Failed to upload invoice file');
+            }
+          } catch (err: any) {
+            if (selectionToken !== fileSelectionRef.current) return;
+            setError(err.message || 'Failed to upload invoice file');
+          } finally {
+            if (selectionToken === fileSelectionRef.current) setIsUploading(false);
+          }
+        })(),
+        (async () => {
+          setIsExtracting(true);
+          try {
+            const { amount, rawText } = await extractInvoiceAmount(f);
+            if (selectionToken !== fileSelectionRef.current) return;
+            if (amount !== null) {
+              setBilledAmount(String(amount));
+            } else {
+              setError(`Could not read an amount from the file automatically (${rawText}). Enter it manually.`);
+            }
+          } finally {
+            if (selectionToken === fileSelectionRef.current) setIsExtracting(false);
+          }
+        })()
+      ]);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const parsedAmount = parseFloat(billedAmount) || 0;
+  const withinTolerance = Math.abs(parsedAmount - computedTotal) < 1;
+  const canSubmit = billNo.trim() && billedAmount && uploadedFileUrl && (withinTolerance || (overrideChecked && overrideReason.trim()));
+
+  const handleSubmit = async () => {
+    if (!canSubmit || isSubmitting) return;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await createCnfInvoiceBatch({
+        entryIds: selectedEntries.map(e => e.id),
+        billNo: billNo.trim(),
+        billDate,
+        billedAmount: parsedAmount,
+        fileUrl: uploadedFileUrl || undefined,
+        overrideReason: withinTolerance ? undefined : overrideReason.trim(),
+        submittedBy: 'internal' // Phase 6 replaces this with the real logged-in user's email
+      });
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message || 'Failed to create invoice batch');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[200] p-4">
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-2xl w-full max-w-lg p-6 space-y-4">
+        <h3 className="text-lg font-semibold">Generate Consolidated Bill</h3>
+        <p className="text-sm text-slate-500">
+          {selectedEntries.length} shipment{selectedEntries.length === 1 ? '' : 's'} — computed total ₹{computedTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </p>
+
+        <div>
+          <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Agent Invoice File</label>
+          <input ref={fileInputRef} type="file" accept="application/pdf,image/*" onChange={e => handleFileChange(e.target.files?.[0] || null)} />
+          {isUploading && <p className="text-xs text-slate-400 mt-1">Uploading…</p>}
+          {isExtracting && <p className="text-xs text-slate-400 mt-1">Reading amount from file…</p>}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Bill No</label>
+            <input type="text" value={billNo} onChange={e => setBillNo(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Bill Date</label>
+            <input type="date" value={billDate} onChange={e => setBillDate(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">
+            Billed Amount {isExtracting ? '(reading from file…)' : '(from file — review before submitting)'}
+          </label>
+          <input type="number" step="0.01" value={billedAmount} onChange={e => setBilledAmount(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
+        </div>
+
+        {billedAmount && !withinTolerance && (
+          <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 rounded-lg p-3 space-y-2">
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              Billed amount ₹{parsedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} doesn't match computed total ₹{computedTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.
+            </p>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={overrideChecked} onChange={e => setOverrideChecked(e.target.checked)} />
+              Override and submit anyway
+            </label>
+            {overrideChecked && (
+              <input
+                type="text"
+                placeholder="Reason for override (required)"
+                value={overrideReason}
+                onChange={e => setOverrideReason(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg text-sm"
+              />
+            )}
+          </div>
+        )}
+
+        {error && <p className="text-sm text-red-500">{error}</p>}
+
+        <div className="flex gap-3 justify-end">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={!canSubmit || isSubmitting}>
+            {isSubmitting ? 'Submitting…' : 'Submit'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 };
