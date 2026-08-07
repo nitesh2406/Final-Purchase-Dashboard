@@ -23,6 +23,7 @@ import { VendorShipments } from './components/logistics/VendorShipments.tsx';
 import { ShipmentTracker } from './components/logistics/ShipmentTracker.tsx';
 import { BatchDetail } from './components/logistics/BatchDetail.tsx';
 import { CnfAgentAccounting } from './components/logistics/CnfAgentAccounting.tsx';
+import { CnfAgentPortal } from './components/logistics/CnfAgentPortal.tsx';
 import { Logistics } from './components/logistics/Logistics.tsx';
 import { Finance } from './components/finance/Finance.tsx';
 import { InventoryAnalytics } from './components/inventory/InventoryAnalytics.tsx';
@@ -550,7 +551,7 @@ const App: React.FC = () => {
 
     const FINANCE_VIEWS = ['Finance', 'Payment Ledger', 'Accounts View', 'Settlement Ledger', 'Cross Vendor Settlement', 'Shipment Finance', 'Shipment Finance Detail'];
     useEffect(() => {
-        if (!user) return;
+        if (!user || user.role === 'CNF_AGENT') return;
         if (FINANCE_VIEWS.includes(currentView)) fetchFinanceData();
     }, [currentView, user, fetchFinanceData]);
 
@@ -607,7 +608,7 @@ const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (!user) return;
+        if (!user || user.role === 'CNF_AGENT') return;
         fetchAllData();
         fetchConfig();
         fetchAmazonConfig();
@@ -659,6 +660,10 @@ const App: React.FC = () => {
 
     if (!user && !TEST_LOGIN_BYPASS) {
         return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+    }
+
+    if (user?.role === 'CNF_AGENT') {
+        return <CnfAgentPortal user={{ email: user.email, name: user.name }} onLogout={handleLogout} />;
     }
 
     if (!isInitialDataLoaded) {
