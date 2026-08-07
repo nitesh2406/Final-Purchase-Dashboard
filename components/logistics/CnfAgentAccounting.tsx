@@ -12,11 +12,15 @@ import {
   isBatchFullySettled,
   computeCnfBatchRate,
   createCnfInvoiceBatch,
+  fetchCnfInvoiceBatches,
+  approveCnfInvoiceBatch,
+  rejectCnfInvoiceBatch,
   PurchaseInvoice,
   SettlementRecord
 } from '../../services/settlementService';
 import { extractInvoiceAmount } from '../../services/geminiService';
-import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate } from '../../types';
+import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate, CnfInvoiceBatch } from '../../types';
+import { useSubmissionLock } from '../../hooks/useSubmissionLock';
 
 export const CnfAgentAccounting: React.FC = () => {
   const [eligibleBatches, setEligibleBatches] = useState<CnfEligibleBatch[]>([]);
@@ -25,6 +29,7 @@ export const CnfAgentAccounting: React.FC = () => {
   const [ledgerEntries, setLedgerEntries] = useState<CnfLedgerEntry[]>([]);
   const [commissionRates, setCommissionRates] = useState<CnfCommissionRate[]>([]);
   const [igstPct, setIgstPct] = useState<number>(5);
+  const [invoiceBatches, setInvoiceBatches] = useState<CnfInvoiceBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
@@ -32,13 +37,14 @@ export const CnfAgentAccounting: React.FC = () => {
 
   const loadAll = async () => {
     setIsLoading(true);
-    const [batches, invoices, settlements, entries, rates, igst] = await Promise.all([
+    const [batches, invoices, settlements, entries, rates, igst, invoiceBatchList] = await Promise.all([
       fetchCnfEligibleBatches(),
       fetchPurchaseInvoices(),
       fetchSettlementRecords(),
       fetchCnfLedgerEntries(),
       fetchCnfCommissionRates(),
-      fetchIgstRate()
+      fetchIgstRate(),
+      fetchCnfInvoiceBatches()
     ]);
     setEligibleBatches(batches);
     setPurchaseInvoices(invoices);
@@ -46,6 +52,7 @@ export const CnfAgentAccounting: React.FC = () => {
     setLedgerEntries(entries);
     setCommissionRates(rates);
     setIgstPct(igst);
+    setInvoiceBatches(invoiceBatchList);
     setIsLoading(false);
   };
 
@@ -77,6 +84,58 @@ export const CnfAgentAccounting: React.FC = () => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
+    });
+  };
+
+  const pendingApprovalBatches = useMemo(
+    () => invoiceBatches.filter(b => b.status === 'Pending Approval'),
+    [invoiceBatches]
+  );
+
+  const { withSubmissionGuard: withApprovalGuard } = useSubmissionLock();
+  const [rejectReasonDraft, setRejectReasonDraft] = useState<Record<string, string>>({});
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [activeApprovalAction, setActiveApprovalAction] = useState<{ batchId: string; type: 'approve' | 'reject' } | null>(null);
+
+  const handleApprove = (batchId: string) => {
+    withApprovalGuard(async () => {
+      setActiveApprovalAction({ batchId, type: 'approve' });
+      setApprovalError(null);
+      try {
+        // Phase 6 note: agent-submitted batches are still approved by staff here, using the
+        // real logged-in admin's email once this component has access to it (see Task 4).
+        await approveCnfInvoiceBatch(batchId, 'internal-admin');
+        await loadAll();
+      } catch (err: any) {
+        setApprovalError(err.message || 'Failed to approve');
+      } finally {
+        setActiveApprovalAction(null);
+      }
+    });
+  };
+
+  const handleReject = (batchId: string) => {
+    const reason = rejectReasonDraft[batchId]?.trim();
+    if (!reason) {
+      setApprovalError('A rejection reason is required.');
+      return;
+    }
+    withApprovalGuard(async () => {
+      setActiveApprovalAction({ batchId, type: 'reject' });
+      setApprovalError(null);
+      try {
+        await rejectCnfInvoiceBatch(batchId, reason);
+        setRejectReasonDraft(prev => {
+          const next = { ...prev };
+          delete next[batchId];
+          return next;
+        });
+        await loadAll();
+      } catch (err: any) {
+        setApprovalError(err.message || 'Failed to reject');
+      } finally {
+        setActiveApprovalAction(null);
+      }
     });
   };
 
@@ -177,6 +236,60 @@ export const CnfAgentAccounting: React.FC = () => {
           Log CNF Entry
         </Button>
       </div>
+
+      {pendingApprovalBatches.length > 0 && (
+        <Card className="p-4 space-y-3">
+          <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">
+            Pending Approval ({pendingApprovalBatches.length})
+          </h3>
+          {approvalError && <p className="text-sm text-red-500">{approvalError}</p>}
+          {pendingApprovalBatches.map(batch => {
+            const isApprovingThis = activeApprovalAction?.batchId === batch.id && activeApprovalAction.type === 'approve';
+            const isRejectingThis = activeApprovalAction?.batchId === batch.id && activeApprovalAction.type === 'reject';
+            const isBatchBusy = activeApprovalAction !== null;
+            return (
+              <div key={batch.id} className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 space-y-2">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <p className="font-semibold">{batch.billNo} — ₹{batch.billedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <p className="text-xs text-slate-400">
+                      {batch.entryIds.length} shipment{batch.entryIds.length === 1 ? '' : 's'} · Submitted by {batch.submittedBy}
+                      {batch.overrideReason && <span className="text-amber-500"> · Override: {batch.overrideReason}</span>}
+                    </p>
+                    {batch.fileUrl && <a href={batch.fileUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-500 underline">View uploaded invoice</a>}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleApprove(batch.id)}
+                      disabled={isBatchBusy}
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                    >
+                      {isApprovingThis ? 'Approving…' : 'Approve'}
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    placeholder="Rejection reason"
+                    value={rejectReasonDraft[batch.id] || ''}
+                    onChange={e => setRejectReasonDraft(prev => ({ ...prev, [batch.id]: e.target.value }))}
+                    disabled={isBatchBusy}
+                    className="flex-1 px-3 py-1.5 border rounded-lg text-xs"
+                  />
+                  <button
+                    onClick={() => handleReject(batch.id)}
+                    disabled={isBatchBusy}
+                    className="text-red-500 hover:text-red-600 text-xs font-bold px-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isRejectingThis ? 'Rejecting…' : 'Reject'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
 
       {isFormOpen && (
         <Card className="p-6 space-y-4">
