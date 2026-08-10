@@ -2,6 +2,7 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
+import { getSessionAuthHeaders } from '../../services/authToken';
 import { 
     CloudArrowUpIcon, 
     DocumentTextIcon, 
@@ -1499,6 +1500,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
         const response = await fetch('/api/drive/upload-shipment-docs', {
           method: 'POST',
+          headers: getSessionAuthHeaders(),
           body: formData
         });
         const data = await response.json();

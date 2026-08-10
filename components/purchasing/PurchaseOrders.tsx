@@ -152,6 +152,8 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
     const [searchTerm, setSearchTerm] = useState('');
     const [activeTab, setActiveTab] = useQueryParam<'All' | POStatus>('statusFilter', 'All');
     const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+    const [closingPo, setClosingPo] = useState(false);
+    const [closePoError, setClosePoError] = useState<string | null>(null);
     const [mainView, setMainView] = useQueryParam<'po_list' | 'pending_lines' | 'sku_history'>('poView', 'po_list');
 
     const mapLineToUi = (l: any): POLine => {
@@ -278,9 +280,29 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
         });
     }, [searchTerm, activeTab, purchaseOrders]);
 
-    const handleClosePo = () => {
-        setShowCloseConfirm(false);
-        setSelectedPo(null);
+    const handleClosePo = async () => {
+        if (!selectedPo) return;
+        const poId = selectedPo.po_id;
+        setClosingPo(true);
+        setClosePoError(null);
+        try {
+            const response = await fetch(APPS_SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: API_ACTIONS.CLOSE_PO, po_id: poId })
+            });
+            const result = await response.json();
+            if (!result || result.success !== true) {
+                throw new Error(result?.message || 'Failed to close PO');
+            }
+            setShowCloseConfirm(false);
+            setSelectedPo(null);
+            window.dispatchEvent(new CustomEvent('po:refresh', { detail: { po_id: poId } }));
+        } catch (err: any) {
+            setClosePoError(err.message || 'Failed to close PO');
+        } finally {
+            setClosingPo(false);
+        }
     };
 
     if (selectedPo || loadingDetails || detailsError) {
@@ -461,19 +483,24 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                     <p className="text-slate-500 dark:text-slate-400 text-sm mb-8 leading-relaxed">
                                         Closing <span className="text-slate-800 dark:text-white font-mono">{selectedPo?.po_id}</span> will mark it as complete. This will prevent further shipments from being matched.
                                     </p>
+                                    {closePoError && (
+                                        <p className="text-red-500 text-sm mb-4 -mt-4">{closePoError}</p>
+                                    )}
                                     <div className="flex gap-3">
-                                        <Button 
-                                            variant="secondary" 
-                                            className="flex-1 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 h-11 bg-white dark:bg-slate-800" 
-                                            onClick={() => setShowCloseConfirm(false)}
+                                        <Button
+                                            variant="secondary"
+                                            className="flex-1 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 h-11 bg-white dark:bg-slate-800"
+                                            onClick={() => { setShowCloseConfirm(false); setClosePoError(null); }}
+                                            disabled={closingPo}
                                         >
                                             Keep Open
                                         </Button>
-                                        <Button 
-                                            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold h-11"
+                                        <Button
+                                            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold h-11 disabled:opacity-60"
                                             onClick={handleClosePo}
+                                            disabled={closingPo}
                                         >
-                                            Close PO
+                                            {closingPo ? 'Closing...' : 'Close PO'}
                                         </Button>
                                     </div>
                                 </Card>

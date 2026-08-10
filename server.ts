@@ -5,6 +5,8 @@ import { createServer as createViteServer } from "vite";
 import dns from "dns";
 import { GoogleGenAI } from "@google/genai";
 import { driveRouter } from "./server/driveRoutes";
+import { requireSession, verifyGoogleIdToken } from "./server/authMiddleware";
+import { issueSessionToken } from "./server/session";
 
 // Prefer IPv4 first in DNS resolution to prevent sandboxed environment IPv6 timeout fetch failures
 if (typeof dns.setDefaultResultOrder === "function") {
@@ -42,6 +44,30 @@ async function startServer() {
   // API routes FIRST
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Issues a server session token from a fresh Google ID token (see
+  // server/session.ts for why: Google ID tokens expire in ~1hr, this app's
+  // session model expects 8hrs). Called once right after Google Sign-In
+  // succeeds, before the frontend calls any route gated by requireSession.
+  app.post("/api/auth/session", async (req, res) => {
+    try {
+      const { idToken } = req.body || {};
+      if (!idToken) {
+        res.status(400).json({ error: "Missing idToken" });
+        return;
+      }
+      const email = await verifyGoogleIdToken(idToken);
+      if (!email) {
+        res.status(401).json({ error: "Invalid Google credential" });
+        return;
+      }
+      const { token, exp } = issueSessionToken(email);
+      res.json({ sessionToken: token, exp });
+    } catch (error: any) {
+      console.error("[auth] /api/auth/session failed:", error);
+      res.status(500).json({ error: error.message || "Failed to issue session" });
+    }
   });
 
   // Server-side Gemini API endpoints
@@ -127,11 +153,20 @@ async function startServer() {
   app.use("/api/drive", driveRouter);
 
   // Apps Script Proxy Endpoint
-  app.post("/api/apps-script-proxy", async (req, res) => {
+  // Was previously unauthenticated with no URL allowlist — a classic SSRF
+  // shape (arbitrary attacker-supplied url/method/headers/body, server-side
+  // fetch, response echoed back). Now requires a valid session AND only
+  // ever forwards to the app's own configured Apps Script exec URL.
+  const ALLOWED_PROXY_URL = process.env.VITE_APPS_SCRIPT_URL || process.env.APPS_SCRIPT_URL;
+  app.post("/api/apps-script-proxy", requireSession, async (req, res) => {
     try {
       const { url, method, headers, body, payload } = req.body;
       if (!url) {
         res.status(400).json({ error: "Missing required 'url' parameter in proxy body." });
+        return;
+      }
+      if (!ALLOWED_PROXY_URL || url !== ALLOWED_PROXY_URL) {
+        res.status(403).json({ error: "Proxy target not allowlisted." });
         return;
       }
 

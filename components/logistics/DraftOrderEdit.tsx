@@ -978,8 +978,12 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
                             id: `ITEM-${Date.now()}-${Math.random()}`,
                             sku: newSku.id,
                             item_name: data.itemName,
-                            vendor: vendorMasters.find(vm => vm.vendor_code === data.vendor)?.vendor_code || data.vendor,
-                            vendor_code: vendorMasters.find(vm => vm.vendor_code === data.vendor)?.vendor_code || data.vendor,
+                            // AddNewSKUModal's `vendors` prop is populated from vendor_name
+                            // (see below), so data.vendor is a name, not a code — matching
+                            // against vendor_name (not vendor_code) is what actually finds
+                            // the real vendor record here.
+                            vendor: vendorMasters.find(vm => vm.vendor_name === data.vendor)?.vendor_code || data.vendor,
+                            vendor_code: vendorMasters.find(vm => vm.vendor_name === data.vendor)?.vendor_code || data.vendor,
                             vendor_name: data.vendor,
                             qty: Number(data.quantity),
                             unit_price: Number(data.unitPrice || 0),
