@@ -2,6 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { driveStorageService, ConflictStrategy } from "./driveStorageService";
 import { getOAuth2Client } from "./driveClient";
+import { requireSession } from "./authMiddleware";
 
 const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"];
 
@@ -13,8 +14,15 @@ const upload = multer({
 export const driveRouter = Router();
 
 // One-time, admin-only setup: grants this app Drive access under the target
-// owner's account. Not linked from the regular dashboard UI.
+// owner's account. Not linked from the regular dashboard UI, not reachable
+// from any user session — gated by a separate server-only secret since it's
+// visited directly in a browser, outside the app's normal login flow.
 driveRouter.get("/oauth/authorize", (req, res) => {
+  const setupSecret = process.env.DRIVE_SETUP_SECRET;
+  if (!setupSecret || req.query.key !== setupSecret) {
+    res.status(403).send("Forbidden. Pass the correct ?key= to run this one-time setup.");
+    return;
+  }
   try {
     const oauth2Client = getOAuth2Client();
     const url = oauth2Client.generateAuthUrl({
@@ -62,7 +70,7 @@ driveRouter.get("/oauth/callback", async (req, res) => {
   }
 });
 
-driveRouter.post("/upload-shipment-docs", upload.array("files"), async (req, res) => {
+driveRouter.post("/upload-shipment-docs", requireSession, upload.array("files"), async (req, res) => {
   try {
     const { batchId, shipmentId, vendorCode } = req.body || {};
     if (!batchId) {
@@ -124,7 +132,7 @@ driveRouter.post("/upload-shipment-docs", upload.array("files"), async (req, res
   }
 });
 
-driveRouter.post("/upload-cnf-invoice", upload.single("file"), async (req, res) => {
+driveRouter.post("/upload-cnf-invoice", requireSession, upload.single("file"), async (req, res) => {
   try {
     const { batchId } = req.body || {}; // the CnfInvoiceBatch.id, for naming/traceability only — not required
     const file = req.file;

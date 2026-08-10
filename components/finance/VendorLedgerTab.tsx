@@ -21,7 +21,7 @@ import {
   Database,
   Edit
 } from 'lucide-react';
-import { PurchaseInvoice, PaymentLog, SettlementRecord, VendorLedgerEntry, VendorMaster } from '../../services/settlementService';
+import { PurchaseInvoice, PaymentLog, SettlementRecord, VendorLedgerEntry, VendorMaster, CompiledLedgerRow, compileVendorLedgerRows } from '../../services/settlementService';
 
 
 interface VendorLedgerTabProps {
@@ -31,16 +31,6 @@ interface VendorLedgerTabProps {
   liveLedger?: VendorLedgerEntry[];
   vendors?: VendorMaster[];
   onOpenAdjustmentModal?: (vendorCode: string) => void;
-}
-
-interface CompiledLedgerRow {
-  date: string;
-  particulars: 'Purchase' | 'Payment' | string;
-  referenceId: string;
-  amount: number;
-  balance?: number;
-  sourceRecord: any;
-  TransactionId?: string;
 }
 
 export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
@@ -94,236 +84,17 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
     return masterVendors.find(v => v.code === selectedVendorCode) || null;
   }, [selectedVendorCode, masterVendors]);
 
-  // --- LEDGER COMPILATION FOR A GIVEN VENDOR WITH SAFETY PIPELINE ENFORCEMENT ---
+  // --- LEDGER COMPILATION FOR A GIVEN VENDOR ---
+  // Delegates to the shared primitive in settlementService.ts (also used by
+  // computeVendorBalance) so the sign/allocation rules only live once.
   const compileLedger = (vendorCode: string): CompiledLedgerRow[] => {
-    try {
-      // 0. Use Live Ledger if available and has data for this vendor
-      if (liveLedger && liveLedger.length > 0) {
-        const filteredLive = liveLedger.filter(row => row.VendorCode === vendorCode);
-        if (filteredLive.length > 0) {
-          const compiled: CompiledLedgerRow[] = filteredLive.map(row => {
-            const isPurchase = row.Particulars === 'Purchase';
-            const isPayment = row.Particulars === 'Payment';
-            const isTransferOut = row.Particulars?.includes('Transfer Out');
-            const isTransferIn = row.Particulars?.includes('Transfer In');
-            const isRefund = row.Particulars?.includes('Refund');
-            const isForex = row.Particulars?.includes('Forex');
-
-            // From company perspective:
-            // Purchase/Liability: Negative
-            // Payment/Remittance: Positive
-            // Transfer Out: Negative
-            // Transfer In: Positive
-            // Refund Adjustment: Positive
-            // Forex Adjustment: Negative (if it matches old sign direction)
-            let amount = parseFloat(String(row.RMB)) || 0;
-            if (isPurchase) {
-              amount = -Math.abs(amount);
-            } else if (isPayment) {
-              amount = Math.abs(amount);
-            } else if (isTransferOut) {
-              amount = -Math.abs(amount);
-            } else if (isTransferIn) {
-              amount = Math.abs(amount);
-            } else if (isRefund) {
-              amount = Math.abs(amount);
-            } else if (isForex) {
-              amount = -amount;
-            } else {
-              amount = -amount;
-            }
-
-            return {
-              date: row.Date || '',
-              particulars: row.Particulars || '',
-              referenceId: row.ReferenceId || '',
-              amount: amount,
-              TransactionId: row.TransactionId || '',
-              sourceRecord: null
-            };
-          });
-
-          // The VendorLedger sheet only gets a row when specific backend paths mirror
-          // an invoice into it — some PurchaseInvoices rows never make it there. Union
-          // in any invoice for this vendor not already represented so the ledger
-          // reflects the full PurchaseInvoices sheet, not just what got mirrored.
-          const representedInvoiceIds = new Set(
-            filteredLive
-              .filter(row => row.Particulars === 'Purchase')
-              .map(row => row.ReferenceId)
-          );
-          const safeInvoicesForLive = invoices || [];
-          safeInvoicesForLive
-            .filter(inv => inv.vendorCode === vendorCode && !representedInvoiceIds.has(inv.invoiceId))
-            .forEach(inv => {
-              compiled.push({
-                date: inv.date || '',
-                particulars: 'Purchase',
-                referenceId: inv.invoiceId || '',
-                amount: -(parseFloat(String(inv.rmb)) || 0),
-                sourceRecord: inv
-              });
-            });
-
-          // Sort combined dataset globally by Date in absolute ascending order
-          compiled.sort((a, b) => {
-            const dateA = a.date || '';
-            const dateB = b.date || '';
-            return dateA.localeCompare(dateB);
-          });
-
-          // Compute running balance dynamically
-          let runningBalance = 0;
-          compiled.forEach(row => {
-            runningBalance += row.amount;
-            row.balance = runningBalance;
-          });
-
-          return compiled;
-        }
-      }
-
-      const rows: CompiledLedgerRow[] = [];
-
-      // 1. Data Mapping Stream A (From 'PurchaseInvoices' Table)
-      // Amount -> Represents liability to pay -> Negative (-RMB)
-      const safeInvoices = invoices || [];
-      const matchedInvoices = safeInvoices.filter(inv => inv.vendorCode === vendorCode);
-      matchedInvoices.forEach(inv => {
-        rows.push({
-          date: inv.date || '',
-          particulars: 'Purchase',
-          referenceId: inv.invoiceId || '',
-          amount: -(parseFloat(String(inv.rmb)) || 0),
-          sourceRecord: inv
-        });
-      });
-
-      // 2. Data Mapping Stream B (From 'PaymentLogs' Table)
-      // Amount -> Represents payment made to reduce liability -> Positive (+RMB)
-      const safePaymentLogs = paymentLogs || [];
-      safePaymentLogs.forEach(log => {
-        const isPrimary = log.vendorCode === vendorCode;
-        const hasAllocations = log.allocations && log.allocations.length > 0;
-
-        if (isPrimary) {
-          if (hasAllocations) {
-            // Log the overall payment positive rmb for this primary vendor
-            rows.push({
-              date: log.date || '',
-              particulars: 'Payment',
-              referenceId: log.paymentId || '',
-              amount: parseFloat(String(log.rmbAmount)) || 0,
-              sourceRecord: log
-            });
-
-            // Adjust positive rmb as per cross-vendor list: Transfer Out (Negative)
-            log.allocations?.forEach(alloc => {
-              if (alloc.vendorCode !== vendorCode) {
-                rows.push({
-                  date: log.date || '',
-                  particulars: 'Adjustment (Transfer Out)',
-                  referenceId: alloc.vendorCode || '',
-                  amount: -(parseFloat(String(alloc.amount)) || 0),
-                  sourceRecord: log
-                });
-              }
-            });
-          } else {
-            // Normal payment without allocations
-            rows.push({
-              date: log.date || '',
-              particulars: 'Payment',
-              referenceId: log.paymentId || '',
-              amount: parseFloat(String(log.rmbAmount)) || 0,
-              sourceRecord: log
-            });
-          }
-        } else if (hasAllocations) {
-          // If the active vendor is NOT primary, but receives allocated credit: Transfer In (Positive)
-          const allocs = log.allocations?.filter(a => a.vendorCode === vendorCode) || [];
-          allocs.forEach(alloc => {
-            const refId = log.paymentId || '';
-            const isMatch = (refId === log.vendorCode);
-            const particulars = isMatch ? 'Payment' : 'Adjustment (Transfer In)';
-
-            rows.push({
-              date: log.date || '',
-              particulars: particulars,
-              referenceId: refId,
-              amount: parseFloat(String(alloc.amount)) || 0,
-              sourceRecord: log
-            });
-          });
-        }
-      });
-
-      // 3. Data Mapping Stream C (From 'SettlementLedger' Table - Dual-Sided Adjustment / Direct adjustment)
-      // Source View (A transfers to B): Transfer Out -> Negative (-RMB)
-      // Target View (Mirror Entry): Transfer In -> Positive (+RMB)
-      const safeSettlementRecords = settlementRecords || [];
-      safeSettlementRecords.forEach(rec => {
-        const isSource = rec.vendorNo === vendorCode && rec.invoiceId ? rec.invoiceId.startsWith('V-') : false;
-        const isTarget = rec.invoiceId === vendorCode && rec.vendorNo ? rec.vendorNo.startsWith('V-') : false;
-
-        if (isSource) {
-          rows.push({
-            date: rec.date || '',
-            particulars: 'Adjustment (Transfer Out)',
-            referenceId: rec.invoiceId, // Target vendor code
-            amount: -(parseFloat(String(rec.amountRmb)) || 0),
-            sourceRecord: rec
-          });
-        } else if (isTarget) {
-          rows.push({
-            date: rec.date || '',
-            particulars: 'Adjustment (Transfer In)',
-            referenceId: rec.vendorNo, // Source vendor code
-            amount: parseFloat(String(rec.amountRmb)) || 0,
-            sourceRecord: rec
-          });
-        } else if (rec.vendorNo === vendorCode) {
-          // Direct vendor adjustments
-          if (rec.txnType === 'Forex Adjustment') {
-            rows.push({
-              date: rec.date || '',
-              particulars: 'Forex Adjustment',
-              referenceId: rec.invoiceId || 'N/A',
-              amount: -(parseFloat(String(rec.amountRmb)) || 0),
-              sourceRecord: rec
-            });
-          } else if (rec.txnType === 'Refund') {
-            rows.push({
-              date: rec.date || '',
-              particulars: 'Refund Adjustment',
-              referenceId: rec.invoiceId || 'N/A',
-              amount: parseFloat(String(rec.amountRmb)) || 0,
-              sourceRecord: rec
-            });
-          }
-        }
-      });
-
-      // --- GLOBAL CHRONOLOGICAL SORTING & RUNNING BALANCE CALCULATION ---
-      // Step 2: Sort combined dataset globally by Date in absolute ascending order
-      rows.sort((a, b) => {
-        const dateA = a.date || '';
-        const dateB = b.date || '';
-        return dateA.localeCompare(dateB);
-      });
-
-      // Step 3: Compute running balance dynamically
-      let runningBalance = 0;
-      rows.forEach(row => {
-        runningBalance += row.amount;
-        row.balance = runningBalance;
-      });
-
-      return rows;
-    } catch (err) {
-      console.error(`Error compiling ledger for vendor ${vendorCode}:`, err);
-      return []; // Safety fallback
-    }
+    return compileVendorLedgerRows(vendorCode, {
+      invoices,
+      paymentLogs,
+      settlementRecords,
+      vendorLedger: liveLedger,
+      vendors
+    });
   };
 
   // --- PRE-COMPILING AGGREGATE METRICS FOR EACH VENDOR ---

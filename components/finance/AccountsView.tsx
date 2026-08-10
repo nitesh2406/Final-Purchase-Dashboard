@@ -257,7 +257,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
           paymentId: adjId
         };
         setSettlementRecords(prev => [{ id: `SET-TEMP-${Date.now()}`, ...recordPayload, temp: true, createdAtTimestamp: Date.now() }, ...prev]);
-        setSuccessBanner(`Settlement of ¥${amountRmb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} logged against invoice "${inv.invoiceId}", paid by ${payingVendor}.`);
+        setSuccessBanner(`Settlement of ¥${amountRmb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} submitted against invoice "${inv.invoiceId}", paid by ${payingVendor} — syncing to the ledger now.`);
         setSettleModalInvoice(null);
 
         onRefresh();
@@ -452,7 +452,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
         });
 
         if (response.success) {
-          setSuccessBanner(`Invoice "${tempInvoice.invoiceId}" logged successfully! Saved to centralized ledger pipeline.`);
+          setSuccessBanner(`Invoice "${tempInvoice.invoiceId}" submitted — queued and syncing to the centralized ledger pipeline.`);
           if (IS_DEVELOPMENT_MODE) {
             setIsModalOpen(false);
             // Reset local state fields

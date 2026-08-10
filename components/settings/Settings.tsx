@@ -87,15 +87,26 @@ export const Settings: React.FC<{
     amazonConfig?: any;
     onRefreshAmazonConfig?: () => void;
     amazonConfigLastLoaded?: Date | null;
-}> = ({ config: _config, onRefreshConfig: _onRefreshConfig, lastLoaded: _lastLoaded, amazonConfig, onRefreshAmazonConfig, amazonConfigLastLoaded }) => {
+    pricingConfig?: any;
+    onRefreshPricingConfig?: () => void;
+    pricingConfigLastLoaded?: Date | null;
+}> = ({ config, onRefreshConfig, lastLoaded, amazonConfig, onRefreshAmazonConfig, amazonConfigLastLoaded, pricingConfig, onRefreshPricingConfig, pricingConfigLastLoaded }) => {
     const [activeView, setActiveView] = useQueryParam<SettingsView>('settingsView', 'Forecasting Config');
 
     const renderView = () => {
         switch (activeView) {
             case 'Forecasting Config':
-                return <ForecastingConfig />;
+                return <ForecastingConfig
+                    externalConfig={config}
+                    onRefreshExternal={onRefreshConfig}
+                    lastLoaded={lastLoaded}
+                />;
             case 'Pricing Config':
-                return <PricingConfig />;
+                return <PricingConfig
+                    externalConfig={pricingConfig}
+                    onRefreshExternal={onRefreshPricingConfig}
+                    lastLoaded={pricingConfigLastLoaded}
+                />;
             case 'System Preferences':
                 return <SystemPreferences />;
             case 'Approval Workflows':

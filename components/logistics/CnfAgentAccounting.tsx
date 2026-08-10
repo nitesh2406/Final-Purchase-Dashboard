@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
+import { getSessionAuthHeaders } from '../../services/authToken';
 import {
   fetchCnfEligibleBatches,
   fetchPurchaseInvoices,
@@ -477,7 +478,7 @@ export const GenerateBillModal: React.FC<{
           try {
             const formData = new FormData();
             formData.append('file', f);
-            const uploadResp = await fetch('/api/drive/upload-cnf-invoice', { method: 'POST', body: formData });
+            const uploadResp = await fetch('/api/drive/upload-cnf-invoice', { method: 'POST', headers: getSessionAuthHeaders(), body: formData });
             const uploadData = await uploadResp.json();
             if (selectionToken !== fileSelectionRef.current) return;
             if (uploadData.success) {

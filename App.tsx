@@ -108,6 +108,8 @@ const App: React.FC = () => {
     const [configLastLoaded, setConfigLastLoaded] = useState<Date | null>(null);
     const [amazonConfig, setAmazonConfig] = useState<any>(null);
     const [amazonConfigLastLoaded, setAmazonConfigLastLoaded] = useState<Date | null>(null);
+    const [pricingConfig, setPricingConfig] = useState<any>(null);
+    const [pricingConfigLastLoaded, setPricingConfigLastLoaded] = useState<Date | null>(null);
 
     const [user, setUser] = useState<any>(() => {
         if (TEST_LOGIN_BYPASS) return DEV_USER;
@@ -197,12 +199,19 @@ const App: React.FC = () => {
                 const refreshedInvoices = await fetchPurchaseInvoices();
                 setPurchaseInvoices(refreshedInvoices);
             } else if (type === 'payment') {
-                const [refreshedPayments, refreshedLedger] = await Promise.all([
+                // Was missing fetchSettlementRecords() — AccountsView computes its
+                // displayed outstanding balance from settlementRecords, not
+                // paymentLogs/vendorLedger, so without this a payment that just
+                // synced left the UI showing the invoice as still unsettled
+                // (real risk: a second payment against an already-settled invoice).
+                const [refreshedPayments, refreshedLedger, refreshedSettlements] = await Promise.all([
                     fetchPaymentLogs(),
-                    fetchVendorLedger()
+                    fetchVendorLedger(),
+                    fetchSettlementRecords()
                 ]);
                 setPaymentLogs(refreshedPayments);
                 setVendorLedger(refreshedLedger);
+                setSettlementRecords(refreshedSettlements);
             } else if (type === 'adjustment') {
                 const [refreshedLedger, refreshedSettlements] = await Promise.all([
                     fetchVendorLedger(),
@@ -397,11 +406,19 @@ const App: React.FC = () => {
 
             const draftsPromise = fetchDirect({ action: API_ACTIONS.GET_DRAFTS });
 
-            const otherEndpoints = ['skus', 'pos', 'shipments', 'invoices', 'vendors', 'notifications', 'vendor_masters'];
+            // 'skus', 'shipments', 'invoices', 'vendors', 'notifications' were
+            // removed here — the backend has no get_skus/get_shipments/
+            // get_invoices/get_vendors/get_notifications action, so these 5
+            // requests always failed (every dashboard load, silently). Their
+            // setters were never actually reached: skus/invoices/vendors are
+            // only ever mutated locally elsewhere, shipments/notifications have
+            // no other setter at all. Removing them just cuts 5 guaranteed-
+            // failing requests; no behavior changes.
+            const otherEndpoints = ['pos', 'vendor_masters'];
             const otherPromises = otherEndpoints.map(e => fetchDirect({ action: 'get_' + e }));
 
             const [draftsResponse, ...otherResponses] = await Promise.all([draftsPromise, ...otherPromises]);
-            const [skusData, posData, shpData, invData, venData, notifData, venMastersData] = otherResponses;
+            const [posData, venMastersData] = otherResponses;
 
             setLastApiLog({ action: 'GET_ALL_DATA', status: 200, timestamp: new Date().toLocaleTimeString() });
             setLastRefreshTime(new Date().toLocaleTimeString());
@@ -410,12 +427,7 @@ const App: React.FC = () => {
                 setDrafts(draftsResponse.drafts);
             }
 
-            if (skusData?.skus) setSkus(skusData.skus);
             if (posData?.pos) setPurchaseOrders(posData.pos);
-            if (shpData?.shipments) setShipments(shpData.shipments);
-            if (invData?.invoices) setInvoices(invData.invoices);
-            if (venData?.vendors) setVendors(venData.vendors);
-            if (notifData?.notifications) setNotifications(notifData.notifications);
             if (venMastersData?.vendors) {
                 setVendorMasters(venMastersData.vendors
                     .filter((v: any) => v.vendor_code || v.vendor_id)
@@ -582,6 +594,31 @@ const App: React.FC = () => {
         }
     }, []);
 
+    const fetchPricingConfig = useCallback(async () => {
+        try {
+            const hit = localStorage.getItem('cache_pricing_config');
+            if (hit) {
+                const { data, ts } = JSON.parse(hit);
+                if (Date.now() - ts < CONFIG_TTL) { setPricingConfig(data); setPricingConfigLastLoaded(new Date(ts)); return; }
+            }
+        } catch {}
+        try {
+            const response = await fetch(APPS_SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: API_ACTIONS.GET_PRICING_CONFIG })
+            });
+            const data = await response.json();
+            if (data?.success && data?.data) {
+                setPricingConfig(data.data);
+                setPricingConfigLastLoaded(new Date());
+                localStorage.setItem('cache_pricing_config', JSON.stringify({ data: data.data, ts: Date.now() }));
+            }
+        } catch (e) {
+            console.error("Pricing config fetch error:", e);
+        }
+    }, []);
+
     const fetchAmazonConfig = useCallback(async () => {
         try {
             const hit = localStorage.getItem('cache_amazon_config');
@@ -612,11 +649,28 @@ const App: React.FC = () => {
         fetchAllData();
         fetchConfig();
         fetchAmazonConfig();
-    }, [user, fetchAllData, fetchConfig, fetchAmazonConfig]);
+        fetchPricingConfig();
+    }, [user, fetchAllData, fetchConfig, fetchAmazonConfig, fetchPricingConfig]);
 
+    // Used by the "Add New SKU" flow inside a draft (AddNewSKUModal, via
+    // DraftOrderEdit's addSkuToCatalog prop) for items that aren't in the
+    // product catalog yet. This does NOT create a real catalog record —
+    // apiSaveDraft's manual-line branch doesn't require one, it just needs a
+    // stable sku identifier for the draft line, which is what this returns.
+    // The line itself persists correctly via the normal Save Draft flow
+    // (handleSaveDraft sends it with line_id: null, which apiSaveDraft
+    // treats as a new manual line). If the item needs to become a real,
+    // reusable catalog SKU, that's the separate New SKU Request workflow
+    // (NewSkuDashboard.tsx / NewSkuApi.js), not this.
+    //
+    // The id used to be `SKU-${skus.length+1}` — collision-prone (two
+    // manual adds in one session, or an existing real SKU happening to
+    // match that number) and, since this id IS the value persisted into
+    // the draft line's `sku` column, a collision there means two unrelated
+    // line items across different drafts end up sharing one sku code.
     const addSku = (newSkuData: Omit<Sku, 'id'>) => {
         const newSku: Sku = {
-            id: `SKU-${(skus.length + 1).toString().padStart(3, '0')}`,
+            id: `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
             ...newSkuData,
         };
         setSkus(prevSkus => [...prevSkus, newSku]);
@@ -890,6 +944,9 @@ const App: React.FC = () => {
                     amazonConfig={amazonConfig}
                     onRefreshAmazonConfig={fetchAmazonConfig}
                     amazonConfigLastLoaded={amazonConfigLastLoaded}
+                    pricingConfig={pricingConfig}
+                    onRefreshPricingConfig={fetchPricingConfig}
+                    pricingConfigLastLoaded={pricingConfigLastLoaded}
                 />;
             default:
                 return <Dashboard />;
@@ -1009,7 +1066,13 @@ const App: React.FC = () => {
                             <span className="text-xs font-bold uppercase tracking-wider text-slate-550 dark:text-slate-400">Ledger Sync Engine</span>
                         </div>
                         <button
-                            onClick={() => SyncQueueManager.dismissAll()}
+                            onClick={() => {
+                                const pendingOrFailed = queue.filter(q => q.status !== 'syncing').length;
+                                if (pendingOrFailed === 0) return;
+                                if (confirm(`Dismiss ${pendingOrFailed} queued item(s)? They will stop trying to sync. This can be undone from the sync log if needed.`)) {
+                                    SyncQueueManager.dismissAll();
+                                }
+                            }}
                             className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-colors underline cursor-pointer"
                         >
                             Dismiss Sync
@@ -1087,7 +1150,11 @@ const App: React.FC = () => {
                                         )}
                                         {q.status !== 'syncing' && q.status !== 'synced' && (
                                             <button
-                                                onClick={() => SyncQueueManager.dismiss(q.id)}
+                                                onClick={() => {
+                                                    if (confirm(`Dismiss this queued ${q.type}? It will stop trying to sync. This can be undone from the sync log if needed.`)) {
+                                                        SyncQueueManager.dismiss(q.id);
+                                                    }
+                                                }}
                                                 className="bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-extrabold px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider transition-colors"
                                                 title="Cancel pending transaction"
                                             >

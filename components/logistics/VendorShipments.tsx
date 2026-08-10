@@ -2,6 +2,7 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
+import { getSessionAuthHeaders } from '../../services/authToken';
 import { 
     CloudArrowUpIcon, 
     DocumentTextIcon, 
@@ -616,6 +617,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const [batchOption, setBatchOption] = useState<'new' | 'existing'>('new');
     const [selectedBatchId, setSelectedBatchId] = useState('');
     const [openBatches, setOpenBatches] = useState<any[]>([]);
+    const [openBatchesError, setOpenBatchesError] = useState<string | null>(null);
     const [cartonCount, setCartonCount] = useState(0);
     const [finalShipmentAmount, setFinalShipmentAmount] = useState(0);
     const [notes, setNotes] = useState('');
@@ -867,9 +869,15 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
         if (data.status === 'success') {
           setOpenBatches(data.batches || []);
+          setOpenBatchesError(null);
+        } else {
+          // Was silently leaving openBatches empty on a non-success response —
+          // indistinguishable from "there just aren't any open batches."
+          setOpenBatchesError(data.message || 'Could not load open batches.');
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to fetch open batches:', error);
+        setOpenBatchesError(error?.message || 'Could not load open batches.');
       }
     };
 
@@ -1499,6 +1507,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
         const response = await fetch('/api/drive/upload-shipment-docs', {
           method: 'POST',
+          headers: getSessionAuthHeaders(),
           body: formData
         });
         const data = await response.json();
@@ -4191,6 +4200,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                 </option>
                               ))}
                             </select>
+                            {openBatchesError && (
+                              <p className="text-red-500 dark:text-red-400 text-xs mt-1">Couldn't load open batches: {openBatchesError} — this list may be incomplete, not necessarily empty.</p>
+                            )}
                             {validationErrors.batch && (
                               <p className="text-red-500 dark:text-red-400 text-xs mt-1">{validationErrors.batch}</p>
                             )}

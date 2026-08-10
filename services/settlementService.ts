@@ -84,29 +84,6 @@ export async function fetchVendorMasters(): Promise<VendorMaster[]> {
 }
 
 /**
- * Fetches vendor finance accounts from the VendorAccounts sheet.
- * Used for payment account selectors (trade/pool). Not for vendor dropdowns.
- */
-export async function fetchVendorAccounts(): Promise<VendorMaster[]> {
-  try {
-    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_vendor_accounts', 'VendorAccounts', 'POST');
-    if (response && response.status === 'success' && Array.isArray(response.accounts)) {
-      return response.accounts.map((row: any) => ({
-        vendor_id: row.vendor_id || row['Vendor ID'] || row.account_id || row.vendorCode || '',
-        vendor_name: row.vendor_name || row['Vendor Name'] || row.vendorName || '',
-        currency: row.currency || '',
-        country: row.country || '',
-        payment_terms: row.payment_terms || '',
-        is_active: row.is_active === true || row.is_active === 'TRUE'
-      }));
-    }
-  } catch (err) {
-    console.error('Failed to fetch vendor accounts:', err);
-  }
-  return [];
-}
-
-/**
  * Inserts a new Vendor Master row into the VendorAccounts sheet.
  */
 export async function submitVendorAccount(record: {
@@ -135,22 +112,6 @@ export async function syncInvoicesFromShipments(): Promise<void> {
     console.error('Failed to sync shipments:', err);
   }
 }
-
-/**
- * Deletes a record from a specific table by unique ID.
- */
-export async function deleteRecordByUniqueId(table: string, idColumn: string, targetId: string): Promise<any> {
-  try {
-    return await executeAppsScriptProxy(appsScriptUrl, 'delete_row', table, 'POST', {
-      idColumn,
-      targetId
-    });
-  } catch (err) {
-    console.error(`Failed to delete record ${targetId} from ${table}:`, err);
-    throw err;
-  }
-}
-
 
 export function getVendorName(vendorCode: string): string {
   return vendorCode || 'Unknown Vendor';
@@ -261,42 +222,6 @@ const INITIAL_PURCHASE_INVOICES: PurchaseInvoice[] = [
   }
 ];
 
-/**
- * Centrally executes Apps Script web requests and transparently forwards all HTTP methods to the target Apps Script URL.
- * Production mode: all write operations are committed directly to Google Sheets.
- */
-export async function executeAppsScriptRequest<T = any>(
-  url: string,
-  options: RequestInit = {}
-): Promise<T> {
-  try {
-    const proxyUrl = '/api/apps-script-proxy';
-    const response = await fetch(proxyUrl, {
-      method: 'POST',
-      redirect: "follow",
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        url,
-        method: options.method || 'GET',
-        headers: options.headers,
-        body: options.body
-      })
-    });
-    if (!response.ok) {
-      throw new Error(`Proxy responded with status ${response.status}`);
-    }
-    return await response.json();
-  } catch (proxyError) {
-    console.warn('[Proxy Fallback] Server-side Apps Script proxy failed, trying front-end direct fetch:', proxyError);
-    const response = await fetch(url, options);
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    return response.json();
-  }
-}
 
 export interface HistoricalFxRate {
   rate: number;
@@ -578,8 +503,16 @@ export async function executeEODExchangeRateEngine(
                fetchPaymentLogs(),
                fetchSettlementRecords()
              ]);
-          } catch(syncErr) {
+          } catch(syncErr: any) {
+             // The backend commit above already succeeded — this refetch is
+             // purely to pull the resulting auto-settlement changes back
+             // into view. Was only console.warn'd on failure, meaning the
+             // user could keep looking at pre-EOD numbers with no
+             // indication anything was stale. Surfaced through the same
+             // `logs` panel the rest of this run's narrative already goes
+             // through, rather than inventing a separate notice.
              console.warn('[EOD Engine] Late-fetch sync warning:', syncErr);
+             logs.push(`\n[EOD Engine] WARNING: The backend commit succeeded, but refreshing the displayed data afterward failed (${syncErr?.message || syncErr}). Reload the page to confirm you're seeing the latest figures.`);
           }
         } else {
           console.warn(`[EOD Engine] Warning: Apps Script backend rejected transactional commit:`, result?.message);
@@ -599,17 +532,6 @@ export async function executeEODExchangeRateEngine(
     logs,
     updatedRecords: updated
   };
-}
-
-/**
- * Resets local database to seed state for testing/demo calculations.
- */
-export function resetPurchaseInvoicesDb(): PurchaseInvoice[] {
-  purchaseInvoicesMemory = [...INITIAL_PURCHASE_INVOICES];
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('purchase_invoices_table', JSON.stringify(INITIAL_PURCHASE_INVOICES));
-  }
-  return INITIAL_PURCHASE_INVOICES;
 }
 
 /**
@@ -976,17 +898,30 @@ export async function submitAdjustmentEntry(record: any): Promise<any> {
  * batch, scoped to today's date. Shared by every screen that creates adjustment entries so
  * there's a single place to fix sequencing bugs instead of drifting copies.
  */
+// Computed purely client-side from already-loaded records, with no backend
+// atomic counter — two admins submitting adjustments within the same
+// window, both computing "next sequence" from the same stale snapshot,
+// could compute the identical id. A short random suffix doesn't make this
+// a true atomicity guarantee (that would need a server-side generated id
+// under a lock), but it makes an accidental collision astronomically
+// unlikely without needing a backend change, while keeping the id's
+// date+sequence prefix meaningful for reporting.
 export function generateAdjustmentId(allRecords: SettlementRecord[]): string {
   const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
   const prefix = `ADJ-${todayStr}`;
   const matches = allRecords.filter(r => (r.paymentId || r.id || '').startsWith(prefix));
   const seqs = matches.map(r => {
+    // Sequence is always the 3rd segment (ADJ-<date>-<seq>[-<nonce>]) — a
+    // fixed index, not "last part", since older records (pre-nonce) have 3
+    // segments and newer ones have 4; `parts.length`-relative indexing
+    // would silently parse the date as the sequence for one of the two.
     const parts = (r.paymentId || r.id || '').split('-');
-    const lastPart = parseInt(parts[parts.length - 1], 10);
+    const lastPart = parseInt(parts[2], 10);
     return isNaN(lastPart) ? 0 : lastPart;
   });
   const nextSeq = seqs.length > 0 ? Math.max(...seqs) + 1 : 1;
-  return `${prefix}-${String(nextSeq).padStart(3, '0')}`;
+  const nonce = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `${prefix}-${String(nextSeq).padStart(3, '0')}-${nonce}`;
 }
 
 /**
@@ -1014,29 +949,42 @@ export function reconcileTempRecords<T extends { temp?: boolean; createdAtTimest
   return [...remainingTemp, ...fresh];
 }
 
+export interface CompiledLedgerRow {
+  date: string;
+  particulars: 'Purchase' | 'Payment' | string;
+  referenceId: string;
+  amount: number;
+  balance?: number;
+  sourceRecord: any;
+  TransactionId?: string;
+}
+
+export interface VendorLedgerSourceData {
+  invoices?: PurchaseInvoice[];
+  paymentLogs?: PaymentLog[];
+  settlementRecords?: SettlementRecord[];
+  vendorLedger?: VendorLedgerEntry[];
+  vendors?: VendorMaster[];
+}
+
 /**
- * Computes a vendor's running RMB balance (positive = advance credit owed to them,
- * negative = outstanding liability) from live vendor-ledger rows when available, falling
- * back to reconstructing it from raw invoices/payment logs/settlement records. Shared by
- * every screen that previews a vendor's balance so the sign/allocation rules only live once.
+ * Compiles a vendor's full ledger row-by-row (with running RMB balance: positive =
+ * advance credit owed to them, negative = outstanding liability) from live vendor-ledger
+ * rows when available, falling back to reconstructing it from raw invoices/payment
+ * logs/settlement records. Shared by every screen that renders or previews a vendor's
+ * ledger/balance so the sign/allocation rules only live once.
  */
-export function computeVendorBalance(
+export function compileVendorLedgerRows(
   vendorCode: string,
-  data: {
-    invoices?: PurchaseInvoice[];
-    paymentLogs?: PaymentLog[];
-    settlementRecords?: SettlementRecord[];
-    vendorLedger?: VendorLedgerEntry[];
-    vendors?: VendorMaster[];
-  }
-): number {
-  if (!vendorCode) return 0;
+  data: VendorLedgerSourceData
+): CompiledLedgerRow[] {
+  if (!vendorCode) return [];
   const { invoices, paymentLogs, settlementRecords, vendorLedger, vendors } = data;
   try {
     if (vendorLedger && vendorLedger.length > 0) {
       const filteredLive = vendorLedger.filter(row => row.VendorCode === vendorCode);
       if (filteredLive.length > 0) {
-        const compiled = filteredLive.map(row => {
+        const compiled: CompiledLedgerRow[] = filteredLive.map(row => {
           const isPurchase = row.Particulars === 'Purchase';
           const isPayment = row.Particulars === 'Payment';
           const isTransferOut = row.Particulars?.includes('Transfer Out');
@@ -1044,6 +992,13 @@ export function computeVendorBalance(
           const isRefund = row.Particulars?.includes('Refund');
           const isForex = row.Particulars?.includes('Forex');
 
+          // From company perspective:
+          // Purchase/Liability: Negative
+          // Payment/Remittance: Positive
+          // Transfer Out: Negative
+          // Transfer In: Positive
+          // Refund Adjustment: Positive
+          // Forex Adjustment: Negative (if it matches old sign direction)
           let amount = parseFloat(String(row.RMB)) || 0;
           if (isPurchase) {
             amount = -Math.abs(amount);
@@ -1058,14 +1013,29 @@ export function computeVendorBalance(
           } else if (isForex) {
             amount = -amount;
           } else {
+            // Unrecognized Particulars string — was silently flipping sign
+            // with no record of it. A typo'd or new transaction-type label
+            // would go the wrong direction in every balance calculation
+            // with nothing to flag it. Not throwing (a live ledger render
+            // shouldn't hard-fail on one odd row), but this needs eyes.
+            console.warn(`[compileVendorLedgerRows] Unrecognized Particulars "${row.Particulars}" for vendor ${vendorCode} — sign-flipped by fallback, verify this is correct.`);
             amount = -amount;
           }
 
-          return { date: row.Date || '', amount };
+          return {
+            date: row.Date || '',
+            particulars: row.Particulars || '',
+            referenceId: row.ReferenceId || '',
+            amount: amount,
+            TransactionId: row.TransactionId || '',
+            sourceRecord: null
+          };
         });
 
-        // Union in any invoice for this vendor not already mirrored into VendorLedger
-        // (see matching fix in VendorLedgerTab.compileLedger for why this is necessary).
+        // The VendorLedger sheet only gets a row when specific backend paths mirror
+        // an invoice into it — some PurchaseInvoices rows never make it there. Union
+        // in any invoice for this vendor not already represented so the ledger
+        // reflects the full PurchaseInvoices sheet, not just what got mirrored.
         const representedInvoiceIds = new Set(
           filteredLive
             .filter(row => row.Particulars === 'Purchase')
@@ -1075,21 +1045,46 @@ export function computeVendorBalance(
         safeInvoicesForLive
           .filter(inv => inv.vendorCode === vendorCode && !representedInvoiceIds.has(inv.invoiceId))
           .forEach(inv => {
-            compiled.push({ date: inv.date || '', amount: -(parseFloat(String(inv.rmb)) || 0) });
+            compiled.push({
+              date: inv.date || '',
+              particulars: 'Purchase',
+              referenceId: inv.invoiceId || '',
+              amount: -(parseFloat(String(inv.rmb)) || 0),
+              sourceRecord: inv
+            });
           });
 
+        // Sort combined dataset globally by Date in absolute ascending order
         compiled.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-        return compiled.reduce((running, row) => running + row.amount, 0);
+
+        // Compute running balance dynamically
+        let runningBalance = 0;
+        compiled.forEach(row => {
+          runningBalance += row.amount;
+          row.balance = runningBalance;
+        });
+
+        return compiled;
       }
     }
 
-    const rows: { date: string; amount: number }[] = [];
+    const rows: CompiledLedgerRow[] = [];
 
+    // 1. Data Mapping Stream A (From 'PurchaseInvoices' Table)
+    // Amount -> Represents liability to pay -> Negative (-RMB)
     const safeInvoices = invoices || [];
     safeInvoices.filter(inv => inv.vendorCode === vendorCode).forEach(inv => {
-      rows.push({ date: inv.date || '', amount: -(parseFloat(String(inv.rmb)) || 0) });
+      rows.push({
+        date: inv.date || '',
+        particulars: 'Purchase',
+        referenceId: inv.invoiceId || '',
+        amount: -(parseFloat(String(inv.rmb)) || 0),
+        sourceRecord: inv
+      });
     });
 
+    // 2. Data Mapping Stream B (From 'PaymentLogs' Table)
+    // Amount -> Represents payment made to reduce liability -> Positive (+RMB)
     const safePaymentLogs = paymentLogs || [];
     safePaymentLogs.forEach(log => {
       const isPrimary = log.vendorCode === vendorCode;
@@ -1097,47 +1092,133 @@ export function computeVendorBalance(
 
       if (isPrimary) {
         if (hasAllocations) {
-          rows.push({ date: log.date || '', amount: parseFloat(String(log.rmbAmount)) || 0 });
+          // Log the overall payment positive rmb for this primary vendor
+          rows.push({
+            date: log.date || '',
+            particulars: 'Payment',
+            referenceId: log.paymentId || '',
+            amount: parseFloat(String(log.rmbAmount)) || 0,
+            sourceRecord: log
+          });
+
+          // Adjust positive rmb as per cross-vendor list: Transfer Out (Negative)
           log.allocations?.forEach(alloc => {
             if (alloc.vendorCode !== vendorCode) {
-              rows.push({ date: log.date || '', amount: -(parseFloat(String(alloc.amount)) || 0) });
+              rows.push({
+                date: log.date || '',
+                particulars: 'Adjustment (Transfer Out)',
+                referenceId: alloc.vendorCode || '',
+                amount: -(parseFloat(String(alloc.amount)) || 0),
+                sourceRecord: log
+              });
             }
           });
         } else {
-          rows.push({ date: log.date || '', amount: parseFloat(String(log.rmbAmount)) || 0 });
+          // Normal payment without allocations
+          rows.push({
+            date: log.date || '',
+            particulars: 'Payment',
+            referenceId: log.paymentId || '',
+            amount: parseFloat(String(log.rmbAmount)) || 0,
+            sourceRecord: log
+          });
         }
       } else if (hasAllocations) {
+        // If the active vendor is NOT primary, but receives allocated credit: Transfer In (Positive)
         const allocs = log.allocations?.filter(a => a.vendorCode === vendorCode) || [];
         allocs.forEach(alloc => {
-          rows.push({ date: log.date || '', amount: parseFloat(String(alloc.amount)) || 0 });
+          const refId = log.paymentId || '';
+          const isMatch = (refId === log.vendorCode);
+          const particulars = isMatch ? 'Payment' : 'Adjustment (Transfer In)';
+
+          rows.push({
+            date: log.date || '',
+            particulars: particulars,
+            referenceId: refId,
+            amount: parseFloat(String(alloc.amount)) || 0,
+            sourceRecord: log
+          });
         });
       }
     });
 
+    // 3. Data Mapping Stream C (From 'SettlementLedger' Table - Dual-Sided Adjustment / Direct adjustment)
+    // Source View (A transfers to B): Transfer Out -> Negative (-RMB)
+    // Target View (Mirror Entry): Transfer In -> Positive (+RMB)
     const safeSettlementRecords = settlementRecords || [];
     safeSettlementRecords.forEach(rec => {
+      // Custom vendor codes (e.g. "GZSOURCE") don't start with "V-", so without
+      // this fallback their cross-vendor transfers were silently missing here.
       const isSource = rec.vendorNo === vendorCode && rec.invoiceId ? (rec.invoiceId.startsWith('V-') || vendors?.some(v => v.vendor_id === rec.invoiceId)) : false;
       const isTarget = rec.invoiceId === vendorCode && rec.vendorNo ? (rec.vendorNo.startsWith('V-') || vendors?.some(v => v.vendor_id === rec.vendorNo)) : false;
 
       if (isSource) {
-        rows.push({ date: rec.date || '', amount: -(parseFloat(String(rec.amountRmb)) || 0) });
+        rows.push({
+          date: rec.date || '',
+          particulars: 'Adjustment (Transfer Out)',
+          referenceId: rec.invoiceId, // Target vendor code
+          amount: -(parseFloat(String(rec.amountRmb)) || 0),
+          sourceRecord: rec
+        });
       } else if (isTarget) {
-        rows.push({ date: rec.date || '', amount: parseFloat(String(rec.amountRmb)) || 0 });
+        rows.push({
+          date: rec.date || '',
+          particulars: 'Adjustment (Transfer In)',
+          referenceId: rec.vendorNo, // Source vendor code
+          amount: parseFloat(String(rec.amountRmb)) || 0,
+          sourceRecord: rec
+        });
       } else if (rec.vendorNo === vendorCode) {
+        // Direct vendor adjustments
         if (rec.txnType === 'Forex Adjustment') {
-          rows.push({ date: rec.date || '', amount: -(parseFloat(String(rec.amountRmb)) || 0) });
+          rows.push({
+            date: rec.date || '',
+            particulars: 'Forex Adjustment',
+            referenceId: rec.invoiceId || 'N/A',
+            amount: -(parseFloat(String(rec.amountRmb)) || 0),
+            sourceRecord: rec
+          });
         } else if (rec.txnType === 'Refund' || rec.txnType === 'Refund Adjustment') {
-          rows.push({ date: rec.date || '', amount: parseFloat(String(rec.amountRmb)) || 0 });
+          rows.push({
+            date: rec.date || '',
+            particulars: 'Refund Adjustment',
+            referenceId: rec.invoiceId || 'N/A',
+            amount: parseFloat(String(rec.amountRmb)) || 0,
+            sourceRecord: rec
+          });
         }
       }
     });
 
+    // --- GLOBAL CHRONOLOGICAL SORTING & RUNNING BALANCE CALCULATION ---
+    // Step 2: Sort combined dataset globally by Date in absolute ascending order
     rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-    return rows.reduce((running, r) => running + r.amount, 0);
+
+    // Step 3: Compute running balance dynamically
+    let runningBalance = 0;
+    rows.forEach(row => {
+      runningBalance += row.amount;
+      row.balance = runningBalance;
+    });
+
+    return rows;
   } catch (e) {
-    console.error('Error calculating vendor balance:', e);
-    return 0;
+    console.error(`Error compiling ledger for vendor ${vendorCode}:`, e);
+    return [];
   }
+}
+
+/**
+ * Computes a vendor's running RMB balance — the balance of the last compiled
+ * ledger row. See compileVendorLedgerRows for the underlying row-by-row logic.
+ */
+export function computeVendorBalance(
+  vendorCode: string,
+  data: VendorLedgerSourceData
+): number {
+  if (!vendorCode) return 0;
+  const compiled = compileVendorLedgerRows(vendorCode, data);
+  return compiled.length > 0 ? (compiled[compiled.length - 1].balance || 0) : 0;
 }
 
 // --- PAYMENT LOG SYSTEM INTEGRATION ---
@@ -1297,168 +1378,13 @@ function initializeTableInMemory() {
 initializeTableInMemory();
 
 // --- FIFO QUEUE SETTLEMENT AND REAL-TIME COMPUTATION ENGINES ---
-
-/**
- * SETTLEMENT ENGINE LOGIC 1 & 2:
- * Standard FIFO allocation of payments to open invoices, and advance overflow tracking.
- */
-export function runFIFOLiquidationForPayment(payment: PaymentLog) {
-  if (typeof window === 'undefined') return;
-
-  const payments = getPaymentLogs();
-  const payIndex = payments.findIndex(p => p.paymentId === payment.paymentId);
-  if (payIndex === -1) return;
-
-  const targetPayment = payments[payIndex];
-  
-  // Define allocations array. If cross-vendor, use the allocations array; otherwise, use a single allocation matching the primary vendor
-  const allocationsToProcess = targetPayment.allocations && targetPayment.allocations.length > 0
-    ? targetPayment.allocations
-    : [{ vendorCode: targetPayment.vendorCode, amount: targetPayment.rmbAmount }];
-
-  const invoices = getPurchaseInvoices();
-  const settlements = getSettlementRecordsLocal();
-  const newSettlementRecords: SettlementRecord[] = [];
-
-  let totalRemainingUnspent = 0;
-
-  for (const alloc of allocationsToProcess) {
-    let remainingPaymentRmb = alloc.amount;
-
-    // Locate all rows in the PurchaseInvoices sheet for that specific vendor code where Balance > 0 and eligible for settlement
-    const vendorInvoices = invoices
-      .filter(i => 
-        i.vendorCode === alloc.vendorCode && 
-        (i.balance === undefined ? i.rmb : i.balance) > 0 &&
-        i.er1 !== undefined && i.er1 !== null && String(i.er1).trim() !== "" &&
-        i.inr !== undefined && i.inr !== null && String(i.inr).trim() !== "" &&
-        i.status !== "Pending EOD"
-      )
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // Sort chronologically
-
-    for (const invoice of vendorInvoices) {
-      if (remainingPaymentRmb <= 0) break;
-
-      if (invoice.settledAmount === undefined) invoice.settledAmount = 0;
-      if (invoice.balance === undefined) invoice.balance = invoice.rmb;
-
-      const settlementRmb = Math.min(remainingPaymentRmb, invoice.balance);
-
-      // Update invoice in-place
-      invoice.settledAmount += settlementRmb;
-      invoice.balance -= settlementRmb;
-
-      // Update in master list
-      const invIndex = invoices.findIndex(i => i.invoiceId === invoice.invoiceId);
-      if (invIndex !== -1) {
-        invoices[invIndex] = { ...invoice };
-      }
-
-      // Resolve ER1 Directly from Invoice
-      const er1 = invoice.er1 || 0; // Require ER1 from invoice, or 0 if missing
-      const amountInr = settlementRmb * targetPayment.fxRate;
-      const forexGainLoss = settlementRmb * er1 - settlementRmb * targetPayment.fxRate;
-
-      const totalRecords = settlements.length + newSettlementRecords.length;
-      const newRecordId = `SET-${(1001 + totalRecords).toString()}`;
-
-      const settlementRecord: SettlementRecord = {
-        id: newRecordId,
-        date: targetPayment.date, // Payment Date
-        invoiceId: invoice.invoiceId,
-        vendorNo: alloc.vendorCode,
-        vendorName: getVendorName(alloc.vendorCode),
-        txnType: 'Invoice Settlement',
-        amountRmb: settlementRmb,
-        amountInr: amountInr,
-        exchangeRatePrimary: er1,
-        exchangeRateSettlement: targetPayment.fxRate,
-        forexGainLoss: forexGainLoss,
-        notes: `FIFO payment settlement of Invoice ${invoice.invoiceId} using Payment ${targetPayment.paymentId}`,
-        paymentId: targetPayment.paymentId
-      };
-
-      newSettlementRecords.push(settlementRecord);
-
-      remainingPaymentRmb -= settlementRmb;
-
-      // Backend Code.gs already handles these updates during insert_payment_log,
-      // so we do not send redundant update_purchase_invoice or log_settlement_record commands from the frontend.
-    }
-
-    // If leftover amount remains, it is an Advance!
-    if (remainingPaymentRmb > 0) {
-      totalRemainingUnspent += remainingPaymentRmb;
-
-      const totalRecords = settlements.length + newSettlementRecords.length;
-      const newRecordId = `SET-${(1001 + totalRecords).toString()}`;
-      const amountInr = remainingPaymentRmb * targetPayment.fxRate;
-
-      const advanceRecord: SettlementRecord = {
-        id: newRecordId,
-        date: targetPayment.date,
-        invoiceId: 'ADVANCE', // Tracked as ADVANCE inside SettlementLedger
-        vendorNo: alloc.vendorCode,
-        vendorName: getVendorName(alloc.vendorCode),
-        txnType: 'Advance Payment',
-        amountRmb: remainingPaymentRmb,
-        amountInr: amountInr,
-        exchangeRatePrimary: targetPayment.fxRate,
-        exchangeRateSettlement: targetPayment.fxRate,
-        forexGainLoss: 0,
-        notes: `Unallotted cash advance: Payment ID ${targetPayment.paymentId}`,
-        paymentId: targetPayment.paymentId
-      };
-
-      newSettlementRecords.push(advanceRecord);
-
-      // Backend Code.gs already handles these updates during insert_payment_log
-    }
-  }
-
-  // Update target payment's unspent balance in-place
-  targetPayment.balance = totalRemainingUnspent;
-  payments[payIndex] = { ...targetPayment };
-
-  // Trigger Apps Script update for payment balance via local proxy
-  {
-    executeAppsScriptProxy(appsScriptUrl, 'update_payment_log', 'PaymentLogs', 'POST', {
-      record: {
-        paymentId: targetPayment.paymentId,
-        balance: targetPayment.balance
-      }
-    }).catch((err) => {
-      console.error('[AppsProxy] update_payment_log failed', {
-        paymentId: targetPayment.paymentId,
-        balance: targetPayment.balance
-      }, err);
-    });
-  }
-
-  const round2 = (val: number | undefined) => val === undefined ? undefined : Math.round(val * 100) / 100;
-  
-  const roundedInvoices = invoices.map(i => ({ 
-    ...i, 
-    settledAmount: round2(i.settledAmount), 
-    balance: round2(i.balance) 
-  }));
-  const roundedPayments = payments.map(p => ({
-    ...p,
-    balance: round2(p.balance)
-  }));
-  const roundedSettlements = [...newSettlementRecords, ...settlements].map(s => ({
-    ...s,
-    amountInr: round2(s.amountInr),
-    forexGainLoss: round2(s.forexGainLoss),
-    amountRmb: round2(s.amountRmb)
-  }));
-
-  // Save to localStorage
-  localStorage.setItem('purchase_invoices_table', JSON.stringify(roundedInvoices));
-  localStorage.setItem('payment_logs_table', JSON.stringify(roundedPayments));
-  localStorage.setItem('settlement_records_table', JSON.stringify(roundedSettlements));
-}
-
+//
+// A client-side "Logic 1 & 2" (runFIFOLiquidationForPayment) used to live
+// here, mirroring fifoLiquidate_ in the Apps Script backend against the
+// local dev-mode mock store. It was dead code (zero callers) — and rightly
+// so: the backend's addPaymentLog already calls fifoLiquidate_ on every
+// real payment insert, so wiring this up would have double-settled every
+// payment, not filled a gap. Removed rather than connected.
 
 /**
  * SETTLEMENT ENGINE LOGIC 3:

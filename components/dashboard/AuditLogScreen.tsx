@@ -57,17 +57,32 @@ const formatTimestamp = (iso: string): string => {
   });
 };
 
+// Module-level, not React state, so filters and the last-loaded rows
+// survive this screen unmounting (switching to another admin tab and
+// back) — was previously discarding both on every remount.
+let auditLogCache: {
+  channel: Channel;
+  dateFrom: string;
+  dateTo: string;
+  search: string;
+  rows: AuditLogRow[];
+} | null = null;
+
 export const AuditLogScreen: React.FC<{
   onOpenUpdateSku?: (sku: string) => void;
 }> = ({ onOpenUpdateSku }) => {
-  const [channel, setChannel] = useState<Channel>('ALL');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [search, setSearch] = useState('');
+  const [channel, setChannel] = useState<Channel>(auditLogCache?.channel || 'ALL');
+  const [dateFrom, setDateFrom] = useState(auditLogCache?.dateFrom || '');
+  const [dateTo, setDateTo] = useState(auditLogCache?.dateTo || '');
+  const [search, setSearch] = useState(auditLogCache?.search || '');
 
-  const [rows, setRows] = useState<AuditLogRow[]>([]);
+  const [rows, setRows] = useState<AuditLogRow[]>(auditLogCache?.rows || []);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    auditLogCache = { channel, dateFrom, dateTo, search, rows };
+  }, [channel, dateFrom, dateTo, search, rows]);
 
   const fetchLog = useCallback(async () => {
     if (channel === 'IDENTIFIER_REMOVAL') {

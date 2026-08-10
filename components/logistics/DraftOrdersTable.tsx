@@ -250,7 +250,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     };
 
     const handleBulkCancel = async () => {
-        const affected = drafts.filter(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY_SUBMITTED'].includes(String(d.status).toUpperCase()));
+        const affected = drafts.filter(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY SUBMITTED'].includes(String(d.status).toUpperCase()));
         if (affected.length === 0) return;
         if (confirm(`Cancel ${affected.length} selected draft orders?`)) {
             setIsMutating(true);
@@ -262,7 +262,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                 });
                 const result = await response.json();
                 if (result.success) {
-                    setDrafts(prev => prev.map(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY_SUBMITTED'].includes(String(d.status).toUpperCase())
+                    setDrafts(prev => prev.map(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY SUBMITTED'].includes(String(d.status).toUpperCase())
                         ? { ...d, status: 'Cancelled' as DraftStatus, cancelledAt: new Date().toISOString() }
                         : d));
                     showToast(`${affected.length} drafts cancelled`, 'success');
@@ -441,6 +441,28 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                             <button onClick={() => setToast(null)} className="ml-2 hover:bg-black/10 rounded p-1"><XMarkIcon className="w-4 h-4" /></button>
                         </div>
                     )}
+                </div>
+            )}
+
+            {selectedIds.length > 0 && (
+                <div className="flex items-center gap-3 px-4 h-12 mb-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-lg">
+                    <span className="text-sm font-medium text-blue-700 dark:text-blue-300">{selectedIds.length} selected</span>
+                    <div className="flex-1" />
+                    <Button
+                        variant="secondary"
+                        className="h-8 px-3 text-sm border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                        onClick={() => setSelectedIds([])}
+                        disabled={isMutating}
+                    >
+                        Clear
+                    </Button>
+                    <Button
+                        className="h-8 px-3 text-sm bg-red-600 hover:bg-red-700 text-white"
+                        onClick={handleBulkCancel}
+                        disabled={isMutating}
+                    >
+                        Cancel Selected
+                    </Button>
                 </div>
             )}
 

@@ -71,13 +71,23 @@ const FieldDiff: React.FC<{ label: string; current: string | number; proposed: s
   );
 };
 
+// Module-level, not React state — same rationale as auditLogCache in
+// AuditLogScreen.tsx. This tab used to lose its status filter and reset
+// rows to empty every time it unmounted (e.g. navigating away from Update
+// SKU and back).
+let reviewRequestsCache: { status: ReqStatus; rows: SkuUpdateRequest[] } | null = null;
+
 export const ReviewRequestsTab: React.FC = () => {
-  const [status, setStatus] = useState<ReqStatus>('PENDING');
-  const [rows, setRows] = useState<SkuUpdateRequest[]>([]);
+  const [status, setStatus] = useState<ReqStatus>(reviewRequestsCache?.status || 'PENDING');
+  const [rows, setRows] = useState<SkuUpdateRequest[]>(reviewRequestsCache?.rows || []);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [resultNote, setResultNote] = useState<{ request_id: string; status: string; sync_notes: string } | null>(null);
+
+  useEffect(() => {
+    reviewRequestsCache = { status, rows };
+  }, [status, rows]);
 
   const fetchRequests = useCallback(async () => {
     setIsLoading(true);

@@ -39,11 +39,31 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                     throw new Error('Login failed: Invalid response from server. Please contact admin.');
                 }
 
+                // Mints a longer-lived server session token from this fresh Google
+                // credential, so calls to /api/apps-script-proxy and the Drive
+                // upload routes (both now require it) work for this browser
+                // session without re-prompting Google sign-in every ~hour.
+                // Non-fatal if it fails: those specific routes just won't work
+                // until the user re-logs in, rest of the app is unaffected.
+                let sessionToken: string | undefined;
+                try {
+                    const sessionResp = await fetch('/api/auth/session', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ idToken: credentialResponse.credential })
+                    });
+                    const sessionData = await sessionResp.json();
+                    sessionToken = sessionData?.sessionToken;
+                } catch (sessionErr) {
+                    console.warn('Could not mint server session token:', sessionErr);
+                }
+
                 const userObj = {
                     email: data.user.email,
                     name: data.user.name,
                     role: data.user.role,
                     allowedTabs: data.user.allowedTabs,
+                    sessionToken,
                     loggedInAt: Date.now()
                 };
 

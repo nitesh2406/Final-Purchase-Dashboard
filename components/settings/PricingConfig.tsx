@@ -68,11 +68,49 @@ const DEFAULTS: PricingConfigData = {
 
 type ConfigKey = keyof PricingConfigData;
 
+// Maps the backend's nested/lowercase response shape (cny_conv_rate,
+// cm1_brackets: [{floor,value}, ...]) to this component's flat uppercase
+// shape. Shared by the direct fetch below and by the externalConfig sync
+// effect, since App.tsx's cache stores the same raw backend shape.
+function mapPricingResponse(d: any): PricingConfigData {
+    return {
+        CNY_CONV_RATE:      Number(d.cny_conv_rate)    || DEFAULTS.CNY_CONV_RATE,
+        AIR_RATE:           Number(d.air_rate)          || DEFAULTS.AIR_RATE,
+        SEA_MULTIPLIER:     Number(d.sea_multiplier)    || DEFAULTS.SEA_MULTIPLIER,
+        THRESHOLD:          Number(d.threshold)         || DEFAULTS.THRESHOLD,
+        PICK_PACK:          Number(d.pick_pack)         || DEFAULTS.PICK_PACK,
+        SHOPIFY_COST_PCT:   Number(d.shopify_cost_pct)  || DEFAULTS.SHOPIFY_COST_PCT,
+        // CM1 brackets — unpack array back to flat keys
+        CM1_BRACKET_0:    d.cm1_brackets?.find((b: any) => b.floor === 0)?.value    ?? DEFAULTS.CM1_BRACKET_0,
+        CM1_BRACKET_500:  d.cm1_brackets?.find((b: any) => b.floor === 500)?.value  ?? DEFAULTS.CM1_BRACKET_500,
+        CM1_BRACKET_1250: d.cm1_brackets?.find((b: any) => b.floor === 1250)?.value ?? DEFAULTS.CM1_BRACKET_1250,
+        CM1_BRACKET_2000: d.cm1_brackets?.find((b: any) => b.floor === 2000)?.value ?? DEFAULTS.CM1_BRACKET_2000,
+        CM1_BRACKET_4000: d.cm1_brackets?.find((b: any) => b.floor === 4000)?.value ?? DEFAULTS.CM1_BRACKET_4000,
+        CM1_BRACKET_6000: d.cm1_brackets?.find((b: any) => b.floor === 6000)?.value ?? DEFAULTS.CM1_BRACKET_6000,
+        // MRP brackets
+        MRP_BRACKET_0:    d.mrp_brackets?.find((b: any) => b.floor === 0)?.value       ?? DEFAULTS.MRP_BRACKET_0,
+        MRP_BRACKET_1000: d.mrp_brackets?.find((b: any) => b.floor === 1000)?.value    ?? DEFAULTS.MRP_BRACKET_1000,
+        MRP_BRACKET_1500: d.mrp_brackets?.find((b: any) => b.floor === 1500)?.value    ?? DEFAULTS.MRP_BRACKET_1500,
+        MRP_BRACKET_2000: d.mrp_brackets?.find((b: any) => b.floor === 2000)?.value    ?? DEFAULTS.MRP_BRACKET_2000,
+        MRP_BRACKET_INF:  d.mrp_brackets?.find((b: any) => b.floor === 999999)?.value  ?? DEFAULTS.MRP_BRACKET_INF,
+        // Compare brackets
+        COMPARE_BRACKET_0:    d.compare_brackets?.find((b: any) => b.floor === 0)?.value      ?? DEFAULTS.COMPARE_BRACKET_0,
+        COMPARE_BRACKET_1500: d.compare_brackets?.find((b: any) => b.floor === 1500)?.value   ?? DEFAULTS.COMPARE_BRACKET_1500,
+        COMPARE_BRACKET_3000: d.compare_brackets?.find((b: any) => b.floor === 3000)?.value   ?? DEFAULTS.COMPARE_BRACKET_3000,
+        COMPARE_BRACKET_5000: d.compare_brackets?.find((b: any) => b.floor === 5000)?.value   ?? DEFAULTS.COMPARE_BRACKET_5000,
+        COMPARE_BRACKET_INF:  d.compare_brackets?.find((b: any) => b.floor === 999999)?.value ?? DEFAULTS.COMPARE_BRACKET_INF,
+    };
+}
+
 // ─────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────
 
-export const PricingConfig: React.FC = () => {
+export const PricingConfig: React.FC<{
+    externalConfig?: any;
+    onRefreshExternal?: () => void;
+    lastLoaded?: Date | null;
+}> = ({ externalConfig, onRefreshExternal, lastLoaded }) => {
     const [config, setConfig] = useState<PricingConfigData>(DEFAULTS);
     const [savedConfig, setSavedConfig] = useState<PricingConfigData>(DEFAULTS);
     const [isLoading, setIsLoading] = useState(true);
@@ -95,37 +133,7 @@ export const PricingConfig: React.FC = () => {
             });
             const result = await response.json();
             if (result.success) {
-                const d = result.data;
-
-                // Map nested lowercase response → flat uppercase keys used by this component
-                const mapped: PricingConfigData = {
-                    CNY_CONV_RATE:      Number(d.cny_conv_rate)    || DEFAULTS.CNY_CONV_RATE,
-                    AIR_RATE:           Number(d.air_rate)          || DEFAULTS.AIR_RATE,
-                    SEA_MULTIPLIER:     Number(d.sea_multiplier)    || DEFAULTS.SEA_MULTIPLIER,
-                    THRESHOLD:          Number(d.threshold)         || DEFAULTS.THRESHOLD,
-                    PICK_PACK:          Number(d.pick_pack)         || DEFAULTS.PICK_PACK,
-                    SHOPIFY_COST_PCT:   Number(d.shopify_cost_pct)  || DEFAULTS.SHOPIFY_COST_PCT,
-                    // CM1 brackets — unpack array back to flat keys
-                    CM1_BRACKET_0:    d.cm1_brackets?.find((b: any) => b.floor === 0)?.value    ?? DEFAULTS.CM1_BRACKET_0,
-                    CM1_BRACKET_500:  d.cm1_brackets?.find((b: any) => b.floor === 500)?.value  ?? DEFAULTS.CM1_BRACKET_500,
-                    CM1_BRACKET_1250: d.cm1_brackets?.find((b: any) => b.floor === 1250)?.value ?? DEFAULTS.CM1_BRACKET_1250,
-                    CM1_BRACKET_2000: d.cm1_brackets?.find((b: any) => b.floor === 2000)?.value ?? DEFAULTS.CM1_BRACKET_2000,
-                    CM1_BRACKET_4000: d.cm1_brackets?.find((b: any) => b.floor === 4000)?.value ?? DEFAULTS.CM1_BRACKET_4000,
-                    CM1_BRACKET_6000: d.cm1_brackets?.find((b: any) => b.floor === 6000)?.value ?? DEFAULTS.CM1_BRACKET_6000,
-                    // MRP brackets
-                    MRP_BRACKET_0:    d.mrp_brackets?.find((b: any) => b.floor === 0)?.value       ?? DEFAULTS.MRP_BRACKET_0,
-                    MRP_BRACKET_1000: d.mrp_brackets?.find((b: any) => b.floor === 1000)?.value    ?? DEFAULTS.MRP_BRACKET_1000,
-                    MRP_BRACKET_1500: d.mrp_brackets?.find((b: any) => b.floor === 1500)?.value    ?? DEFAULTS.MRP_BRACKET_1500,
-                    MRP_BRACKET_2000: d.mrp_brackets?.find((b: any) => b.floor === 2000)?.value    ?? DEFAULTS.MRP_BRACKET_2000,
-                    MRP_BRACKET_INF:  d.mrp_brackets?.find((b: any) => b.floor === 999999)?.value  ?? DEFAULTS.MRP_BRACKET_INF,
-                    // Compare brackets
-                    COMPARE_BRACKET_0:    d.compare_brackets?.find((b: any) => b.floor === 0)?.value      ?? DEFAULTS.COMPARE_BRACKET_0,
-                    COMPARE_BRACKET_1500: d.compare_brackets?.find((b: any) => b.floor === 1500)?.value   ?? DEFAULTS.COMPARE_BRACKET_1500,
-                    COMPARE_BRACKET_3000: d.compare_brackets?.find((b: any) => b.floor === 3000)?.value   ?? DEFAULTS.COMPARE_BRACKET_3000,
-                    COMPARE_BRACKET_5000: d.compare_brackets?.find((b: any) => b.floor === 5000)?.value   ?? DEFAULTS.COMPARE_BRACKET_5000,
-                    COMPARE_BRACKET_INF:  d.compare_brackets?.find((b: any) => b.floor === 999999)?.value ?? DEFAULTS.COMPARE_BRACKET_INF,
-                };
-
+                const mapped = mapPricingResponse(result.data);
                 setConfig(mapped);
                 setSavedConfig(mapped);
             }
@@ -136,7 +144,28 @@ export const PricingConfig: React.FC = () => {
         }
     }, []);
 
-    useEffect(() => { fetchConfig(); }, [fetchConfig]);
+    // Was unconditionally calling fetchConfig() on every mount — no App-level
+    // cache existed for this screen at all (unlike ForecastingConfig/
+    // AmazonConfig), so it refetched from scratch on every visit. Same
+    // pattern as those two now: use the parent's cached config if present,
+    // ask the parent to load it if not, and only hit the backend directly
+    // (fallback below) if no parent config ever arrives.
+    useEffect(() => {
+        if (externalConfig) {
+            const mapped = mapPricingResponse(externalConfig);
+            setConfig(mapped);
+            setSavedConfig(mapped);
+            setIsLoading(false);
+        } else if (!externalConfig && onRefreshExternal) {
+            onRefreshExternal();
+        }
+    }, [externalConfig, onRefreshExternal]);
+
+    useEffect(() => {
+        if (!externalConfig) {
+            fetchConfig();
+        }
+    }, [externalConfig, fetchConfig]);
 
     // ─── Save to GAS ───
     const handleSave = async () => {
@@ -146,7 +175,12 @@ export const PricingConfig: React.FC = () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                 body: JSON.stringify({
-                    action: 'save_forecasting_config',
+                    // Was 'save_forecasting_config' — a copy-paste bug that
+                    // silently wrote pricing keys into the unrelated
+                    // Forecasting_Config sheet and never touched SKU_Config,
+                    // the sheet this screen actually reads from. Every
+                    // "successful" save was a no-op for its real purpose.
+                    action: 'save_pricing_config',
                     config,
                 }),
             });
@@ -156,6 +190,7 @@ export const PricingConfig: React.FC = () => {
                 setIsSaved(true);
                 setLastSaved(new Date());
                 setTimeout(() => setIsSaved(false), 3000);
+                onRefreshExternal?.(); // let the parent know its cached copy is stale (same pattern as AmazonConfig)
             } else {
                 alert('Save failed: ' + (result.message || result.error));
             }

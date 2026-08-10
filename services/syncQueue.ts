@@ -10,19 +10,38 @@ export interface QueueItem {
   status: QueueStatus;
   error?: string;
   timestamp: number;
+  autoRetryCount?: number; // how many times processQueue has auto-retried this item after a failure
 }
+
+// Kept when an item is dismissed or purged for staleness — a queued
+// financial write should never just vanish with zero record of it having
+// existed. Not a full undo log forever, just enough of a paper trail that
+// "where did my payment go" has an answer.
+export interface DismissedQueueItem extends QueueItem {
+  removedAt: number;
+  removedReason: 'dismissed' | 'dismissed_all' | 'stale_purge';
+}
+
+const DISMISSED_LOG_KEY = 'erp_sync_queue_dismissed_log';
+const DISMISSED_LOG_MAX = 100;
+const STALE_MS = 3 * 24 * 60 * 60 * 1000;
+const RETRY_BACKOFF_MS = 30 * 1000; // base delay; exponential backoff from here
+const MAX_AUTO_RETRIES = 5; // after this many auto-retries, a failed item waits for manual Retry
 
 type SyncCallback = (queue: QueueItem[]) => void;
 type SuccessCallback = (type: 'purchase' | 'payment' | 'adjustment' | 'vendor_create', payload: any) => Promise<void>;
 
 class QueueSyncManager {
   private queue: QueueItem[] = [];
+  private dismissedLog: DismissedQueueItem[] = [];
   private listeners: Set<SyncCallback> = new Set();
   private successCallbacks: Set<SuccessCallback> = new Set();
   private isProcessing: boolean = false;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     this.loadFromStorage();
+    this.loadDismissedLog();
   }
 
   private loadFromStorage() {
@@ -31,10 +50,22 @@ class QueueSyncManager {
       const saved = localStorage.getItem('erp_sync_queue');
       if (saved) {
         const loaded: QueueItem[] = JSON.parse(saved);
-        // Retain only columns that are pending, syncing, or failed (exclude synced items or items older than 3 days)
-        const active = loaded.filter(
-          (q) => q.status !== 'synced' && Date.now() - q.timestamp < 3 * 24 * 60 * 60 * 1000
-        );
+        const now = Date.now();
+
+        // Items older than the staleness window are dropped, but — unlike
+        // before — they're logged first, not silently discarded. A synced
+        // item aging out is normal cleanup; a pending/failed item aging out
+        // means a real queued write never made it, and that needs a record.
+        const stale = loaded.filter((q) => q.status !== 'synced' && now - q.timestamp >= STALE_MS);
+        if (stale.length > 0) {
+          console.warn(
+            `[Queue] ${stale.length} unsynced item(s) exceeded the ${STALE_MS / 86400000}-day retention window and were removed. Logged to getDismissedLog().`,
+            stale.map((q) => ({ id: q.id, type: q.type, status: q.status }))
+          );
+          this.logDismissed(stale, 'stale_purge');
+        }
+
+        const active = loaded.filter((q) => q.status !== 'synced' && now - q.timestamp < STALE_MS);
         // If an item was left as 'syncing' during load, revert to 'pending' to retry
         this.queue = active.map((q) =>
           q.status === 'syncing' ? { ...q, status: 'pending' as const } : q
@@ -53,6 +84,53 @@ class QueueSyncManager {
     } catch (e) {
       console.error('Failed to save sync queue:', e);
     }
+  }
+
+  private loadDismissedLog() {
+    if (typeof window === 'undefined') return;
+    try {
+      const saved = localStorage.getItem(DISMISSED_LOG_KEY);
+      if (saved) this.dismissedLog = JSON.parse(saved);
+    } catch (e) {
+      console.error('Failed to parse dismissed-item log:', e);
+      this.dismissedLog = [];
+    }
+  }
+
+  private saveDismissedLog() {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(DISMISSED_LOG_KEY, JSON.stringify(this.dismissedLog));
+    } catch (e) {
+      console.error('Failed to save dismissed-item log:', e);
+    }
+  }
+
+  private logDismissed(items: QueueItem[], reason: DismissedQueueItem['removedReason']) {
+    const now = Date.now();
+    const entries: DismissedQueueItem[] = items.map((q) => ({ ...q, removedAt: now, removedReason: reason }));
+    this.dismissedLog = [...entries, ...this.dismissedLog].slice(0, DISMISSED_LOG_MAX);
+    this.saveDismissedLog();
+  }
+
+  /** Items removed via dismiss/dismissAll/stale-purge, most recent first — the paper trail for "where did my queued write go." */
+  public getDismissedLog(): DismissedQueueItem[] {
+    return this.dismissedLog;
+  }
+
+  /** Restores the most recently dismissed item (of the given id, or the very latest if omitted) back into the queue as pending. */
+  public undoDismiss(id?: string): boolean {
+    const idx = id ? this.dismissedLog.findIndex((d) => d.id === id) : 0;
+    if (idx === -1 || this.dismissedLog.length === 0) return false;
+
+    const [restored] = this.dismissedLog.splice(idx, 1);
+    this.saveDismissedLog();
+
+    const { removedAt, removedReason, ...item } = restored;
+    this.queue.push({ ...item, status: 'pending', error: undefined });
+    this.notify();
+    this.processQueue();
+    return true;
   }
 
   public getQueue(): QueueItem[] {
@@ -107,11 +185,15 @@ class QueueSyncManager {
     if (item) {
       item.status = 'pending';
       item.error = undefined;
+      item.autoRetryCount = 0; // manual retry resets the auto-retry budget
       this.notify();
       this.processQueue();
     }
   }
 
+  // Callers (UI dismiss buttons) are expected to confirm with the user before
+  // calling this — see App.tsx. It no longer hard-deletes: the item is kept
+  // in getDismissedLog() and can be restored via undoDismiss().
   public dismiss(id: string): boolean {
     const item = this.queue.find((q) => q.id === id);
     if (!item) return false;
@@ -121,6 +203,7 @@ class QueueSyncManager {
       return false;
     }
 
+    this.logDismissed([item], 'dismissed');
     this.queue = this.queue.filter((q) => q.id !== id);
     this.notify();
     return true;
@@ -128,6 +211,8 @@ class QueueSyncManager {
 
   public dismissAll() {
     // Remove all items that are not currently syncing
+    const removing = this.queue.filter((q) => q.status !== 'syncing');
+    if (removing.length > 0) this.logDismissed(removing, 'dismissed_all');
     this.queue = this.queue.filter((q) => q.status === 'syncing');
     this.notify();
   }
@@ -182,10 +267,34 @@ class QueueSyncManager {
       console.error(`[Queue Runner] Error processing ${current.id}:`, err);
       current.status = 'failed';
       current.error = err.message || String(err);
+      this.isProcessing = false;
+
+      // Sequential order is still preserved — this retries the SAME item
+      // (never skips to the next one), it just no longer requires a human
+      // to notice and click Retry for an ordinary transient failure (a
+      // dropped connection, a momentary Apps Script cold-start timeout).
+      // Previously: one blip silently backlogged every write behind it
+      // until someone happened to look at the queue drawer.
+      const attempts = (current.autoRetryCount || 0) + 1;
+      current.autoRetryCount = attempts;
       this.notify();
 
-      // IMPORTANT constraint: STOP execution on failure to preserve sequential transactional order!
-      this.isProcessing = false;
+      if (attempts <= MAX_AUTO_RETRIES) {
+        const backoffMs = RETRY_BACKOFF_MS * Math.pow(2, attempts - 1); // 30s, 60s, 120s, ...
+        console.warn(`[Queue Runner] Will auto-retry ${current.id} in ${Math.round(backoffMs / 1000)}s (attempt ${attempts}/${MAX_AUTO_RETRIES})`);
+        if (this.retryTimer) clearTimeout(this.retryTimer);
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          const stillThere = this.queue.find((q) => q.id === current.id && q.status === 'failed');
+          if (stillThere) {
+            stillThere.status = 'pending';
+            this.notify();
+          }
+          this.processQueue();
+        }, backoffMs);
+      } else {
+        console.error(`[Queue Runner] ${current.id} failed ${attempts} times — giving up auto-retry, needs manual Retry.`);
+      }
     }
   }
 

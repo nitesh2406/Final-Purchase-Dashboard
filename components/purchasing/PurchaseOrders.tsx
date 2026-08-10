@@ -142,8 +142,14 @@ interface PurchaseOrdersProps {
     onNavigate?: (view: ViewType) => void;
 }
 
+// Module-level, not React state, so it survives this component unmounting
+// (e.g. switching tabs) and remounting — same pattern already used by
+// ShipmentTracker/ShipmentFinance/InventoryForecasting. Without this, the
+// PO list reset to empty and refetched on every tab switch.
+let poListCache: { purchaseOrders: PurchaseOrderUI[]; timestamp: number } | null = null;
+
 export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) => {
-    const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderUI[]>([]);
+    const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderUI[]>(poListCache?.purchaseOrders || []);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [selectedPo, setSelectedPo] = useState<PurchaseOrderUI | null>(null);
@@ -152,6 +158,8 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
     const [searchTerm, setSearchTerm] = useState('');
     const [activeTab, setActiveTab] = useQueryParam<'All' | POStatus>('statusFilter', 'All');
     const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+    const [closingPo, setClosingPo] = useState(false);
+    const [closePoError, setClosePoError] = useState<string | null>(null);
     const [mainView, setMainView] = useQueryParam<'po_list' | 'pending_lines' | 'sku_history'>('poView', 'po_list');
 
     const mapLineToUi = (l: any): POLine => {
@@ -176,7 +184,11 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
         };
     };
 
-    const fetchPurchaseOrders = async () => {
+    const fetchPurchaseOrders = async (forceRefresh = false) => {
+        if (!forceRefresh && poListCache) {
+            setPurchaseOrders(poListCache.purchaseOrders);
+            return;
+        }
         setLoading(true);
         setError(null);
         const payload = {
@@ -201,6 +213,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                 email_status: po.email_status // Source of truth from backend
             }));
             setPurchaseOrders(normalized);
+            poListCache = { purchaseOrders: normalized, timestamp: Date.now() };
         } catch (err: any) {
             setError(err.message);
             console.error("PO fetch error:", err);
@@ -255,8 +268,10 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
 
     useEffect(() => {
         const handler = (e: any) => {
-            // Refresh PO list
-            fetchPurchaseOrders();
+            // Refresh PO list — force, since this event specifically means
+            // something just changed server-side (PO closed, draft
+            // submitted) and the cache is now known-stale.
+            fetchPurchaseOrders(true);
 
             // If a PO is currently open, refresh its details too
             const poId = e?.detail?.po_id;
@@ -278,9 +293,29 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
         });
     }, [searchTerm, activeTab, purchaseOrders]);
 
-    const handleClosePo = () => {
-        setShowCloseConfirm(false);
-        setSelectedPo(null);
+    const handleClosePo = async () => {
+        if (!selectedPo) return;
+        const poId = selectedPo.po_id;
+        setClosingPo(true);
+        setClosePoError(null);
+        try {
+            const response = await fetch(APPS_SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: API_ACTIONS.CLOSE_PO, po_id: poId })
+            });
+            const result = await response.json();
+            if (!result || result.success !== true) {
+                throw new Error(result?.message || 'Failed to close PO');
+            }
+            setShowCloseConfirm(false);
+            setSelectedPo(null);
+            window.dispatchEvent(new CustomEvent('po:refresh', { detail: { po_id: poId } }));
+        } catch (err: any) {
+            setClosePoError(err.message || 'Failed to close PO');
+        } finally {
+            setClosingPo(false);
+        }
     };
 
     if (selectedPo || loadingDetails || detailsError) {
@@ -461,19 +496,24 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                     <p className="text-slate-500 dark:text-slate-400 text-sm mb-8 leading-relaxed">
                                         Closing <span className="text-slate-800 dark:text-white font-mono">{selectedPo?.po_id}</span> will mark it as complete. This will prevent further shipments from being matched.
                                     </p>
+                                    {closePoError && (
+                                        <p className="text-red-500 text-sm mb-4 -mt-4">{closePoError}</p>
+                                    )}
                                     <div className="flex gap-3">
-                                        <Button 
-                                            variant="secondary" 
-                                            className="flex-1 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 h-11 bg-white dark:bg-slate-800" 
-                                            onClick={() => setShowCloseConfirm(false)}
+                                        <Button
+                                            variant="secondary"
+                                            className="flex-1 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 h-11 bg-white dark:bg-slate-800"
+                                            onClick={() => { setShowCloseConfirm(false); setClosePoError(null); }}
+                                            disabled={closingPo}
                                         >
                                             Keep Open
                                         </Button>
-                                        <Button 
-                                            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold h-11"
+                                        <Button
+                                            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold h-11 disabled:opacity-60"
                                             onClick={handleClosePo}
+                                            disabled={closingPo}
                                         >
-                                            Close PO
+                                            {closingPo ? 'Closing...' : 'Close PO'}
                                         </Button>
                                     </div>
                                 </Card>
@@ -504,8 +544,8 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                             className="w-full pl-9 pr-4 py-2.5 bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-slate-500 text-sm shadow-sm text-slate-850 dark:text-white"
                         />
                     </div>
-                    <Button 
-                        onClick={fetchPurchaseOrders} 
+                    <Button
+                        onClick={() => fetchPurchaseOrders(true)}
                         disabled={loading}
                         variant="secondary"
                         className="h-[42px] px-4 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-705 dark:text-slate-300 flex items-center gap-2"
@@ -582,7 +622,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                             <ExclamationTriangleIcon className="w-12 h-12 text-red-500 mx-auto mb-4" />
                             <h3 className="text-lg font-bold text-slate-850 dark:text-white mb-2">Sync Failed</h3>
                             <p className="text-slate-400 text-sm mb-6 max-w-md">{error}</p>
-                            <Button onClick={fetchPurchaseOrders} className="bg-blue-600 hover:bg-blue-700 px-8">Retry Sync</Button>
+                            <Button onClick={() => fetchPurchaseOrders(true)} className="bg-blue-600 hover:bg-blue-700 px-8">Retry Sync</Button>
                         </div>
                     </div>
                 ) : (
@@ -663,15 +703,34 @@ interface PendingLinesViewProps {
     onPoClick: (poId: string) => void;
 }
 
+// Module-level cache — same rationale as poListCache above. Also preserves
+// the vendor filter/sort choices, which used to reset every time this
+// sub-tab remounted.
+let pendingLinesCache: {
+    pendingLines: PendingLine[];
+    vendorFilter: string;
+    sortKey: keyof PendingLine;
+    sortDir: 'asc' | 'desc';
+} | null = null;
+
 const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
-    const [pendingLines, setPendingLines] = useState<PendingLine[]>([]);
+    const [pendingLines, setPendingLines] = useState<PendingLine[]>(pendingLinesCache?.pendingLines || []);
     const [loadingPending, setLoadingPending] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [pendingVendorFilter, setPendingVendorFilter] = useState<string>('All');
-    const [pendingSortKey, setPendingSortKey] = useState<keyof PendingLine>('days_pending');
-    const [pendingSortDir, setPendingSortDir] = useState<'asc' | 'desc'>('desc');
+    const [pendingVendorFilter, setPendingVendorFilter] = useState<string>(pendingLinesCache?.vendorFilter || 'All');
+    const [pendingSortKey, setPendingSortKey] = useState<keyof PendingLine>(pendingLinesCache?.sortKey || 'days_pending');
+    const [pendingSortDir, setPendingSortDir] = useState<'asc' | 'desc'>(pendingLinesCache?.sortDir || 'desc');
 
-    const fetchPendingLines = async () => {
+    // Keeps the cache in sync with filter/sort changes so they survive a remount too.
+    useEffect(() => {
+        pendingLinesCache = { pendingLines, vendorFilter: pendingVendorFilter, sortKey: pendingSortKey, sortDir: pendingSortDir };
+    }, [pendingLines, pendingVendorFilter, pendingSortKey, pendingSortDir]);
+
+    const fetchPendingLines = async (forceRefresh = false) => {
+        if (!forceRefresh && pendingLinesCache) {
+            setPendingLines(pendingLinesCache.pendingLines);
+            return;
+        }
         setLoadingPending(true);
         setError(null);
         try {
@@ -832,7 +891,7 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
                             <ExclamationTriangleIcon className="w-12 h-12 text-red-500 mx-auto mb-4" />
                             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Failed to load Pending Lines</h3>
                             <p className="text-slate-400 text-sm mb-6">{error}</p>
-                            <Button onClick={fetchPendingLines} className="bg-blue-600 hover:bg-blue-700 px-6">Retry</Button>
+                            <Button onClick={() => fetchPendingLines(true)} className="bg-blue-600 hover:bg-blue-700 px-6">Retry</Button>
                         </div>
                     </div>
                 ) : (
@@ -925,12 +984,22 @@ interface SKUHistoryViewProps {
     onPoClick: (poId: string) => void;
 }
 
+// This view only ever fetches on explicit user search (no mount-time
+// auto-fetch), so the only thing that used to reset on remount was the
+// user's last search and its results — forcing a re-type and re-search
+// every time they switched away and back to this sub-tab.
+let skuHistoryCache: { skuQuery: string; skuResults: SKUHistoryLine[]; skuSearched: string } | null = null;
+
 const SKUHistoryView: React.FC<SKUHistoryViewProps> = ({ onPoClick }) => {
-    const [skuQuery, setSkuQuery] = useState('');
-    const [skuResults, setSkuResults] = useState<SKUHistoryLine[]>([]);
+    const [skuQuery, setSkuQuery] = useState(skuHistoryCache?.skuQuery || '');
+    const [skuResults, setSkuResults] = useState<SKUHistoryLine[]>(skuHistoryCache?.skuResults || []);
     const [loadingSKU, setLoadingSKU] = useState(false);
-    const [skuSearched, setSkuSearched] = useState('');
+    const [skuSearched, setSkuSearched] = useState(skuHistoryCache?.skuSearched || '');
     const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        skuHistoryCache = { skuQuery, skuResults, skuSearched };
+    }, [skuQuery, skuResults, skuSearched]);
 
     const handleSearch = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
