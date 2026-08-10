@@ -68,7 +68,7 @@ export interface VendorMaster {
   vendor_id: string;
   vendor_name: string;
   vendor_code?: string;
-  currency?: string;
+  currency?: 'RMB' | 'INR';
   country?: string;
   payment_terms?: string;
   is_active?: boolean | string;
@@ -587,9 +587,69 @@ export interface ShipmentFinanceData {
   account_type?: 'Trade' | 'Pool';
 }
 
+export interface CnfLedgerEntry {
+  id: string;
+  batchId: string;
+  createdAt: string;
+  qty: number;
+  cartons: number;
+  invoiceRmbTotal: number;
+  mode: 'sea';
+  edd: string;
+  carrier: string;
+  waybill: string;
+  rate: number;
+  category: string;
+  chargesPct: number;
+  goodsValue: number;
+  charges: number;
+  shippingAmount: number;
+  taxableAmount: number;
+  igstPct: number;
+  igst: number;
+  total: number;
+  totalPayable: number;
+  invoiceBatchId?: string;
+}
+
+export interface CnfEligibleBatch {
+  batch_id: string;
+  status: string;
+  batch_type: 'sea';
+  created_at: string;
+  carrier: string;
+  waybill: string;
+  expected_delivery: string;
+  qty: number;
+  cartons: number;
+  vendor_shipments: BatchVendorShipment[];
+}
+
+export interface CnfCommissionRate {
+  id: string;
+  label: string;   // e.g. "Wooden Toys", "Plastic Toys" — user-extensible
+  ratePct: number;
+}
+
+export interface CnfInvoiceBatch {
+  id: string;
+  entryIds: string[];
+  billNo: string;
+  billDate: string;
+  billedAmount: number;
+  computedTotal: number;
+  fileUrl?: string;
+  status: 'Pending Approval' | 'Approved' | 'Rejected';
+  overrideReason?: string;
+  submittedBy: string;
+  approvedBy?: string;
+  rejectionReason?: string;
+}
+
 export type ViewType =
   | 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders'
   | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance'
   | 'Inventory Analytics' | 'Settings' | 'Shipment Finance' | 'Shipment Finance Detail'
   | 'Payment Ledger' | 'Accounts View' | 'Settlement Ledger' | 'Cross Vendor Settlement'
-  | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU' | 'Audit Log';
+  | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU' | 'Audit Log'
+  | 'CNF Agent Accounting';

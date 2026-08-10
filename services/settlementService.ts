@@ -1,6 +1,6 @@
 import { APPS_SCRIPT_URL } from '../constants.ts';
 import { SyncQueueManager } from './syncQueue.ts';
-import type { VendorMaster } from '../types';
+import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch, CnfInvoiceBatch } from '../types';
 export type { VendorMaster } from '../types';
 
 export const IS_DEVELOPMENT_MODE = true;
@@ -73,6 +73,7 @@ export async function fetchVendorMasters(): Promise<VendorMaster[]> {
           vendor_id: v.vendor_code || v.vendor_id || '',
           vendor_name: v.vendor_name || v.vendor_code || '',
           vendor_code: v.vendor_code || '',
+          currency: (v.currency === 'INR' ? 'INR' : 'RMB') as 'RMB' | 'INR',
           is_active: true
         }));
     }
@@ -455,7 +456,8 @@ export async function fetchPurchaseInvoices(): Promise<PurchaseInvoice[]> {
  */
 export async function executeEODExchangeRateEngine(
   currentInvoices?: PurchaseInvoice[],
-  onImmediateUIUpdate?: (updated: PurchaseInvoice[]) => void
+  onImmediateUIUpdate?: (updated: PurchaseInvoice[]) => void,
+  vendors?: VendorMaster[]
 ): Promise<{
   processedCount: number;
   logs: string[];
@@ -467,10 +469,15 @@ export async function executeEODExchangeRateEngine(
   const records = currentInvoices && currentInvoices.length > 0 ? currentInvoices : getPurchaseInvoices();
   const normalizeDate = (d: string) => (d || '').split('T')[0];
 
+  // Vendors billed in INR never need a real market rate — they're paid 1:1 in INR.
+  const inrVendorCodes = new Set(
+    (vendors || []).filter(v => v.currency === 'INR').map(v => v.vendor_id)
+  );
+
   // Resolve every needed date's real closing rate in one batched backend round-trip,
   // rather than one call per invoice.
   const uncalculatedDates = records
-    .filter(rec => rec.status === 'Pending EOD' || !rec.er1 || !rec.inr)
+    .filter(rec => (rec.status === 'Pending EOD' || !rec.er1 || !rec.inr) && !inrVendorCodes.has(rec.vendorCode))
     .map(rec => normalizeDate(rec.date));
   const rateMap = await fetchHistoricalFxRates(uncalculatedDates);
 
@@ -481,21 +488,32 @@ export async function executeEODExchangeRateEngine(
   const updated = records.map(rec => {
     // Treat invoice as uncalculated if status is 'Pending EOD' or missing ER1/INR valuation
     if (rec.status === 'Pending EOD' || !rec.er1 || !rec.inr) {
-      logs.push(`\nProcessing Invoice: ${rec.invoiceId} (Date: ${rec.date}, RMB: ¥${rec.rmb})`);
+      const isInrVendor = inrVendorCodes.has(rec.vendorCode);
+      logs.push(`\nProcessing Invoice: ${rec.invoiceId} (Date: ${rec.date}, RMB: ${isInrVendor ? '₹' : '¥'}${rec.rmb})`);
 
-      const dateKey = normalizeDate(rec.date);
-      const resolved = rateMap[dateKey];
-      const rate = resolved && resolved.success ? resolved.rate : 11.50;
+      let rate: number;
 
-      if (resolved && resolved.success) {
-        if (resolved.resolvedDate !== dateKey) {
-          logs.push(`  ↳ ${dateKey} had no trading data. Cascaded back to nearest prior trading day: ${resolved.resolvedDate}.`);
-        }
-        logs.push(`  ↳ Resolved closing exchange rate on ${resolved.resolvedDate}: ${rate} INR/RMB (via GOOGLEFINANCE historical lookup)`);
+      if (isInrVendor) {
+        rate = 1;
+        logs.push(`  ↳ Vendor is INR-native — skipping forex lookup, rate fixed at 1.0000.`);
       } else {
-        logs.push(`  ↳ Historical rate lookup failed for ${dateKey}. Defaulted to fallback rate ${rate}.`);
+        const dateKey = normalizeDate(rec.date);
+        const resolved = rateMap[dateKey];
+        rate = resolved && resolved.success ? resolved.rate : 11.50;
+
+        if (resolved && resolved.success) {
+          if (resolved.resolvedDate !== dateKey) {
+            logs.push(`  ↳ ${dateKey} had no trading data. Cascaded back to nearest prior trading day: ${resolved.resolvedDate}.`);
+          }
+          logs.push(`  ↳ Resolved closing exchange rate on ${resolved.resolvedDate}: ${rate} INR/RMB (via GOOGLEFINANCE historical lookup)`);
+        } else {
+          logs.push(`  ↳ Historical rate lookup failed for ${dateKey}. Defaulted to fallback rate ${rate}.`);
+        }
       }
 
+      // Note: for INR-native vendors, rec.rmb is repurposed to hold the raw INR amount
+      // entered at Purchase-entry time — not an actual RMB figure. With rate = 1 above,
+      // this multiplication is a passthrough, not a currency conversion.
       const inr = rec.rmb * rate;
       logs.push(`  ↳ Calculated Settlement valuation: ₹${inr.toLocaleString('en-IN', { maximumFractionDigits: 2 })} INR`);
       
@@ -693,6 +711,225 @@ export async function saveConversionCharge(chargePercent: number): Promise<numbe
     throw new Error((response && response.message) || 'Failed to save conversion charge %');
   }
   return response.chargePercent;
+}
+
+/**
+ * Fetches the global IGST % applied to CNF agent commission invoices' Taxable Amount.
+ */
+export async function fetchIgstRate(): Promise<number> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_igst_rate', 'Config', 'POST');
+    if (response && response.status === 'success' && typeof response.igstPercent === 'number') {
+      return response.igstPercent;
+    }
+  } catch (error) {
+    console.warn('Could not fetch IGST %:', error);
+  }
+  return 5;
+}
+
+/**
+ * Saves the global IGST %. Applies to CNF ledger entries logged going forward only.
+ */
+export async function saveIgstRate(igstPercent: number): Promise<number> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'save_igst_rate', 'Config', 'POST', { igstPercent });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to save IGST %');
+  }
+  return response.igstPercent;
+}
+
+/**
+ * Fetches the CNF agent commission-rate-by-category table (Settings > Charges & Taxes).
+ */
+export async function fetchCnfCommissionRates(): Promise<CnfCommissionRate[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_commission_rates', 'CNF_Commission_Rates', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.rates)) {
+      return response.rates;
+    }
+  } catch (error) {
+    console.warn('Could not fetch CNF commission rates:', error);
+  }
+  return [];
+}
+
+/**
+ * Saves the full CNF commission-rate table (full replace, not incremental).
+ */
+export async function saveCnfCommissionRates(rates: CnfCommissionRate[]): Promise<CnfCommissionRate[]> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'save_cnf_commission_rates', 'CNF_Commission_Rates', 'POST', { rates });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to save commission rates');
+  }
+  return response.rates;
+}
+
+/**
+ * Fetches all CNF-eligible batches (batches that have completed vendor shipments and are
+ * candidates for a CNF ledger entry). Mirrors ShipmentTracker.tsx's plain-fetch pattern for
+ * get_batches/get_batch_details, keeping this new action consistent with its sibling actions
+ * rather than the executeAppsScriptProxy style used elsewhere in this file.
+ */
+export async function fetchCnfEligibleBatches(): Promise<CnfEligibleBatch[]> {
+  if (!appsScriptUrl) return [];
+  try {
+    const response = await fetch(appsScriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'get_cnf_eligible_batches' })
+    });
+    const result = await response.json();
+    if (result.status === 'success' && Array.isArray(result.batches)) {
+      return result.batches;
+    }
+  } catch (err) {
+    console.error('Failed to fetch CNF-eligible batches:', err);
+  }
+  return [];
+}
+
+/**
+ * Returns true if every invoice linked to this batch's vendor_shipments is fully
+ * settled — recomputed from raw SettlementRecords (txnType === 'Invoice Settlement'),
+ * not from PurchaseInvoice.balance/.status, which don't reliably reflect real payment
+ * state (see components/finance/SettlementLedger.tsx's getOutstandingBalance for the
+ * same technique applied to a single invoice).
+ */
+export function isBatchFullySettled(
+  batch: CnfEligibleBatch,
+  purchaseInvoices: PurchaseInvoice[],
+  settlementRecords: SettlementRecord[]
+): boolean {
+  const linkedInvoiceIds = batch.vendor_shipments.map(vs => (vs.invoiceId || '').trim()).filter(Boolean);
+  if (linkedInvoiceIds.length === 0) return false;
+
+  return linkedInvoiceIds.every(invoiceId => {
+    const invoice = purchaseInvoices.find(inv => (inv.invoiceId || '').trim() === invoiceId);
+    if (!invoice) return false;
+    const settledRmb = settlementRecords
+      .filter(r => (r.invoiceId || '').trim() === invoiceId && r.txnType === 'Invoice Settlement')
+      .reduce((sum, r) => sum + r.amountRmb, 0);
+    const outstanding = Math.max(0, (invoice.rmb || 0) - settledRmb);
+    return outstanding < 0.01; // same rounding tolerance as PaymentLedger.tsx's balanced-allocation check
+  });
+}
+
+/**
+ * RMB-weighted average of exchangeRateSettlement across every 'Invoice Settlement'
+ * SettlementRecord tied to any invoice linked to this batch. This is the actual RMB
+ * payment rate (exchangeRateSettlement, i.e. ER2), not the Conversion-Charge-adjusted
+ * rate used elsewhere for forex gain/loss — see Settings > Charges & Taxes for that
+ * distinction. No prior function in this codebase computes this.
+ */
+export function computeCnfBatchRate(
+  batch: CnfEligibleBatch,
+  settlementRecords: SettlementRecord[]
+): number {
+  const linkedInvoiceIds = new Set(batch.vendor_shipments.map(vs => (vs.invoiceId || '').trim()).filter(Boolean));
+  const relevant = settlementRecords.filter(
+    r => linkedInvoiceIds.has((r.invoiceId || '').trim()) && r.txnType === 'Invoice Settlement'
+  );
+  const totalRmb = relevant.reduce((sum, r) => sum + r.amountRmb, 0);
+  if (totalRmb === 0) return 0;
+  const weightedSum = relevant.reduce((sum, r) => sum + r.amountRmb * r.exchangeRateSettlement, 0);
+  return weightedSum / totalRmb;
+}
+
+/**
+ * Fetches all logged CNF ledger entries.
+ */
+export async function fetchCnfLedgerEntries(): Promise<CnfLedgerEntry[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_ledger', 'CNF_Ledger', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.entries)) {
+      return response.entries;
+    }
+  } catch (err) {
+    console.error('Failed to fetch CNF ledger:', err);
+  }
+  return [];
+}
+
+/**
+ * Logs a new CNF ledger entry.
+ */
+export async function addCnfLedgerEntry(entry: Omit<CnfLedgerEntry, 'id'>): Promise<CnfLedgerEntry> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'add_cnf_ledger_entry', 'CNF_Ledger', 'POST', { entry });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to log CNF entry');
+  }
+  return { ...entry, id: response.id };
+}
+
+function generateCnfInvoiceBatchId(): string {
+  return 'CNFBATCH-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+}
+
+/**
+ * Creates a new CNF invoice batch, reconciling the billed amount against the
+ * computed total of the selected ledger entries server-side.
+ */
+export async function createCnfInvoiceBatch(entry: {
+  entryIds: string[];
+  billNo: string;
+  billDate: string;
+  billedAmount: number;
+  fileUrl?: string;
+  overrideReason?: string;
+  submittedBy: string;
+}): Promise<{ id: string; computedTotal: number }> {
+  const id = generateCnfInvoiceBatchId();
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'create_cnf_invoice_batch', 'CNF_Invoice_Batches', 'POST', {
+    entry: { id, ...entry }
+  });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to create invoice batch');
+  }
+  return { id: response.id, computedTotal: response.computedTotal };
+}
+
+/**
+ * Fetches all CNF invoice batches.
+ */
+export async function fetchCnfInvoiceBatches(): Promise<CnfInvoiceBatch[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_invoice_batches', 'CNF_Invoice_Batches', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.batches)) {
+      return response.batches;
+    }
+  } catch (err) {
+    console.error('Failed to fetch CNF invoice batches:', err);
+  }
+  return [];
+}
+
+/**
+ * Approves a CNF invoice batch, triggering server-side creation of the corresponding
+ * Purchase Invoice. Direct awaited call (not SyncQueueManager) — same shape as
+ * createCnfInvoiceBatch, consistent with logAdjustmentTransfer's pattern for single,
+ * backend-authoritative writes.
+ */
+export async function approveCnfInvoiceBatch(batchId: string, approvedBy: string): Promise<{ purchaseInvoiceId: string }> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'approve_cnf_invoice_batch', 'CNF_Invoice_Batches', 'POST', {
+    batchId, approvedBy
+  });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to approve invoice batch');
+  }
+  return { purchaseInvoiceId: response.purchaseInvoiceId };
+}
+
+/**
+ * Rejects a CNF invoice batch, recording the rejection reason server-side.
+ */
+export async function rejectCnfInvoiceBatch(batchId: string, rejectionReason: string): Promise<void> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'reject_cnf_invoice_batch', 'CNF_Invoice_Batches', 'POST', {
+    batchId, rejectionReason
+  });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to reject invoice batch');
+  }
 }
 
 /**

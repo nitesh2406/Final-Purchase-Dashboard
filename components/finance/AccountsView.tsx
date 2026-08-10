@@ -501,7 +501,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
           }
         });
         setPurchaseInvoices(Array.from(uniqueMap.values()));
-      });
+      }, vendors);
 
       setEngineLogs(result.logs);
 

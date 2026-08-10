@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ArrowLeft, 
   Calendar, 
@@ -45,7 +45,8 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
     return vendors.map(v => ({
       code: v.vendor_id,
       name: v.vendor_name || v.vendor_id,
-      displayText: v.vendor_name ? `${v.vendor_id} -- ${v.vendor_name}` : v.vendor_id
+      displayText: v.vendor_name ? `${v.vendor_id} -- ${v.vendor_name}` : v.vendor_id,
+      currency: v.currency || 'RMB'
     }));
   }, [vendors]);
 
@@ -209,6 +210,33 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
     const matched = VENDOR_OPTIONS.find(v => v.code === selectedVendor);
     return matched ? matched.name : '';
   }, [selectedVendor, VENDOR_OPTIONS]);
+
+  // Currency of the currently selected vendor — drives the INR-vendor FX guard below
+  const selectedVendorCurrency = useMemo(() => {
+    const matched = VENDOR_OPTIONS.find(v => v.code === selectedVendor);
+    return matched ? matched.currency : 'RMB';
+  }, [selectedVendor, VENDOR_OPTIONS]);
+
+  const isInrVendor = selectedVendorCurrency === 'INR';
+
+  // Tracks the previous isInrVendor value so we can detect the true->false
+  // "falling edge" (moving AWAY from an INR vendor) below, without reacting
+  // on every render where isInrVendor simply happens to be false.
+  const wasInrVendorRef = useRef(isInrVendor);
+
+  // INR vendors have no forex conversion — lock the FX Rate triad field at 1 so
+  // RMB Amount and INR Amount always compute to the identical number. When the
+  // vendor selection moves AWAY from an INR vendor, clear the locked '1' rather
+  // than leaving it sitting in the field indistinguishable from a real typed
+  // rate — the user must consciously re-enter a genuine FX rate.
+  useEffect(() => {
+    if (isInrVendor && fxRate !== '1') {
+      setFxRate('1');
+    } else if (!isInrVendor && wasInrVendorRef.current) {
+      setFxRate('');
+    }
+    wasInrVendorRef.current = isInrVendor;
+  }, [isInrVendor, fxRate]);
 
   // Allocation Handlers
   const handleAddAllocationRow = () => {
@@ -655,7 +683,7 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
                 <div className="space-y-1">
                   <label htmlFor="form-triad-fx" className="text-[10.5px] font-bold text-gray-655 dark:text-gray-400 flex items-center justify-between">
                     <span>FX Rate (ER2)</span>
-                    {triadCalculations.valid && triadCalculations.type === 'FX Rate' && (
+                    {!isInrVendor && triadCalculations.valid && triadCalculations.type === 'FX Rate' && (
                       <span className="text-[9px] font-bold text-emerald-500 bg-emerald-500/10 px-1 py-0.1 rounded uppercase animate-pulse">Calc</span>
                     )}
                   </label>
@@ -665,22 +693,28 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
                       id="form-triad-fx"
                       step="0.0001"
                       placeholder="0.0000"
-                      value={triadCalculations.valid && triadCalculations.type === 'FX Rate' ? triadCalculations.value || '' : fxRate}
+                      value={isInrVendor ? '1' : (triadCalculations.valid && triadCalculations.type === 'FX Rate' ? triadCalculations.value || '' : fxRate)}
                       onChange={(e) => {
+                        if (isInrVendor) return;
                         if (triadCalculations.type === 'FX Rate') {
                           setInrAmount('');
                         }
                         setFxRate(e.target.value);
                       }}
-                      disabled={triadCalculations.valid && triadCalculations.type === 'FX Rate'}
+                      disabled={isInrVendor || (triadCalculations.valid && triadCalculations.type === 'FX Rate')}
                       className={`w-full pl-7 pr-3 py-2 bg-white dark:bg-gray-950 border rounded-lg text-xs focus:ring-1 focus:ring-blue-400 focus:outline-none transition font-sans ${
-                        triadCalculations.valid && triadCalculations.type === 'FX Rate'
-                          ? 'bg-emerald-500/5 dark:bg-emerald-500/10 border-emerald-400 text-emerald-600 dark:text-emerald-450 font-black cursor-not-allowed font-medium'
-                          : 'border-gray-300 dark:border-gray-800 text-gray-900 dark:text-white'
+                        isInrVendor
+                          ? 'bg-gray-100 dark:bg-gray-900 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed font-medium'
+                          : triadCalculations.valid && triadCalculations.type === 'FX Rate'
+                            ? 'bg-emerald-500/5 dark:bg-emerald-500/10 border-emerald-400 text-emerald-600 dark:text-emerald-450 font-black cursor-not-allowed font-medium'
+                            : 'border-gray-300 dark:border-gray-800 text-gray-900 dark:text-white'
                       }`}
                     />
                     <span className="absolute left-2.5 top-2.5 text-[10px] text-gray-400 select-none">ER</span>
                   </div>
+                  {isInrVendor && (
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">Locked at 1.0000 — INR vendor, no forex conversion applies.</p>
+                  )}
                 </div>
 
                 {/* 3. INR Amount */}
@@ -737,7 +771,7 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
                 </div>
               )}
 
-              {settledRatePreview !== null && (
+              {settledRatePreview !== null && !isInrVendor && (
                 <div className="p-2.5 bg-blue-500/10 rounded-lg text-[11px] text-blue-600 dark:text-blue-400 font-black flex items-center justify-between mt-2">
                   <div className="flex items-center gap-1.5">
                     <Coins className="w-3.5 h-3.5 shrink-0" />

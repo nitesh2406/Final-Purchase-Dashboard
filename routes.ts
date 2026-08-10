@@ -10,6 +10,7 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   'Purchase Orders': '/purchasing/purchase-orders',
   'Vendor Shipments': '/logistics/vendor-shipments',
   'Shipment Tracker': '/logistics/shipment-tracker',
+  'CNF Agent Accounting': '/logistics/cnf-agent-accounting',
   'Batch Detail': '/logistics/shipment-tracker/:batchId',
   'Finance': '/finance',
   'Inventory Analytics': '/inventory/analytics',

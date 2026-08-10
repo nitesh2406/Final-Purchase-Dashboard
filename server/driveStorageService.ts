@@ -39,6 +39,7 @@ class DriveStorageService {
   private rootFolderId: string | null = null;
   private readonly batchFolderCache = new Map<string, DriveFolderInfo>();
   private readonly shipmentFolderCache = new Map<string, DriveFolderInfo>();
+  private readonly namedFolderCache = new Map<string, DriveFolderInfo>();
 
   private async findFolder(name: string, parentId: string): Promise<DriveFolderInfo | null> {
     const drive = getDriveClient();
@@ -125,6 +126,16 @@ class DriveStorageService {
     const root = await this.getOrCreateRootFolder();
     const folder = await this.findOrCreateFolder(batchId, root.folderId);
     this.batchFolderCache.set(batchId, folder);
+    return folder;
+  }
+
+  async getOrCreateNamedFolder(name: string): Promise<DriveFolderInfo> {
+    const cached = this.namedFolderCache.get(name);
+    if (cached) return cached;
+
+    const root = await this.getOrCreateRootFolder();
+    const folder = await this.findOrCreateFolder(name, root.folderId);
+    this.namedFolderCache.set(name, folder);
     return folder;
   }
 

@@ -123,3 +123,36 @@ driveRouter.post("/upload-shipment-docs", upload.array("files"), async (req, res
     res.status(500).json({ success: false, error: error.message || "Drive upload failed" });
   }
 });
+
+driveRouter.post("/upload-cnf-invoice", upload.single("file"), async (req, res) => {
+  try {
+    const { batchId } = req.body || {}; // the CnfInvoiceBatch.id, for naming/traceability only — not required
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: "No file uploaded" });
+      return;
+    }
+
+    console.log(`[Drive Upload] CNF invoice batch=${batchId || "?"} file=${file.originalname}`);
+
+    const cnfFolder = await driveStorageService.getOrCreateNamedFolder("CNF Invoices");
+
+    const result = await driveStorageService.uploadFile({
+      folderId: cnfFolder.folderId,
+      fileName: file.originalname,
+      mimeType: file.mimetype,
+      buffer: file.buffer,
+      onConflict: "keep_both" // each invoice file is a distinct document, never overwrite
+    });
+
+    if (result.status === "uploaded") {
+      res.json({ success: true, file: result });
+    } else {
+      const error = result.status === "failed" ? result.error : `A file named "${result.fileName}" already exists`;
+      res.status(500).json({ success: false, error });
+    }
+  } catch (error: any) {
+    console.error("[Drive Upload] CNF invoice upload failed:", error);
+    res.status(500).json({ success: false, error: error.message || "Drive upload failed" });
+  }
+});

@@ -19,7 +19,7 @@ import {
     ShoppingCartIcon
 } from '../icons/Icons';
 
-type SettingsView = 'Forecasting Config' | 'Pricing Config' | 'System Preferences' | 'Approval Workflows' | 'Tax Configuration' | 'Freight Costing' | 'Payment Terms' | 'Amazon Config' | 'Charges';
+type SettingsView = 'Forecasting Config' | 'Pricing Config' | 'System Preferences' | 'Approval Workflows' | 'Tax Configuration' | 'Freight Costing' | 'Payment Terms' | 'Amazon Config' | 'Charges & Taxes';
 
 interface NavItem {
     name: SettingsView;
@@ -73,9 +73,9 @@ const settingsNav: NavItem[] = [
         isLive: true
     },
     {
-        name: 'Charges',
+        name: 'Charges & Taxes',
         icon: <BanknotesIcon className="w-5 h-5" />,
-        description: 'Conversion charge % for settled-rate calculations',
+        description: 'Conversion charge %, CNF commission rates, and IGST % for settled-rate and CNF invoice calculations',
         isLive: true
     },
 ];
@@ -112,7 +112,7 @@ export const Settings: React.FC<{
                     onRefreshExternal={onRefreshAmazonConfig}
                     lastLoaded={amazonConfigLastLoaded}
                 />;
-            case 'Charges':
+            case 'Charges & Taxes':
                 return <ChargesConfig />;
             default:
                 return <ForecastingConfig />;
