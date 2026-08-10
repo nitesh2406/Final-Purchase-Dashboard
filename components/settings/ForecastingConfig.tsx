@@ -85,7 +85,11 @@ interface DebugEntry {
     data: any;
 }
 
-export const ForecastingConfig: React.FC = () => {
+export const ForecastingConfig: React.FC<{
+    externalConfig?: any;
+    onRefreshExternal?: () => void;
+    lastLoaded?: Date | null;
+}> = ({ externalConfig, onRefreshExternal, lastLoaded }) => {
     const [config, setConfig] = useState<ForecastingConfigData>(DEFAULTS);
     const [savedConfig, setSavedConfig] = useState<ForecastingConfigData>(DEFAULTS);
     const [isLoading, setIsLoading] = useState(true);
@@ -139,9 +143,29 @@ export const ForecastingConfig: React.FC = () => {
         }
     }, [addDebugLog]);
 
+    // Was unconditionally calling fetchConfig() on every mount — App.tsx
+    // already caches this config with a 1hr TTL and passes it down, but
+    // Settings.tsx was discarding it instead of forwarding it here. Now:
+    // use the parent's config if it has one, ask the parent to load it if
+    // not, and only hit the backend directly (fallback below) if no parent
+    // config ever arrives — same pattern AmazonConfig already uses.
     useEffect(() => {
-        fetchConfig();
-    }, [fetchConfig]);
+        if (externalConfig) {
+            const merged = { ...DEFAULTS, ...externalConfig };
+            setConfig(merged);
+            setSavedConfig(merged);
+            setIsLoading(false);
+            setLoadError(null);
+        } else if (!externalConfig && onRefreshExternal) {
+            onRefreshExternal();
+        }
+    }, [externalConfig, onRefreshExternal]);
+
+    useEffect(() => {
+        if (!externalConfig) {
+            fetchConfig();
+        }
+    }, [externalConfig, fetchConfig]);
 
     // Update hasChanges when config or savedConfig changes
     useEffect(() => {

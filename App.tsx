@@ -108,6 +108,8 @@ const App: React.FC = () => {
     const [configLastLoaded, setConfigLastLoaded] = useState<Date | null>(null);
     const [amazonConfig, setAmazonConfig] = useState<any>(null);
     const [amazonConfigLastLoaded, setAmazonConfigLastLoaded] = useState<Date | null>(null);
+    const [pricingConfig, setPricingConfig] = useState<any>(null);
+    const [pricingConfigLastLoaded, setPricingConfigLastLoaded] = useState<Date | null>(null);
 
     const [user, setUser] = useState<any>(() => {
         if (TEST_LOGIN_BYPASS) return DEV_USER;
@@ -197,12 +199,19 @@ const App: React.FC = () => {
                 const refreshedInvoices = await fetchPurchaseInvoices();
                 setPurchaseInvoices(refreshedInvoices);
             } else if (type === 'payment') {
-                const [refreshedPayments, refreshedLedger] = await Promise.all([
+                // Was missing fetchSettlementRecords() — AccountsView computes its
+                // displayed outstanding balance from settlementRecords, not
+                // paymentLogs/vendorLedger, so without this a payment that just
+                // synced left the UI showing the invoice as still unsettled
+                // (real risk: a second payment against an already-settled invoice).
+                const [refreshedPayments, refreshedLedger, refreshedSettlements] = await Promise.all([
                     fetchPaymentLogs(),
-                    fetchVendorLedger()
+                    fetchVendorLedger(),
+                    fetchSettlementRecords()
                 ]);
                 setPaymentLogs(refreshedPayments);
                 setVendorLedger(refreshedLedger);
+                setSettlementRecords(refreshedSettlements);
             } else if (type === 'adjustment') {
                 const [refreshedLedger, refreshedSettlements] = await Promise.all([
                     fetchVendorLedger(),
@@ -585,6 +594,31 @@ const App: React.FC = () => {
         }
     }, []);
 
+    const fetchPricingConfig = useCallback(async () => {
+        try {
+            const hit = localStorage.getItem('cache_pricing_config');
+            if (hit) {
+                const { data, ts } = JSON.parse(hit);
+                if (Date.now() - ts < CONFIG_TTL) { setPricingConfig(data); setPricingConfigLastLoaded(new Date(ts)); return; }
+            }
+        } catch {}
+        try {
+            const response = await fetch(APPS_SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: API_ACTIONS.GET_PRICING_CONFIG })
+            });
+            const data = await response.json();
+            if (data?.success && data?.data) {
+                setPricingConfig(data.data);
+                setPricingConfigLastLoaded(new Date());
+                localStorage.setItem('cache_pricing_config', JSON.stringify({ data: data.data, ts: Date.now() }));
+            }
+        } catch (e) {
+            console.error("Pricing config fetch error:", e);
+        }
+    }, []);
+
     const fetchAmazonConfig = useCallback(async () => {
         try {
             const hit = localStorage.getItem('cache_amazon_config');
@@ -615,7 +649,8 @@ const App: React.FC = () => {
         fetchAllData();
         fetchConfig();
         fetchAmazonConfig();
-    }, [user, fetchAllData, fetchConfig, fetchAmazonConfig]);
+        fetchPricingConfig();
+    }, [user, fetchAllData, fetchConfig, fetchAmazonConfig, fetchPricingConfig]);
 
     // Used by the "Add New SKU" flow inside a draft (AddNewSKUModal, via
     // DraftOrderEdit's addSkuToCatalog prop) for items that aren't in the
@@ -909,6 +944,9 @@ const App: React.FC = () => {
                     amazonConfig={amazonConfig}
                     onRefreshAmazonConfig={fetchAmazonConfig}
                     amazonConfigLastLoaded={amazonConfigLastLoaded}
+                    pricingConfig={pricingConfig}
+                    onRefreshPricingConfig={fetchPricingConfig}
+                    pricingConfigLastLoaded={pricingConfigLastLoaded}
                 />;
             default:
                 return <Dashboard />;

@@ -27,14 +27,10 @@ export const API_ACTIONS = {
     GET_SKU_HISTORY: 'get_sku_history',
     // Catalog Operations
     SEARCH_SKU_CATALOG: 'search_sku_catalog',
-    ADD_SKU: 'add_sku',
     // Vendor Operations
     GET_VENDOR_MASTERS: 'get_vendor_masters',
     // Shipment Operations
     UPLOAD_SHIPMENT_DOCS: 'upload_shipment_docs',
-    SHIPMENT_RERUN_MATCHING: 'shipment_rerun_matching',
-    SHIPMENT_GET_ALLOCATION: 'shipment_get_allocation',
-    SHIPMENT_CREATE: 'shipment_create',
     GET_OPEN_BATCHES: 'get_open_batches',
     UPDATE_SHIPMENT_DRIVE_DOCS: 'update_shipment_drive_docs',
     // Finance Operations
@@ -42,17 +38,8 @@ export const API_ACTIONS = {
     GET_BATCH_FINANCE_DETAIL: 'get_batch_finance_detail',
     UPDATE_BATCH_TRACKING: 'update_batch_tracking',
     UPDATE_SHIPMENT_FINANCE: 'update_shipment_finance',
-    UPDATE_BATCH_CURRENCY: 'update_batch_currency',
-    GET_FX_RATES: 'get_fx_rates',
-    GET_VENDOR_ACCOUNTS: 'get_vendor_accounts',
-    LOG_PAYMENT: 'log_payment',
-    GET_PAYMENTS: 'get_payments',
-    GET_AGENT_INVOICES: 'get_agent_invoices',
-    LOG_AGENT_INVOICE: 'log_agent_invoice',
-    MAP_INVOICE_SHIPMENTS: 'map_invoice_shipments',
     GET_PURCHASE_INVOICES: 'get_purchase_invoices',
     GET_PAYMENT_LOGS: 'get_payment_logs',
-    GET_SETTLEMENT_LEDGER: 'get_settlement_ledger',
     GET_VENDOR_LEDGER: 'get_vendor_ledger',
     // Amazon Operations
     GET_AMAZON_FORECAST:          'get_amazon_forecast',

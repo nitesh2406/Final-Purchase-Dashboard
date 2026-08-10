@@ -210,9 +210,12 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
               <div className="p-3 bg-emerald-200 dark:bg-emerald-700/80 rounded-full mb-4">
                 <CheckCircle2 className="w-12 h-12 text-emerald-600 dark:text-white" />
               </div>
-              <h2 className="text-2xl font-black tracking-tight">Cross-Vendor Settlement Logged</h2>
+              <h2 className="text-2xl font-black tracking-tight">Cross-Vendor Settlement Submitted</h2>
               <p className="text-emerald-100 text-xs mt-1 font-mono tracking-widest uppercase bg-emerald-800/50 px-3 py-1 rounded-full">
                 REFERENCE ID: {lastAdjId}
+              </p>
+              <p className="text-emerald-900/70 dark:text-emerald-100/80 text-[11px] mt-3 max-w-xs">
+                Queued and syncing to the ledger now — check the Ledger Sync Engine status if you need to confirm every allocation has landed.
               </p>
             </div>
 

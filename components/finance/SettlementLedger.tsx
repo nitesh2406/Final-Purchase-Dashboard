@@ -428,7 +428,7 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
         });
 
         if (response.success) {
-          setFormSuccessMessage(`Invoice "${tempInvoice.invoiceId}" logged successfully! Saved to centralized ledger pipeline.`);
+          setFormSuccessMessage(`Invoice "${tempInvoice.invoiceId}" submitted — queued and syncing to the centralized ledger pipeline.`);
           if (IS_DEVELOPMENT_MODE) {
             setIsFormOpen(false);
             setNewInvoice({
@@ -547,10 +547,10 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
         
         onRefresh();
 
-        const successMsg = response && response.message 
-          ? `Settlement Record "${officialId}" processed! (${response.message})`
-          : `Settlement Record "${officialId}" successfully logged to the ledger system!`;
-          
+        const successMsg = response && response.message
+          ? `Settlement Record "${officialId}" submitted — ${response.message}`
+          : `Settlement Record "${officialId}" submitted — queued and syncing to the ledger now.`;
+
         setFormSuccessMessage(successMsg);
       } catch (err: any) {
         console.error("Transmission error inside settlement log: ", err);
