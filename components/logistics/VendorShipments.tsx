@@ -581,17 +581,6 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     // Bypasses upload — user goes straight to Validate Items to add lines manually
     const [manualOnlyMode, setManualOnlyMode] = useState(false);
 
-    // Manual Entry Draft (Setup tab rows before submission)
-    const [manualEntryDraft, setManualEntryDraft] = useState<Array<{
-        id: string;
-        factory_code: string;
-        ean: string;
-        item_name: string;
-        invoice_qty: number | '';
-        unit_price: number | '';
-        carton_count: number | '';
-    }>>([]);
-
     // Allocation & Creation
     const [allocationData, setAllocationData] = useState<AllocationItem[]>([]);
     const [allocationSummary, setAllocationSummary] = useState<any>(null);
@@ -695,7 +684,6 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         setExpectedDelivery('');
         setShipmentSuccess(false);
         setCreatedShipmentId('');
-        setManualEntryDraft([]);
         setManualOnlyMode(false);
         setSelectedRowIds(new Set());
         setOpenDropdownId(null);
@@ -1083,7 +1071,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     };
 
     const handleUploadAndValidate = async () => {
-        if (!vendorCode || !shippingMode || (uploadedFiles.length === 0 && manualEntryDraft.length === 0)) return;
+        if (!vendorCode || !shippingMode || uploadedFiles.length === 0) return;
         setIsProcessing(true);
         setMatchingPhase('running');
         setMatchingTick(0);
@@ -1114,18 +1102,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
             if (validFiles[0]) setDetectionInfo(validFiles[0].detectionInfo);
 
-            const allFiles = [
-                ...validFiles.map(f => ({ fileName: f.fileName, documentType: f.documentType, rows: f.rows })),
-                ...(manualEntryDraft.length > 0 ? [{
-                    fileName: 'Manual Entry',
-                    documentType: vendorDocConfig?.docType || 'INVOICE',
-                    rows: manualEntryDraft.map(r => ({
-                        factory_code: r.factory_code, ean: r.ean, item_name: r.item_name,
-                        invoice_qty: Number(r.invoice_qty) || 0, unit_price: Number(r.unit_price) || 0,
-                        carton_count: Number(r.carton_count) || 0,
-                    }))
-                }] : [])
-            ];
+            const allFiles = validFiles.map(f => ({ fileName: f.fileName, documentType: f.documentType, rows: f.rows }));
 
             const payload = { action: API_ACTIONS.UPLOAD_SHIPMENT_DOCS, vendorCode, shipmentDate, shippingMode, files: allFiles };
             setLastRequest(payload);
@@ -2296,81 +2273,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                         </div>
                     )}
 
-                    {/* ── Row 4: Manual Entry ── */}
-                    <div className="p-6 space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm font-bold text-slate-800 dark:text-slate-100">Manual Entry <span className="font-normal text-slate-500 dark:text-slate-400">(Optional)</span></p>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Add items manually when no document is available</p>
-                            </div>
-                            <button
-                                onClick={() => setManualEntryDraft(prev => [...prev, {
-                                    id: `ME-${Math.random().toString(36).substr(2, 9)}`,
-                                    factory_code: '',
-                                    ean: '',
-                                    item_name: '',
-                                    invoice_qty: '',
-                                    unit_price: '',
-                                    carton_count: '',
-                                }])}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                            >
-                                <PlusIcon className="w-3.5 h-3.5" /> Add Row
-                            </button>
-                        </div>
-
-                        {manualEntryDraft.length > 0 && (
-                            <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-[11px]">
-                                        <thead>
-                                            <tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
-                                                {['Factory Code', 'EAN', 'Item Name', 'Qty', 'Unit Price (¥)', 'Cartons', ''].map(h => (
-                                                    <th key={h} className="px-3 py-2 text-left font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                                            {manualEntryDraft.map((row) => (
-                                                <tr key={row.id} className="bg-white dark:bg-slate-800/30 hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                                                    {(['factory_code', 'ean', 'item_name'] as const).map(field => (
-                                                        <td key={field} className="px-2 py-1.5">
-                                                            <input
-                                                                type="text"
-                                                                value={row[field]}
-                                                                onChange={e => setManualEntryDraft(prev => prev.map(r => r.id === row.id ? { ...r, [field]: e.target.value } : r))}
-                                                                placeholder={field === 'factory_code' ? 'e.g. FC-001' : field === 'ean' ? '13 digits' : 'Item name'}
-                                                                className="w-full bg-transparent border-b border-slate-200 dark:border-slate-600 focus:border-blue-500 dark:focus:border-blue-400 outline-none py-0.5 text-slate-800 dark:text-slate-100 placeholder:text-slate-300 dark:placeholder:text-slate-600 min-w-[80px]"
-                                                            />
-                                                        </td>
-                                                    ))}
-                                                    {(['invoice_qty', 'unit_price', 'carton_count'] as const).map(field => (
-                                                        <td key={field} className="px-2 py-1.5">
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                value={row[field]}
-                                                                onChange={e => setManualEntryDraft(prev => prev.map(r => r.id === row.id ? { ...r, [field]: e.target.value === '' ? '' : Number(e.target.value) } : r))}
-                                                                placeholder="0"
-                                                                className="w-full bg-transparent border-b border-slate-200 dark:border-slate-600 focus:border-blue-500 dark:focus:border-blue-400 outline-none py-0.5 text-slate-800 dark:text-slate-100 placeholder:text-slate-300 dark:placeholder:text-slate-600 min-w-[56px]"
-                                                            />
-                                                        </td>
-                                                    ))}
-                                                    <td className="px-2 py-1.5">
-                                                        <button onClick={() => setManualEntryDraft(prev => prev.filter(r => r.id !== row.id))}>
-                                                            <TrashIcon className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400" />
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* ── Row 5: Actions ── */}
+                    {/* ── Row 4: Actions ── */}
                     <div className="px-6 py-4 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-between gap-4">
                         <button
                             onClick={handleSkipToManualEntry}
@@ -2381,7 +2284,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                         </button>
                         <Button
                             onClick={handleUploadAndValidate}
-                            disabled={!vendorCode || !shippingMode || (uploadedFiles.length === 0 && manualEntryDraft.length === 0) || matchingPhase !== 'idle'}
+                            disabled={!vendorCode || !shippingMode || uploadedFiles.length === 0 || matchingPhase !== 'idle'}
                         >
                             Save & Continue to Validate Items →
                         </Button>
@@ -2671,13 +2574,22 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                 {/* CODES — FC / EAN / AN, green=matched, red=unmatched */}
                                                 <td className="px-2 py-3">
                                                     {row.match_status === 'MANUAL_ENTRY' ? (
-                                                        <input
-                                                            type="text"
-                                                            value={row.factory_code}
-                                                            onChange={(e) => handleRowChange(row.line_id, 'factory_code', e.target.value)}
-                                                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-700 dark:text-slate-300 focus:ring-1 focus:ring-blue-500"
-                                                            placeholder="Code"
-                                                        />
+                                                        <div className="space-y-1">
+                                                            <input
+                                                                type="text"
+                                                                value={row.factory_code}
+                                                                onChange={(e) => handleRowChange(row.line_id, 'factory_code', e.target.value)}
+                                                                className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-700 dark:text-slate-300 focus:ring-1 focus:ring-blue-500"
+                                                                placeholder="Code"
+                                                            />
+                                                            <input
+                                                                type="text"
+                                                                value={row.ean}
+                                                                onChange={(e) => handleRowChange(row.line_id, 'ean', e.target.value)}
+                                                                className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-700 dark:text-slate-300 focus:ring-1 focus:ring-blue-500"
+                                                                placeholder="EAN (13 digits)"
+                                                            />
+                                                        </div>
                                                     ) : (() => {
                                                         const isUnmatched = row.match_status === 'UNMATCHED';
                                                         const fcMatched = (c: string) => !isUnmatched && c === row.matched_code && (row.matched_by === 'ARTICLE_NUMBER' || row.matched_by === 'OTHER_FACTORY_CODE');
@@ -3067,14 +2979,27 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                     {row.match_status === 'MANUAL_ENTRY' ? (
                                                         <div className="space-y-2">
                                                             <Badge variant="info">MANUAL ENTRY</Badge>
-                                                            <div className="space-y-1">
-                                                                <label className="text-[8px] text-slate-500 dark:text-slate-500 uppercase tracking-wider">Cartons</label>
-                                                                <input
-                                                                    type="number"
-                                                                    value={row.carton_count}
-                                                                    onChange={(e) => handleRowChange(row.line_id, 'carton_count', toNum(e.target.value))}
-                                                                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-700 dark:text-slate-300 focus:ring-1 focus:ring-blue-500"
-                                                                />
+                                                            <div className="flex gap-2">
+                                                                <div className="space-y-1 flex-1">
+                                                                    <label className="text-[8px] text-slate-500 dark:text-slate-500 uppercase tracking-wider">Qty</label>
+                                                                    <input
+                                                                        type="number"
+                                                                        min="0"
+                                                                        value={row.invoice_qty}
+                                                                        onChange={(e) => handleRowChange(row.line_id, 'invoice_qty', toNum(e.target.value))}
+                                                                        className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-700 dark:text-slate-300 focus:ring-1 focus:ring-blue-500"
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-1 flex-1">
+                                                                    <label className="text-[8px] text-slate-500 dark:text-slate-500 uppercase tracking-wider">Cartons</label>
+                                                                    <input
+                                                                        type="number"
+                                                                        min="0"
+                                                                        value={row.carton_count}
+                                                                        onChange={(e) => handleRowChange(row.line_id, 'carton_count', toNum(e.target.value))}
+                                                                        className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-700 dark:text-slate-300 focus:ring-1 focus:ring-blue-500"
+                                                                    />
+                                                                </div>
                                                             </div>
                                                         </div>
                                                     ) : (() => {
