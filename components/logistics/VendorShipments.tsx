@@ -2554,9 +2554,13 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                     {filteredRows.map((row) => {
                                         const status = getStatusConfig(row.match_status);
                                         const factoryCodes = (row.factory_code || "").split('|').filter(c => c.trim());
+                                        // Rows added via "Skip upload" stay manually editable even after the user
+                                        // picks a SKU (which flips match_status to MATCH) — match_status alone
+                                        // can't be used to detect a manual row past that point.
+                                        const isManualRow = row.source_file_name === 'MANUAL_ENTRY';
 
                                         return (
-                                            <tr key={row.line_id} className={`hover:bg-slate-100 dark:hover:bg-slate-700/20 transition-colors ${selectedRowIds.has(row.line_id) ? 'bg-blue-50 dark:bg-blue-500/10' : row.match_status === 'UNMATCHED' ? 'bg-red-500/5' : row.match_status === 'MANUAL_ENTRY' ? 'bg-blue-500/5' : ''}`}>
+                                            <tr key={row.line_id} className={`hover:bg-slate-100 dark:hover:bg-slate-700/20 transition-colors ${selectedRowIds.has(row.line_id) ? 'bg-blue-50 dark:bg-blue-500/10' : row.match_status === 'UNMATCHED' ? 'bg-red-500/5' : isManualRow ? 'bg-blue-500/5' : ''}`}>
                                                 <td className="px-2 py-3 w-8">
                                                     <input
                                                         type="checkbox"
@@ -2573,7 +2577,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                 </td>
                                                 {/* CODES — FC / EAN / AN, green=matched, red=unmatched */}
                                                 <td className="px-2 py-3">
-                                                    {row.match_status === 'MANUAL_ENTRY' ? (
+                                                    {isManualRow ? (
                                                         <div className="space-y-1">
                                                             <input
                                                                 type="text"
@@ -2849,7 +2853,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
                                                 {/* INVOICE ITEM */}
                                                 <td className="px-2 py-3">
-                                                    {row.match_status === 'MANUAL_ENTRY' ? (
+                                                    {isManualRow ? (
                                                         <input
                                                             type="text"
                                                             value={row.item_name}
@@ -2904,7 +2908,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
                                                 {/* RESOLUTION ACTION */}
                                                 <td className="px-2 py-3">
-                                                    {row.match_status === 'MANUAL_ENTRY' ? (
+                                                    {isManualRow ? (
                                                         <div className="flex flex-col gap-2">
                                                             <Badge variant="success">READY</Badge>
                                                             <button
@@ -2976,7 +2980,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
                                                 {/* STATUS + NOTES */}
                                                 <td className="px-2 py-3">
-                                                    {row.match_status === 'MANUAL_ENTRY' ? (
+                                                    {isManualRow ? (
                                                         <div className="space-y-2">
                                                             <Badge variant="info">MANUAL ENTRY</Badge>
                                                             <div className="flex gap-2">
@@ -3400,7 +3404,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                     </td>
                                                     {/* QTY */}
                                                     <td className="px-3 py-3 text-right">
-                                                        {row.match_status === 'MANUAL_ENTRY' ? (
+                                                        {row.source_file_name === 'MANUAL_ENTRY' ? (
                                                             <input
                                                                 type="number"
                                                                 value={row.invoice_qty}
