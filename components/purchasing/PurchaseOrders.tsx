@@ -733,8 +733,12 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
     const [pendingSortDir, setPendingSortDir] = useState<'asc' | 'desc'>(pendingLinesCache?.sortDir || 'desc');
 
     // Keeps the cache in sync with filter/sort changes so they survive a remount too.
+    // Guarded on an existing cache so this doesn't fire on initial mount (before the
+    // first fetch completes) and short-circuit fetchPendingLines with an empty stub.
     useEffect(() => {
-        pendingLinesCache = { pendingLines, vendorFilter: pendingVendorFilter, sortKey: pendingSortKey, sortDir: pendingSortDir };
+        if (pendingLinesCache) {
+            pendingLinesCache = { pendingLines, vendorFilter: pendingVendorFilter, sortKey: pendingSortKey, sortDir: pendingSortDir };
+        }
     }, [pendingLines, pendingVendorFilter, pendingSortKey, pendingSortDir]);
 
     const fetchPendingLines = async (forceRefresh = false) => {
@@ -752,7 +756,9 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
             });
             const result = await response.json();
             if (result && result.success === true) {
-                setPendingLines(result.data || []);
+                const data = result.data || [];
+                setPendingLines(data);
+                pendingLinesCache = { pendingLines: data, vendorFilter: pendingVendorFilter, sortKey: pendingSortKey, sortDir: pendingSortDir };
             } else {
                 throw new Error(result?.message || 'Failed to load pending lines');
             }
