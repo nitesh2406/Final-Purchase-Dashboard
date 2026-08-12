@@ -29,3 +29,4 @@ AppBuilding/
 .playwright-mcp/
 .vercel
 .env*
+docs/superpowers/plans/
