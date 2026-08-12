@@ -195,13 +195,24 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
             action: API_ACTIONS.GET_PURCHASE_ORDERS
         };
 
-        try {
+        const postToBackend = async () => {
             const response = await fetch(APPS_SCRIPT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                 body: JSON.stringify(payload)
             });
-            const result = await response.json();
+            return response.json();
+        };
+
+        try {
+            let result;
+            try {
+                result = await postToBackend();
+            } catch (parseErr) {
+                // Apps Script occasionally returns a transient non-JSON error page under load; retry once.
+                await new Promise(resolve => setTimeout(resolve, 800));
+                result = await postToBackend();
+            }
             if (!result || result.success !== true) {
                 throw new Error(result?.message || "Failed to load POs");
             }
