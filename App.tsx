@@ -1130,9 +1130,11 @@ const App: React.FC = () => {
                                     {q.type === 'purchase' ? `📄 ${q.payload.invoiceId}` : q.type === 'payment' ? `💳 ${q.payload.paymentId}` : q.type === 'vendor_create' ? `🏢 ${q.payload.vendor_id}` : `⚖️ ${q.payload.invoiceId || q.id}`}
                                 </span>
                                 <div className="flex items-center gap-1">
-                                    <span className={`px-1.5 py-0.5 rounded-[4px] font-extrabold text-[9px] uppercase ${
+                                    <span
+                                        title={q.status === 'failed' && q.error ? q.error : undefined}
+                                        className={`px-1.5 py-0.5 rounded-[4px] font-extrabold text-[9px] uppercase ${
                                         q.status === 'synced' ? 'bg-emerald-950 text-emerald-400' :
-                                        q.status === 'failed' ? 'bg-rose-955/60 text-rose-400' :
+                                        q.status === 'failed' ? 'bg-rose-955/60 text-rose-400 cursor-help' :
                                         q.status === 'syncing' ? 'bg-blue-955/60 text-blue-400 animate-pulse' :
                                         'bg-amber-955/60 text-amber-400'
                                     }`}>

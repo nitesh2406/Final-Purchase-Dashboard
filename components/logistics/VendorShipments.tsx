@@ -566,6 +566,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const [backendIssues, setBackendIssues] = useState<any[]>([]);
     const [statusFilter, setStatusFilter] = useState<'ALL' | 'LOOKS_GOOD' | 'NEEDS_INPUT'>('ALL');
     const [p2Filter, setP2Filter] = useState<'ALL' | 'LOOKS_GOOD' | 'NEEDS_INPUT'>('ALL');
+    // Groups rows by their specific issue reason (e.g. "Price variance" vs
+    // "MY ID mismatch") so similar issues can be triaged together, rather
+    // than lumped under one generic status. 'ALL' shows everything.
+    const [issueReasonFilter, setIssueReasonFilter] = useState<string>('ALL');
     const [priceEanPhase, setPriceEanPhase] = useState<'idle' | 'running' | 'complete'>('idle');
     const [priceEanTick, setPriceEanTick] = useState(0);
     const [openP2NotesIds, setOpenP2NotesIds] = useState<Set<string>>(new Set());
@@ -696,6 +700,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         setMatchingTick(0);
         setStatusFilter('ALL');
         setP2Filter('ALL');
+        setIssueReasonFilter('ALL');
 
         // Clear saved draft from localStorage
         localStorage.removeItem('vendor_shipment_draft');
@@ -913,8 +918,16 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     }, [initialProductMasterList]);
 
     // Filter Logic
-    const isLooksGood = (row: EnrichedRow) =>
-        row.match_status === 'MATCH' || row.match_status === 'MANUAL_ENTRY';
+    // A manually-picked SKU (via the search dropdown) shouldn't jump to "Looks
+    // Good" the instant it's picked — only once the user explicitly clicks
+    // Accept. Backend-auto-matched rows aren't affected, they move immediately
+    // as before; match_type identifies which case a row is.
+    const isLooksGood = (row: EnrichedRow) => {
+        if (row.match_status === 'MANUAL_ENTRY') return true;
+        if (row.match_status !== 'MATCH') return false;
+        if (row.match_type === 'Manual Match') return row.resolution_action === 'ACCEPT';
+        return true;
+    };
     // Treat dash placeholders, empty strings, and null/undefined as "no EAN"
     const hasRealEan = (ean: string | null | undefined) =>
         !!(ean && ean.trim() && ean !== '-' && ean !== '–' && ean !== 'N/A');
@@ -930,11 +943,24 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         const invoiceEan = row.ean.trim();
         return !productMasterList.some(p => hasRealEan(p.ean) && p.ean!.trim() === invoiceEan);
     };
+    // Specific reason a row needs attention, distinct from its raw match_status —
+    // two PARTIAL_MATCH rows for different reasons (MY ID vs price) aren't
+    // "similar" to someone triaging, so group by this instead of status alone.
+    const getIssueReason = (row: EnrichedRow): string => {
+        if (row.match_status === 'PARTIAL_MATCH') return row.partial_match_reason || 'Partial match';
+        if (row.match_status === 'MULTIPLE_MATCH') return 'Multiple matches';
+        if (row.match_status === 'MULTIPLE_VARIANT') return 'Duplicate EAN in upload';
+        if (row.match_status === 'UNMATCHED') return 'Unmatched';
+        if (row.match_status === 'SKU_MISMATCH') return 'SKU mismatch';
+        return '';
+    };
     const filteredRows = useMemo(() => {
-        if (statusFilter === 'ALL') return validationRows;
-        if (statusFilter === 'LOOKS_GOOD') return validationRows.filter(r => isLooksGood(r));
-        return validationRows.filter(r => !isLooksGood(r));
-    }, [validationRows, statusFilter]);
+        let rows = validationRows;
+        if (statusFilter === 'LOOKS_GOOD') rows = rows.filter(r => isLooksGood(r));
+        else if (statusFilter === 'NEEDS_INPUT') rows = rows.filter(r => !isLooksGood(r));
+        if (issueReasonFilter !== 'ALL') rows = rows.filter(r => getIssueReason(r) === issueReasonFilter);
+        return rows;
+    }, [validationRows, statusFilter, issueReasonFilter]);
 
     // Gate for everything past Validate Items: only rows the user (explicitly or
     // implicitly, via an untouched clean MATCH) accepted move forward. Rows resolved
@@ -1196,7 +1222,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     match_status: 'MATCH',
                     match_type: 'Manual Match',
                     master_cost: product?.cost || 0,
-                    resolution_action: 'ACCEPT',
+                    // Not auto-set to 'ACCEPT' — the row stays in Needs Your
+                    // Input until the user explicitly clicks Accept below.
+                    resolution_action: '',
                     show_override: false
                 }
                 : row
@@ -2491,6 +2519,34 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                             ));
                                         })()}
                                     </div>
+                                    {(() => {
+                                        const reasonCounts = new Map<string, number>();
+                                        validationRows.forEach(r => {
+                                            const reason = getIssueReason(r);
+                                            if (reason) reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
+                                        });
+                                        if (reasonCounts.size === 0) return null;
+                                        return (
+                                            <div className="flex gap-2 flex-wrap items-center">
+                                                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Group by issue:</span>
+                                                <button
+                                                    onClick={() => setIssueReasonFilter('ALL')}
+                                                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all ${issueReasonFilter === 'ALL' ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-200 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-slate-400 dark:hover:border-slate-500'}`}
+                                                >
+                                                    All
+                                                </button>
+                                                {Array.from(reasonCounts.entries()).map(([reason, count]) => (
+                                                    <button
+                                                        key={reason}
+                                                        onClick={() => setIssueReasonFilter(reason)}
+                                                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all ${issueReasonFilter === reason ? 'bg-amber-500 border-amber-400 text-white' : 'bg-slate-200 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-slate-400 dark:hover:border-slate-500'}`}
+                                                    >
+                                                        {reason} ({count})
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                                 <div className="flex gap-3">
                                     <Button variant="secondary" className="h-9 text-xs" onClick={() => {}}>Export Results</Button>
@@ -2863,9 +2919,14 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                         />
                                                     ) : (
                                                         <div>
-                                                            <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 leading-snug">
-                                                                {row.item_name || <span className="text-slate-600 italic">—</span>}
-                                                            </p>
+                                                            <div className="flex items-baseline gap-1.5">
+                                                                <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 leading-snug">
+                                                                    {row.item_name || <span className="text-slate-600 italic">—</span>}
+                                                                </p>
+                                                                <span className="text-[10px] font-mono font-bold text-slate-500 dark:text-slate-400 shrink-0">
+                                                                    Qty {row.invoice_qty ?? '—'}
+                                                                </span>
+                                                            </div>
                                                             {row.color && (
                                                                 <p className="text-[11px] text-slate-500 mt-0.5">{row.color}</p>
                                                             )}
