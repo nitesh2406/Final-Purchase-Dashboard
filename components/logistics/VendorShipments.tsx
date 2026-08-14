@@ -470,8 +470,11 @@ const DEFAULT_NAME_MATCH_THRESHOLD = 50;
 const MATCH_CONDITION_STATUSES = new Set(['MATCH', 'MISMATCH', 'MATCH_MULTIPLE_VARIANT', 'MISMATCH_MULTIPLE_VARIANT', 'UNMATCHED']);
 
 /**
- * Rows where both SKU identity and price validation already passed don't need a
- * manual Accept click — pre-mark them so they flow straight through. Applied both
+ * Rows with a clean SKU-identity match don't need a manual Accept click in this
+ * (Validate Items) step — pre-mark them so they flow straight through. Price is
+ * deliberately NOT part of this gate: price validation is Step 3's (ID / Price /
+ * EAN Review) own concern, with its own per-flag Request Update / Accept as-is /
+ * Dismiss actions — conflating the two would undo that separation. Applied both
  * right after a fresh upload and when restoring a saved draft from localStorage,
  * so a draft saved before this rule existed still gets it applied on load. Never
  * overrides an explicit resolution_action the user already set.
@@ -480,7 +483,6 @@ const withAutoAccept = (rows: EnrichedRow[]): EnrichedRow[] =>
     rows.map(r =>
         !r.resolution_action
         && (r.match_status === 'MATCH' || r.match_status === 'MATCH_MULTIPLE_VARIANT')
-        && r.price_check_status !== 'FAIL'
             ? { ...r, resolution_action: 'ACCEPT' }
             : r
     );
@@ -1084,15 +1086,14 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     // implicitly, via an untouched clean MATCH) accepted move forward. Rows resolved
     // as Skip (REJECT_LINE) or REQUEST_NEW_SKU — or left unresolved on an ambiguous
     // match — stay behind and never reach ID/Price/EAN Review or Allocation.
-    // A row is only implicitly accepted (no resolution_action set) when BOTH SKU
-    // identity and price validation pass — price_check_status is undefined/null
-    // for rows never priced (e.g. manual matches), which still counts as "not failed".
+    // A row is implicitly accepted (no resolution_action set) purely on SKU-identity
+    // match quality — price is intentionally NOT part of this gate; it's Step 3's
+    // own concern, reviewed separately via its own per-flag actions.
     const isRowAccepted = (row: EnrichedRow) => {
         if (row.match_status === 'MANUAL_ENTRY') return true;
         if (row.resolution_action === 'ACCEPT' || row.resolution_action === 'OVERRIDE') return true;
         if (!row.resolution_action
-            && (row.match_status === 'MATCH' || row.match_status === 'MATCH_MULTIPLE_VARIANT')
-            && row.price_check_status !== 'FAIL') return true;
+            && (row.match_status === 'MATCH' || row.match_status === 'MATCH_MULTIPLE_VARIANT')) return true;
         return false;
     };
 
