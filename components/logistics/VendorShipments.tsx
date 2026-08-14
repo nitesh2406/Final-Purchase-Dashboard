@@ -338,7 +338,7 @@ const VendorSearchSelect: React.FC<{
 // --- Enriched Data Types ---
 
 type DocumentType = 'INVOICE' | 'PACKING_LIST';
-type MatchStatus = 'MATCH' | 'UNMATCHED' | 'SKU_MISMATCH' | 'MULTIPLE_MATCH' | 'PARTIAL_MATCH' | 'MULTIPLE_VARIANT' | 'MANUAL_ENTRY';
+type MatchStatus = 'MATCH' | 'MISMATCH' | 'MATCH_MULTIPLE_VARIANT' | 'MISMATCH_MULTIPLE_VARIANT' | 'UNMATCHED' | 'MANUAL_ENTRY';
 type MatchConfidence = 'HIGH' | 'MEDIUM' | 'LOW' | '';
 
 interface EnrichedRow {
@@ -372,11 +372,12 @@ interface EnrichedRow {
     match_status: MatchStatus;
     matched_sku: string;
     matched_name: string;
-    matched_by: 'EAN' | 'ARTICLE_NUMBER' | 'OTHER_FACTORY_CODE' | '';
+    matched_by: 'EAN' | 'FACTORY_CODE' | 'ACCOUNTING_SKU' | '';
     matched_code: string;
     match_confidence: MatchConfidence;
     vendor_provided_sku: string;
     sku_mismatch_flag: boolean;
+    match_comment?: string; // e.g. "matched via EAN + my ID", "my ID not found / new variant"
     multiple_matches?: Array<{
         sku: string;
         name: string;
@@ -392,6 +393,7 @@ interface EnrichedRow {
     resolution_update_ean?: boolean;
     resolution_notes?: string;
     partial_match_reason?: string;
+    price_check_status?: 'PASS' | 'FAIL' | null; // independent price-validation tag, separate from match_status
     name_similarity?: number;
     price_diff_percentage?: number;
     show_override?: boolean; // For "Change SKU" UI state
@@ -459,14 +461,13 @@ const getVendorDocConfig = (code: string): { prefix: string; docType: DocumentTy
 // (mirrors the backend default in checkPartialMatch_ — see 11_PO+Shipment Codes.gs)
 const DEFAULT_NAME_MATCH_THRESHOLD = 50;
 
-const MATCH_CONDITION_STATUSES = new Set(['MATCH', 'PARTIAL_MATCH', 'MULTIPLE_MATCH', 'MULTIPLE_VARIANT', 'UNMATCHED']);
+const MATCH_CONDITION_STATUSES = new Set(['MATCH', 'MISMATCH', 'MATCH_MULTIPLE_VARIANT', 'MISMATCH_MULTIPLE_VARIANT', 'UNMATCHED']);
 
 /**
  * Builds the "Match Condition" tooltip steps (Validate Items tab only) from the row's
- * actual match data, following: Code lookup (AN/FC/EAN) -> Multiple check -> MY ID check
- * (if present) -> Name check. Price variance is deliberately not shown here — that's
- * covered by the ID / Price / EAN tab instead.
- * Mirrors performPhase1SKUIdentification_ / performPhase2ProductVerification_ in 11_PO+Shipment Codes.gs.
+ * actual match data, following: Code lookup (EAN/FC/ID) -> Multiple check -> MY ID check.
+ * Price variance is deliberately not shown here — that's covered by the ID / Price / EAN
+ * tab instead. Mirrors performPhase1SKUIdentification_ in PO+Shipment Codes.js (2026-08 rewrite).
  */
 const getMatchConditionSteps = (row: EnrichedRow): Array<{ label: string; ok: boolean; detail: string }> => {
     const steps: Array<{ label: string; ok: boolean; detail: string }> = [];
@@ -476,41 +477,27 @@ const getMatchConditionSteps = (row: EnrichedRow): Array<{ label: string; ok: bo
         label: 'Code lookup',
         ok: codeFound,
         detail: codeFound
-            ? `Resolved via ${row.matched_by ? row.matched_by.replace(/_/g, ' ') : 'AN / FC / EAN'}${row.matched_code ? ` (${row.matched_code})` : ''}`
-            : 'Not found via AN, FC, or EAN'
+            ? `Resolved via ${row.matched_by ? row.matched_by.replace(/_/g, ' ') : 'EAN / FC / ID'}${row.matched_code ? ` (${row.matched_code})` : ''}`
+            : 'Not found via EAN, FC, or ID'
     });
     if (!codeFound) return steps;
 
-    if (row.match_status === 'MULTIPLE_MATCH') {
-        steps.push({ label: 'Multiple check', ok: false, detail: `${row.multiple_matches?.length || 'Multiple'} different SKUs matched via AN/FC` });
-        return steps;
-    }
-    if (row.match_status === 'MULTIPLE_VARIANT') {
-        steps.push({ label: 'Multiple check', ok: false, detail: 'Same EAN appears on more than one invoice line' });
-        return steps;
-    }
-    steps.push({ label: 'Multiple check', ok: true, detail: 'Single unique match' });
+    const isMultipleVariant = row.match_status === 'MATCH_MULTIPLE_VARIANT' || row.match_status === 'MISMATCH_MULTIPLE_VARIANT';
+    steps.push({
+        label: 'Multiple check',
+        ok: !isMultipleVariant,
+        detail: isMultipleVariant ? 'This code appears on more than one line in this upload' : 'Single unique row for this code'
+    });
 
-    if (row.my_id_check !== null && row.my_id_check !== undefined) {
-        steps.push({
-            label: 'MY ID check',
-            ok: row.my_id_check === true,
-            detail: row.my_id_check === true
-                ? `MY ID ${row.my_id} matches matched SKU`
-                : `MY ID says ${row.my_id_mismatch_value || row.my_id}, matched SKU is ${row.matched_sku}`
-        });
-    }
-
-    if (row.name_similarity != null) {
-        const nameOk = row.name_similarity >= DEFAULT_NAME_MATCH_THRESHOLD;
-        steps.push({
-            label: 'Name check',
-            ok: nameOk,
-            detail: `${Math.round(row.name_similarity)}% similarity — "${row.item_name}" vs "${row.matched_name}"`
-        });
-    } else {
-        steps.push({ label: 'Name check', ok: true, detail: 'Names match' });
-    }
+    steps.push({
+        label: 'MY ID check',
+        ok: row.my_id_check === true,
+        detail: row.my_id_check === true
+            ? `MY ID ${row.my_id} matches matched SKU`
+            : row.my_id
+                ? `MY ID says ${row.my_id_mismatch_value || row.my_id}, matched SKU is ${row.matched_sku || '(ambiguous)'}`
+                : 'MY ID is empty on this invoice line'
+    });
 
     // Price check is intentionally excluded here — it belongs to the ID / Price / EAN tab
     // (MASTER ¥ / DIFF columns), not the Validate Items match-condition breakdown.
@@ -547,8 +534,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const [matchingTick, setMatchingTick] = useState(0);
     const [matchingPhase, setMatchingPhase] = useState<'idle' | 'running' | 'complete' | 'error'>('idle');
     const [matchingResultSummary, setMatchingResultSummary] = useState<{
-        total: number; matched: number; partial: number;
-        multipleMatch: number; multipleVariant: number; unmatched: number; skuMismatch: number;
+        total: number; matched: number; mismatch: number; multipleVariant: number; unmatched: number;
     } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [showDebug, setShowDebug] = useState(false);
@@ -924,7 +910,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     // as before; match_type identifies which case a row is.
     const isLooksGood = (row: EnrichedRow) => {
         if (row.match_status === 'MANUAL_ENTRY') return true;
-        if (row.match_status !== 'MATCH') return false;
+        if (row.match_status !== 'MATCH' && row.match_status !== 'MATCH_MULTIPLE_VARIANT') return false;
         if (row.match_type === 'Manual Match') return row.resolution_action === 'ACCEPT';
         return true;
     };
@@ -947,11 +933,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     // two PARTIAL_MATCH rows for different reasons (MY ID vs price) aren't
     // "similar" to someone triaging, so group by this instead of status alone.
     const getIssueReason = (row: EnrichedRow): string => {
-        if (row.match_status === 'PARTIAL_MATCH') return row.partial_match_reason || 'Partial match';
-        if (row.match_status === 'MULTIPLE_MATCH') return 'Multiple matches';
-        if (row.match_status === 'MULTIPLE_VARIANT') return 'Duplicate EAN in upload';
+        if (row.match_status === 'MISMATCH' || row.match_status === 'MISMATCH_MULTIPLE_VARIANT') {
+            return row.match_comment || 'Mismatch';
+        }
         if (row.match_status === 'UNMATCHED') return 'Unmatched';
-        if (row.match_status === 'SKU_MISMATCH') return 'SKU mismatch';
         return '';
     };
     const filteredRows = useMemo(() => {
@@ -966,10 +951,15 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     // implicitly, via an untouched clean MATCH) accepted move forward. Rows resolved
     // as Skip (REJECT_LINE) or REQUEST_NEW_SKU — or left unresolved on an ambiguous
     // match — stay behind and never reach ID/Price/EAN Review or Allocation.
+    // A row is only implicitly accepted (no resolution_action set) when BOTH SKU
+    // identity and price validation pass — price_check_status is undefined/null
+    // for rows never priced (e.g. manual matches), which still counts as "not failed".
     const isRowAccepted = (row: EnrichedRow) => {
         if (row.match_status === 'MANUAL_ENTRY') return true;
         if (row.resolution_action === 'ACCEPT' || row.resolution_action === 'OVERRIDE') return true;
-        if (!row.resolution_action && row.match_status === 'MATCH') return true;
+        if (!row.resolution_action
+            && (row.match_status === 'MATCH' || row.match_status === 'MATCH_MULTIPLE_VARIANT')
+            && row.price_check_status !== 'FAIL') return true;
         return false;
     };
 
@@ -978,19 +968,19 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         if (p2Filter === 'ALL') return base;
         const isNeedsInput = (r: EnrichedRow) => {
             const { diff } = calculatePriceDiff(toNum(r.unit_price), toNum(r.master_cost || 0));
-            return r.match_status === 'PARTIAL_MATCH' || diff > 0.01 || isEanMismatch(r);
+            return r.price_check_status === 'FAIL' || diff > 0.01 || isEanMismatch(r);
         };
         if (p2Filter === 'LOOKS_GOOD') return base.filter(r => !isNeedsInput(r));
         return base.filter(isNeedsInput);
     }, [validationRows, p2Filter, productMasterList]);
 
     const summaryStats = useMemo(() => {
-        const matched = validationRows.filter(r => r.match_status === 'MATCH').length;
+        const matched = validationRows.filter(r => r.match_status === 'MATCH' || r.match_status === 'MATCH_MULTIPLE_VARIANT').length;
         const unmatched = validationRows.filter(r => r.match_status === 'UNMATCHED').length;
-        const flagged = validationRows.filter(r => 
-            ['SKU_MISMATCH', 'MULTIPLE_MATCH', 'PARTIAL_MATCH', 'MULTIPLE_VARIANT'].includes(r.match_status)
+        const flagged = validationRows.filter(r =>
+            r.match_status === 'MISMATCH' || r.match_status === 'MISMATCH_MULTIPLE_VARIANT'
         ).length;
-        
+
         return {
             total: validationRows.length,
             matched,
@@ -1002,17 +992,21 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const canProceedToAllocation = useMemo(() => {
         if (validationRows.length === 0 || backendError) return false;
         const unresolved = validationRows.filter(r => {
+            // Genuinely ambiguous, unresolved multi-candidate rows always need an
+            // explicit SKU pick — never let a blanket resolution_action (e.g. from
+            // "Approve All") wave one through without a real matched_sku.
+            if (r.match_status === 'MISMATCH_MULTIPLE_VARIANT' && !r.matched_sku) return true;
+
             if (r.resolution_action === 'REQUEST_NEW_SKU') return false;
             if (r.resolution_action === 'REJECT_LINE') return false;
             if (r.resolution_action === 'Skip Item') return false;
             if (r.resolution_action === 'ACCEPT') return false;
             if (r.resolution_action === 'OVERRIDE') return false;
-            if (r.match_status === 'MATCH') return false;
+            if (r.match_status === 'MATCH' || r.match_status === 'MATCH_MULTIPLE_VARIANT') return false;
             if (r.match_status === 'UNMATCHED' && !r.matched_sku && !r.sku) return true;
-            // matched_sku is pre-filled with a best-guess candidate even when ambiguous —
+            // matched_sku is pre-filled with a best-guess candidate even when mismatched —
             // only an explicit resolution_action (set by handleManualMatch/skip/etc.) counts as resolved.
-            if (['MULTIPLE_MATCH', 'MULTIPLE_VARIANT'].includes(r.match_status)) return true;
-            if (['PARTIAL_MATCH', 'SKU_MISMATCH'].includes(r.match_status) && !r.resolution_action) return true;
+            if ((r.match_status === 'MISMATCH' || r.match_status === 'MISMATCH_MULTIPLE_VARIANT') && !r.resolution_action) return true;
             return false;
         });
         return unresolved.length === 0;
@@ -1142,7 +1136,13 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             setLastResponse(result);
 
             if (result.status === 'success') {
-                const rows = result.rows || [];
+                // Rows where both SKU identity and price validation already passed don't
+                // need a manual Accept click — pre-mark them so they flow straight through.
+                const rows = (result.rows || []).map((r: any) =>
+                    (r.match_status === 'MATCH' || r.match_status === 'MATCH_MULTIPLE_VARIANT') && r.price_check_status !== 'FAIL'
+                        ? { ...r, resolution_action: 'ACCEPT' }
+                        : r
+                );
                 setValidationRows(rows);
                 setBackendIssues(result.issues || []);
                 if (result.shipmentId) setInvoiceNumber(result.shipmentId);
@@ -1150,11 +1150,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                 setMatchingResultSummary({
                     total: rows.length,
                     matched: rows.filter((r: any) => r.match_status === 'MATCH').length,
-                    partial: rows.filter((r: any) => r.match_status === 'PARTIAL_MATCH').length,
-                    multipleMatch: rows.filter((r: any) => r.match_status === 'MULTIPLE_MATCH').length,
-                    multipleVariant: rows.filter((r: any) => r.match_status === 'MULTIPLE_VARIANT').length,
+                    mismatch: rows.filter((r: any) => r.match_status === 'MISMATCH').length,
+                    multipleVariant: rows.filter((r: any) => r.match_status === 'MATCH_MULTIPLE_VARIANT' || r.match_status === 'MISMATCH_MULTIPLE_VARIANT').length,
                     unmatched: rows.filter((r: any) => r.match_status === 'UNMATCHED').length,
-                    skuMismatch: rows.filter((r: any) => r.match_status === 'SKU_MISMATCH').length,
                 });
                 setMatchingPhase('complete');
                 await new Promise(res => setTimeout(res, 2400));
@@ -1233,7 +1231,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
     const handleApproveAll = () => {
         const unresolvedRows = validationRows.filter(row => {
-            const needsSelection = ['UNMATCHED', 'MULTIPLE_MATCH', 'MULTIPLE_VARIANT'].includes(row.match_status);
+            const needsSelection = row.match_status === 'UNMATCHED' || row.match_status === 'MISMATCH_MULTIPLE_VARIANT';
             const hasNoSKU = !row.matched_sku && !row.sku;
             return needsSelection && hasNoSKU;
         });
@@ -1652,11 +1650,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const getStatusConfig = (status: string) => {
         const configs = {
             'MATCH': { label: 'MATCH', icon: '✓', variant: 'success' as const },
+            'MATCH_MULTIPLE_VARIANT': { label: 'MATCH - MULTIPLE VARIANT', icon: '✓', variant: 'info' as const },
+            'MISMATCH': { label: 'MISMATCH', icon: '⚠', variant: 'warning' as const },
+            'MISMATCH_MULTIPLE_VARIANT': { label: 'MISMATCH - MULTIPLE VARIANT', icon: '⚠', variant: 'warning' as const },
             'UNMATCHED': { label: 'UNMATCHED', icon: '✗', variant: 'destructive' as const },
-            'SKU_MISMATCH': { label: 'SKU MISMATCH', icon: '⚠', variant: 'warning' as const },
-            'MULTIPLE_MATCH': { label: 'MULTIPLE MATCH', icon: '⚠', variant: 'warning' as const },
-            'PARTIAL_MATCH': { label: 'PARTIAL MATCH', icon: '⚠', variant: 'info' as const },
-            'MULTIPLE_VARIANT': { label: 'MULTIPLE VARIANT', icon: '⚠', variant: 'info' as const }
         };
         return (configs as any)[status] || configs['UNMATCHED'];
     };
@@ -2067,10 +2064,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
                                     <div className="grid grid-cols-2 gap-3 text-left">
                                         {[
-                                            { label: 'Matched',        value: matchingResultSummary.matched,       color: 'text-emerald-400' },
-                                            { label: 'Partial Match',  value: matchingResultSummary.partial,       color: 'text-yellow-400' },
-                                            { label: 'Multiple Match', value: matchingResultSummary.multipleMatch + matchingResultSummary.multipleVariant, color: 'text-blue-400' },
-                                            { label: 'Unmatched',      value: matchingResultSummary.unmatched,     color: 'text-red-400' },
+                                            { label: 'Matched',          value: matchingResultSummary.matched,         color: 'text-emerald-400' },
+                                            { label: 'Mismatch',         value: matchingResultSummary.mismatch,        color: 'text-yellow-400' },
+                                            { label: 'Multiple Variant', value: matchingResultSummary.multipleVariant, color: 'text-blue-400' },
+                                            { label: 'Unmatched',        value: matchingResultSummary.unmatched,       color: 'text-red-400' },
                                         ].filter(s => s.value > 0).map(s => (
                                             <div key={s.label} className="bg-slate-950/60 rounded-xl px-4 py-3 border border-slate-800">
                                                 <p className={`text-xl font-bold tabular-nums ${s.color}`}>{s.value}</p>
@@ -2652,18 +2649,18 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                         </div>
                                                     ) : (() => {
                                                         const isUnmatched = row.match_status === 'UNMATCHED';
-                                                        const fcMatched = (c: string) => !isUnmatched && c === row.matched_code && (row.matched_by === 'ARTICLE_NUMBER' || row.matched_by === 'OTHER_FACTORY_CODE');
+                                                        const matchedCodePieces = (row.matched_code || '').split('|').filter(Boolean);
+                                                        const codeMatched = (c: string) => !isUnmatched && matchedCodePieces.includes(c) && (row.matched_by === 'FACTORY_CODE' || row.matched_by === 'ACCOUNTING_SKU');
                                                         const eanMatched = row.matched_by === 'EAN';
-                                                        const anMatched = row.matched_by === 'ARTICLE_NUMBER';
                                                         return (
                                                             <div className="space-y-1">
-                                                                {/* Factory Codes */}
+                                                                {/* ID / Factory Code (pipe-joined upload columns) */}
                                                                 {factoryCodes.length > 0 ? factoryCodes.map((c, i) => (
                                                                     <div key={i} className="flex items-center gap-1.5">
-                                                                        <span className={`text-[10px] font-bold uppercase w-5 shrink-0 ${fcMatched(c) ? 'text-emerald-500 dark:text-emerald-400' : isUnmatched ? 'text-red-400' : 'text-slate-500'}`}>
+                                                                        <span className={`text-[10px] font-bold uppercase w-5 shrink-0 ${codeMatched(c) ? 'text-emerald-500 dark:text-emerald-400' : isUnmatched ? 'text-red-400' : 'text-slate-500'}`}>
                                                                             {i === 0 ? 'ID' : 'FC'}
                                                                         </span>
-                                                                        <span className={`text-[13px] font-mono font-semibold ${fcMatched(c) ? 'text-emerald-600 dark:text-emerald-400' : isUnmatched ? 'text-red-500 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}>{c}</span>
+                                                                        <span className={`text-[13px] font-mono font-semibold ${codeMatched(c) ? 'text-emerald-600 dark:text-emerald-400' : isUnmatched ? 'text-red-500 dark:text-red-400' : 'text-slate-700 dark:text-slate-200'}`}>{c}</span>
                                                                     </div>
                                                                 )) : (
                                                                     <div className="flex items-center gap-1.5">
@@ -2678,13 +2675,6 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                         {row.ean || '—'}
                                                                     </span>
                                                                 </div>
-                                                                {/* AN (Article Number) */}
-                                                                <div className="flex items-center gap-1.5">
-                                                                    <span className={`text-[10px] font-bold uppercase w-5 shrink-0 ${anMatched ? 'text-emerald-500 dark:text-emerald-400' : 'text-slate-400'}`}>AN</span>
-                                                                    <span className={`text-[13px] font-mono ${anMatched ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                                                                        {anMatched && row.matched_code ? row.matched_code : '—'}
-                                                                    </span>
-                                                                </div>
                                                             </div>
                                                         );
                                                     })()}
@@ -2692,7 +2682,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
                                                 {/* MATCHED SKU */}
                                                 <td className="px-2 py-3">
-                                                    {row.match_status === 'MATCH' ? (
+                                                    {row.match_status === 'MATCH' || row.match_status === 'MATCH_MULTIPLE_VARIANT' ? (
                                                         <div className="space-y-1">
                                                             <div className="flex items-center gap-1.5">
                                                                 <p className="font-mono text-blue-500 dark:text-blue-400 text-[13px] font-bold leading-none">
@@ -2717,7 +2707,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                     </span>
                                                                 ) : null
                                                             )}
-                                                            <p className="text-[9px] text-slate-500 dark:text-slate-500 italic">via {row.matched_by}</p>
+                                                            <p className="text-[9px] text-slate-500 dark:text-slate-500 italic">via {row.matched_by?.replace(/_/g, ' ')}</p>
                                                             {row.show_override && (
                                                                 <div className="mt-1 space-y-1.5">
                                                                     <SearchableSelect
@@ -2735,37 +2725,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                 </div>
                                                             )}
                                                         </div>
-                                                    ) : row.match_status === 'SKU_MISMATCH' ? (
-                                                        <div className="space-y-1.5">
-                                                            <div className="flex items-center gap-1.5">
-                                                                <p className="font-mono text-blue-500 dark:text-blue-400 text-[13px] font-bold leading-none">{row.matched_sku}</p>
-                                                                <button
-                                                                    onClick={() => handleRowChange(row.line_id, 'show_override', !row.show_override)}
-                                                                    title="Override SKU"
-                                                                    className="text-slate-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors shrink-0"
-                                                                >
-                                                                    <ArrowsUpDownIcon className="w-3 h-3" />
-                                                                </button>
-                                                            </div>
-                                                            <p className="text-[9px] text-slate-500 italic">via {row.matched_by}</p>
-                                                            {row.show_override && (
-                                                                <div className="mt-1 space-y-1.5">
-                                                                    <SearchableSelect
-                                                                        value={row.matched_sku || ''}
-                                                                        onChange={(sku) => handleManualMatch(row.line_id, sku)}
-                                                                        options={productMasterList}
-                                                                        placeholder="Override SKU..."
-                                                                    />
-                                                                    <button
-                                                                        onClick={() => handleRowChange(row.line_id, 'show_override', false)}
-                                                                        className="text-[9px] text-slate-500 hover:text-slate-400 dark:hover:text-slate-300"
-                                                                    >
-                                                                        Cancel
-                                                                    </button>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    ) : row.match_status === 'PARTIAL_MATCH' ? (
+                                                    ) : (row.match_status === 'MISMATCH' || row.match_status === 'MISMATCH_MULTIPLE_VARIANT') && row.matched_sku ? (
                                                         <div className="space-y-1.5">
                                                             <div className="flex items-center gap-1.5">
                                                                 <p className="font-mono text-blue-500 dark:text-blue-400 text-[13px] font-bold leading-none">{row.matched_sku}</p>
@@ -2788,7 +2748,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                     </span>
                                                                 ) : null
                                                             )}
-                                                            <p className="text-[9px] text-slate-500 italic">via {row.matched_by}</p>
+                                                            <p className="text-[9px] text-slate-500 italic">via {row.matched_by?.replace(/_/g, ' ')}</p>
                                                             {row.show_override && (
                                                                 <div className="mt-1 space-y-1.5">
                                                                     <SearchableSelect
@@ -2806,7 +2766,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                 </div>
                                                             )}
                                                         </div>
-                                                    ) : row.match_status === 'MULTIPLE_VARIANT' || row.match_status === 'MULTIPLE_MATCH' ? (
+                                                    ) : row.match_status !== 'UNMATCHED' ? (
+                                                        // Remaining case: MISMATCH_MULTIPLE_VARIANT with no matched_sku —
+                                                        // genuinely ambiguous, MY ID couldn't resolve which candidate is right.
                                                         (() => {
                                                             const suggestion = row.my_id ? productMasterList.find(p => p.id === row.my_id) : null;
                                                             return suggestion ? (
@@ -2936,31 +2898,16 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
                                                 {/* MATCHED NAME */}
                                                 <td className="px-2 py-3">
-                                                    {row.match_status === 'MATCH' ? (
+                                                    {row.match_status === 'MATCH' || row.match_status === 'MATCH_MULTIPLE_VARIANT' ? (
                                                         <p className="text-[13px] text-slate-700 dark:text-slate-300 leading-snug">
                                                             {row.matched_name || row.item_name}
                                                         </p>
-                                                    ) : row.match_status === 'SKU_MISMATCH' ? (
+                                                    ) : (row.match_status === 'MISMATCH' || row.match_status === 'MISMATCH_MULTIPLE_VARIANT') && row.matched_name ? (
                                                         <div className="space-y-1">
                                                             <p className="text-[13px] text-slate-700 dark:text-slate-300 leading-snug">{row.matched_name}</p>
-                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20 font-bold">
-                                                                ⚠ SKU MISMATCH
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20 font-bold uppercase">
+                                                                ⚠ {row.match_comment || 'Mismatch'}
                                                             </span>
-                                                        </div>
-                                                    ) : row.match_status === 'PARTIAL_MATCH' ? (
-                                                        <div className="space-y-1">
-                                                            <p className="text-[13px] text-slate-700 dark:text-slate-300 leading-snug">{row.matched_name}</p>
-                                                            {row.name_similarity != null && (
-                                                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
-                                                                    row.name_similarity >= 90
-                                                                        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                                                                        : row.name_similarity >= 70
-                                                                        ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
-                                                                        : 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20'
-                                                                }`}>
-                                                                    {Math.round(row.name_similarity)}% name match
-                                                                </span>
-                                                            )}
                                                         </div>
                                                     ) : (
                                                         <span className="text-slate-500 dark:text-slate-600 text-xs italic">—</span>
@@ -2979,7 +2926,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                 <TrashIcon className="w-3 h-3" /> Remove
                                                             </button>
                                                         </div>
-                                                    ) : ['MATCH', 'SKU_MISMATCH', 'PARTIAL_MATCH', 'UNMATCHED', 'MULTIPLE_VARIANT', 'MULTIPLE_MATCH'].includes(row.match_status) ? (
+                                                    ) : ['MATCH', 'MATCH_MULTIPLE_VARIANT', 'MISMATCH', 'MISMATCH_MULTIPLE_VARIANT', 'UNMATCHED'].includes(row.match_status) ? (
                                                         <div className="inline-flex items-stretch rounded-lg overflow-hidden">
                                                             {/* Primary label */}
                                                             <button
@@ -3331,12 +3278,11 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     {validationRows.length > 0 && (() => {
                         const base = validationRows.filter(r =>
                             r.match_status !== 'UNMATCHED' &&
-                            r.match_status !== 'MULTIPLE_MATCH' &&
-                            r.match_status !== 'MULTIPLE_VARIANT'
+                            !(r.match_status === 'MISMATCH_MULTIPLE_VARIANT' && !r.matched_sku)
                         );
                         const isNeedsInput = (r: EnrichedRow) => {
                             const { diff } = calculatePriceDiff(toNum(r.unit_price), toNum(r.master_cost || 0));
-                            return r.match_status === 'PARTIAL_MATCH' || diff > 0.01 || isEanMismatch(r);
+                            return r.price_check_status === 'FAIL' || diff > 0.01 || isEanMismatch(r);
                         };
                         const looksGoodCount = base.filter(r => !isNeedsInput(r)).length;
                         const needsInputCount = base.filter(isNeedsInput).length;
@@ -3423,7 +3369,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                     {/* SKU */}
                                                     <td className="px-3 py-3">
                                                         <p className="font-mono text-blue-500 dark:text-blue-400 text-[12px] font-bold">{row.matched_sku || row.sku || '—'}</p>
-                                                        <p className="text-[9px] text-slate-400 italic mt-0.5">via {row.matched_by || '—'}</p>
+                                                        <p className="text-[9px] text-slate-400 italic mt-0.5">via {row.matched_by ? row.matched_by.replace(/_/g, ' ') : '—'}</p>
                                                     </td>
                                                     {/* NAME */}
                                                     <td className="px-3 py-3">
