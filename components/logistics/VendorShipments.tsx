@@ -399,6 +399,12 @@ interface EnrichedRow {
     show_override?: boolean; // For "Change SKU" UI state
     phase1_status?: string;  // SKU identification result
     phase2_status?: string | null; // Product verification result (null when skipped)
+
+    // Step 3 (ID / Price / EAN Review) — per-flag resolution, keyed by Step3Flag.key.
+    // Undefined for a flag means it's still on the default action (Request Update).
+    step3_actions?: Record<string, 'REQUEST_UPDATE' | 'ACCEPT_AS_IS' | 'DISMISS'>;
+    // Only meaningful for the PRICE_VARIANCE flag — opt-in, off by default.
+    step3_report_to_vendor?: boolean;
 }
 
 interface SkuAllocation {
@@ -521,6 +527,115 @@ const getMatchConditionSteps = (row: EnrichedRow): Array<{ label: string; ok: bo
     return steps;
 };
 
+type Step3FlagKey = 'PRICE_VARIANCE' | 'PRICE_MISSING' | 'ID_AN' | 'ID_FC' | 'EAN_CONFLICT';
+
+interface Step3Flag {
+    key: Step3FlagKey;
+    label: string;
+    detail: string;
+    reportToVendorEligible: boolean;
+}
+
+type MasterRecord = { id: string; name: string; cost: number; ean?: string; articleNumber?: string; otherFactoryCode?: string };
+
+const hasRealValue = (v?: string) => !!(v && v.trim() && v !== '-' && v !== '–' && v !== 'N/A');
+
+/**
+ * Step 3 (ID / Price / EAN Review) flag computation — per the "Step 3: ID / Price /
+ * EAN Review — Final Spec" doc. Runs only on rows Step 2 already resolved to a
+ * specific matched_sku (UNMATCHED rows skip this step entirely, per spec). MY ID
+ * mismatch is deliberately not re-checked here — that's Step 2's job.
+ *
+ * Whichever field Step 2 matched via is trusted and not re-verified against itself
+ * (its own sub-check is "always clean" per spec) — only the OTHER two identifier
+ * types get cross-checked against the matched SKU's master record:
+ *   - matched via EAN  -> check AN and FC both
+ *   - matched via AN (Article Number, Step 2's "FACTORY_CODE")
+ *                      -> check FC only (+ EAN, since EAN wasn't the match key)
+ *   - matched via FC (Other Factory Item Code / Accounting SKU, Step 2's "ACCOUNTING_SKU")
+ *                      -> check AN only (+ EAN)
+ * A field "conflicts" when master has a value that isn't found anywhere in the
+ * invoice's pipe-delimited factory_code pieces, or master is blank but the invoice
+ * has a value left unexplained by the other field.
+ */
+const getStep3Flags = (row: EnrichedRow, productMasterList: MasterRecord[]): Step3Flag[] => {
+    if (!row.matched_sku) return [];
+    const master = productMasterList.find(p => p.id === row.matched_sku);
+    if (!master) return [];
+
+    const flags: Step3Flag[] = [];
+
+    // --- Price ---
+    const invoicePrice = toNum(row.unit_price_base ?? row.unit_price);
+    const masterCost = toNum(master.cost);
+    if (masterCost > 0) {
+        if (invoicePrice > 0) {
+            const pctDiff = Math.abs(invoicePrice - masterCost) / masterCost * 100;
+            if (pctDiff > 1) {
+                flags.push({
+                    key: 'PRICE_VARIANCE',
+                    label: 'Price',
+                    detail: `Invoice ¥${invoicePrice.toFixed(2)} vs master ¥${masterCost.toFixed(2)} (${pctDiff.toFixed(1)}% diff)`,
+                    reportToVendorEligible: true
+                });
+            }
+        }
+    } else {
+        flags.push({
+            key: 'PRICE_MISSING',
+            label: 'Price',
+            detail: 'No RMB price on file in master for this SKU',
+            reportToVendorEligible: false
+        });
+    }
+
+    // --- ID: AN (Article Number) and FC (Accounting SKU) cross-checks ---
+    const pieces = (row.factory_code || '').split('|').map(c => c.trim()).filter(Boolean);
+
+    if (row.matched_by !== 'FACTORY_CODE') {
+        const masterAN = master.articleNumber || '';
+        if (hasRealValue(masterAN)) {
+            if (!pieces.includes(masterAN)) {
+                flags.push({ key: 'ID_AN', label: 'ID (AN)', detail: `Master Article Number "${masterAN}" not found on this invoice line`, reportToVendorEligible: false });
+            }
+        } else {
+            const unexplained = pieces.find(p => p !== master.otherFactoryCode);
+            if (unexplained) {
+                flags.push({ key: 'ID_AN', label: 'ID (AN)', detail: `Master has no Article Number on file; invoice shows "${unexplained}"`, reportToVendorEligible: false });
+            }
+        }
+    }
+
+    if (row.matched_by !== 'ACCOUNTING_SKU') {
+        const masterFC = master.otherFactoryCode || '';
+        if (hasRealValue(masterFC)) {
+            if (!pieces.includes(masterFC)) {
+                flags.push({ key: 'ID_FC', label: 'ID (FC)', detail: `Master Accounting SKU "${masterFC}" not found on this invoice line`, reportToVendorEligible: false });
+            }
+        } else {
+            const unexplained = pieces.find(p => p !== master.articleNumber);
+            if (unexplained) {
+                flags.push({ key: 'ID_FC', label: 'ID (FC)', detail: `Master has no Accounting SKU on file; invoice shows "${unexplained}"`, reportToVendorEligible: false });
+            }
+        }
+    }
+
+    // --- EAN ---
+    if (row.matched_by !== 'EAN' && hasRealValue(row.ean)) {
+        const masterEan = master.ean || '';
+        const invoiceEan = row.ean.trim();
+        if (hasRealValue(masterEan)) {
+            if (masterEan.trim() !== invoiceEan) {
+                flags.push({ key: 'EAN_CONFLICT', label: 'EAN', detail: `Invoice EAN "${invoiceEan}" differs from master EAN "${masterEan}"`, reportToVendorEligible: false });
+            }
+        } else {
+            flags.push({ key: 'EAN_CONFLICT', label: 'EAN', detail: `Master has no EAN on file; invoice shows "${invoiceEan}"`, reportToVendorEligible: false });
+        }
+    }
+
+    return flags;
+};
+
 // FIFO allocation loader — status lines shown one at a time while the engine runs
 const ALLOCATION_LOADER_MESSAGES = [
     'Reading shipment line items...',
@@ -582,7 +697,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const [statusTooltip, setStatusTooltip] = useState<{ id: string; pos: { top: number; left: number } } | null>(null);
 
     // Product master state
-    const [productMasterList, setProductMasterList] = useState<Array<{ id: string; name: string; cost: number; ean?: string }>>([]);
+    const [productMasterList, setProductMasterList] = useState<Array<{ id: string; name: string; cost: number; ean?: string; articleNumber?: string; otherFactoryCode?: string }>>([]);
 
     // Bypasses upload — user goes straight to Validate Items to add lines manually
     const [manualOnlyMode, setManualOnlyMode] = useState(false);
@@ -893,7 +1008,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                         id: p.sku || p.id,
                         name: p.productName || p.name,
                         cost: toNum(p.cost),
-                        ean: p.ean || ''
+                        ean: p.ean || '',
+                        articleNumber: p.articleNumber || '',
+                        otherFactoryCode: p.otherFactoryCode || ''
                     })));
                 } else if (initialProductMasterList.length > 0) {
                     setProductMasterList(initialProductMasterList.map(p => ({
@@ -979,16 +1096,52 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         return false;
     };
 
+    // Step 3 flags (Price / ID(AN) / ID(FC) / EAN) per the Step 3 spec doc — computed once
+    // per row and reused across the summary counters, filter bar, and table body.
+    const step3FlagsMap = useMemo(() => {
+        const map = new Map<string, Step3Flag[]>();
+        validationRows.forEach(r => map.set(r.line_id, getStep3Flags(r, productMasterList)));
+        return map;
+    }, [validationRows, productMasterList]);
+
+    // A row needs input as long as any of its flags is still on the unset default
+    // (neither individually resolved nor swept up by "Queue All Updates" yet).
+    const rowNeedsStep3Input = (r: EnrichedRow) => {
+        const flags = step3FlagsMap.get(r.line_id) || [];
+        return flags.some(f => !r.step3_actions?.[f.key]);
+    };
+
     const p2FilteredRows = useMemo(() => {
         const base = validationRows.filter(isRowAccepted);
         if (p2Filter === 'ALL') return base;
-        const isNeedsInput = (r: EnrichedRow) => {
-            const { diff } = calculatePriceDiff(toNum(r.unit_price), toNum(r.master_cost || 0));
-            return r.price_check_status === 'FAIL' || diff > 0.01 || isEanMismatch(r);
-        };
-        if (p2Filter === 'LOOKS_GOOD') return base.filter(r => !isNeedsInput(r));
-        return base.filter(isNeedsInput);
-    }, [validationRows, p2Filter, productMasterList]);
+        if (p2Filter === 'LOOKS_GOOD') return base.filter(r => !rowNeedsStep3Input(r));
+        return base.filter(rowNeedsStep3Input);
+    }, [validationRows, p2Filter, productMasterList, step3FlagsMap]);
+
+    const setStep3Action = (lineId: string, flagKey: string, action: 'REQUEST_UPDATE' | 'ACCEPT_AS_IS' | 'DISMISS') => {
+        setValidationRows(prev => prev.map(r =>
+            r.line_id === lineId ? { ...r, step3_actions: { ...r.step3_actions, [flagKey]: action } } : r
+        ));
+    };
+
+    const setStep3ReportToVendor = (lineId: string, value: boolean) => {
+        setValidationRows(prev => prev.map(r => r.line_id === lineId ? { ...r, step3_report_to_vendor: value } : r));
+    };
+
+    // "Queue All Updates" — stamps REQUEST_UPDATE on every flag still on default,
+    // skipping any flag already switched to Accept as-is / Dismiss.
+    const handleQueueAllUpdates = () => {
+        setValidationRows(prev => prev.map(r => {
+            const flags = step3FlagsMap.get(r.line_id) || [];
+            if (flags.length === 0) return r;
+            const nextActions = { ...r.step3_actions };
+            let changed = false;
+            flags.forEach(f => {
+                if (!nextActions[f.key]) { nextActions[f.key] = 'REQUEST_UPDATE'; changed = true; }
+            });
+            return changed ? { ...r, step3_actions: nextActions } : r;
+        }));
+    };
 
     const summaryStats = useMemo(() => {
         const matched = validationRows.filter(r => r.match_status === 'MATCH' || r.match_status === 'MATCH_MULTIPLE_VARIANT').length;
@@ -2348,12 +2501,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     : Math.min(99, Math.round((priceEanTick / TOTAL_TICKS) * 100));
 
                 const acceptedRows = validationRows.filter(isRowAccepted);
-                const priceVarianceCount = acceptedRows.filter(r => {
-                    const { diff } = calculatePriceDiff(toNum(r.unit_price), toNum(r.master_cost || 0));
-                    return diff > 0.01;
-                }).length;
-                const eanIssueCount = acceptedRows.filter(isEanMismatch).length;
-                const idUpdateCount = acceptedRows.filter(r => r.resolution_update_id).length;
+                const acceptedFlags = acceptedRows.flatMap(r => step3FlagsMap.get(r.line_id) || []);
+                const priceVarianceCount = acceptedFlags.filter(f => f.key === 'PRICE_VARIANCE' || f.key === 'PRICE_MISSING').length;
+                const eanIssueCount = acceptedFlags.filter(f => f.key === 'EAN_CONFLICT').length;
+                const idUpdateCount = acceptedFlags.filter(f => f.key === 'ID_AN' || f.key === 'ID_FC').length;
 
                 return (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-sm">
@@ -3258,67 +3409,61 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                         <Badge variant="info" className="text-[10px]">Step 3 of 5</Badge>
                     </div>
 
-                    {/* Summary counters from validation */}
-                    {validationRows.length > 0 && (
-                        <div className="grid grid-cols-4 gap-4">
-                            <Card className="bg-white dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 border-l-4 border-l-blue-500 p-5 flex flex-col gap-2">
-                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">ID Updates Flagged</p>
-                                <p className="text-3xl font-black text-blue-600 dark:text-blue-400">
-                                    {validationRows.filter(r => r.resolution_update_id).length}
-                                </p>
-                                <p className="text-xs text-slate-500 dark:text-slate-500">Items where Article ID will be updated in master</p>
-                            </Card>
-                            <Card className="bg-white dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 border-l-4 border-l-purple-500 p-5 flex flex-col gap-2">
-                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Price Updates Flagged</p>
-                                <p className="text-3xl font-black text-purple-600 dark:text-purple-400">
-                                    {validationRows.filter(r => r.resolution_update_price).length}
-                                </p>
-                                <p className="text-xs text-slate-500 dark:text-slate-500">Items where RMB price will be updated in master</p>
-                            </Card>
-                            <Card className="bg-white dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 border-l-4 border-l-teal-500 p-5 flex flex-col gap-2">
-                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">EAN Updates Flagged</p>
-                                <p className="text-3xl font-black text-teal-600 dark:text-teal-400">
-                                    {validationRows.filter(r => r.resolution_update_ean).length}
-                                </p>
-                                <p className="text-xs text-slate-500 dark:text-slate-500">Items where EAN will be updated in master</p>
-                            </Card>
-                            <Card className="bg-white dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 border-l-4 border-l-amber-500 p-5 flex flex-col gap-2">
-                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">EAN Issues</p>
-                                <p className="text-3xl font-black text-amber-600 dark:text-amber-400">
-                                    {validationRows.filter(isEanMismatch).length}
-                                </p>
-                                <p className="text-xs text-slate-500 dark:text-slate-500">Items where invoice EAN doesn't match master EAN</p>
-                            </Card>
-                        </div>
-                    )}
+                    {/* Summary counters — one per Step 3 flag category */}
+                    {validationRows.length > 0 && (() => {
+                        const allFlags = validationRows.flatMap(r => step3FlagsMap.get(r.line_id) || []);
+                        const priceCount = allFlags.filter(f => f.key === 'PRICE_VARIANCE' || f.key === 'PRICE_MISSING').length;
+                        const idCount = allFlags.filter(f => f.key === 'ID_AN' || f.key === 'ID_FC').length;
+                        const eanCount = allFlags.filter(f => f.key === 'EAN_CONFLICT').length;
+                        return (
+                            <div className="grid grid-cols-3 gap-4">
+                                <Card className="bg-white dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 border-l-4 border-l-purple-500 p-5 flex flex-col gap-2">
+                                    <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Price Flags</p>
+                                    <p className="text-3xl font-black text-purple-600 dark:text-purple-400">{priceCount}</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-500">Price differs &gt;1% or missing from master</p>
+                                </Card>
+                                <Card className="bg-white dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 border-l-4 border-l-blue-500 p-5 flex flex-col gap-2">
+                                    <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">ID Flags (AN / FC)</p>
+                                    <p className="text-3xl font-black text-blue-600 dark:text-blue-400">{idCount}</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-500">Article Number / Accounting SKU conflicts with master</p>
+                                </Card>
+                                <Card className="bg-white dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 border-l-4 border-l-teal-500 p-5 flex flex-col gap-2">
+                                    <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">EAN Flags</p>
+                                    <p className="text-3xl font-black text-teal-600 dark:text-teal-400">{eanCount}</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-500">Invoice EAN conflicts with or is missing from master</p>
+                                </Card>
+                            </div>
+                        );
+                    })()}
 
                     {/* Filter Bar */}
                     {validationRows.length > 0 && (() => {
-                        const base = validationRows.filter(r =>
-                            r.match_status !== 'UNMATCHED' &&
-                            !(r.match_status === 'MISMATCH_MULTIPLE_VARIANT' && !r.matched_sku)
-                        );
-                        const isNeedsInput = (r: EnrichedRow) => {
-                            const { diff } = calculatePriceDiff(toNum(r.unit_price), toNum(r.master_cost || 0));
-                            return r.price_check_status === 'FAIL' || diff > 0.01 || isEanMismatch(r);
-                        };
-                        const looksGoodCount = base.filter(r => !isNeedsInput(r)).length;
-                        const needsInputCount = base.filter(isNeedsInput).length;
+                        const base = validationRows.filter(isRowAccepted);
+                        const looksGoodCount = base.filter(r => !rowNeedsStep3Input(r)).length;
+                        const needsInputCount = base.filter(rowNeedsStep3Input).length;
                         return (
-                            <div className="flex flex-wrap items-center gap-2 bg-slate-100/80 dark:bg-slate-800/40 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                                {[
-                                    { label: 'All', value: 'ALL', count: base.length, activeClass: 'bg-slate-700 border-slate-500 text-white' },
-                                    { label: 'Looks Good', value: 'LOOKS_GOOD', count: looksGoodCount, activeClass: 'bg-emerald-600 border-emerald-500 text-white' },
-                                    { label: 'Needs Your Input', value: 'NEEDS_INPUT', count: needsInputCount, activeClass: 'bg-amber-500 border-amber-400 text-white' },
-                                ].map(f => (
-                                    <button
-                                        key={f.value}
-                                        onClick={() => setP2Filter(f.value as any)}
-                                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all ${p2Filter === f.value ? f.activeClass : 'bg-slate-200 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-slate-400 dark:hover:border-slate-500'}`}
-                                    >
-                                        {f.label} ({f.count})
-                                    </button>
-                                ))}
+                            <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-100/80 dark:bg-slate-800/40 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    {[
+                                        { label: 'All', value: 'ALL', count: base.length, activeClass: 'bg-slate-700 border-slate-500 text-white' },
+                                        { label: 'Looks Good', value: 'LOOKS_GOOD', count: looksGoodCount, activeClass: 'bg-emerald-600 border-emerald-500 text-white' },
+                                        { label: 'Needs Your Input', value: 'NEEDS_INPUT', count: needsInputCount, activeClass: 'bg-amber-500 border-amber-400 text-white' },
+                                    ].map(f => (
+                                        <button
+                                            key={f.value}
+                                            onClick={() => setP2Filter(f.value as any)}
+                                            className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all ${p2Filter === f.value ? f.activeClass : 'bg-slate-200 dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-slate-400 dark:hover:border-slate-500'}`}
+                                        >
+                                            {f.label} ({f.count})
+                                        </button>
+                                    ))}
+                                </div>
+                                <button
+                                    onClick={handleQueueAllUpdates}
+                                    className="px-3 py-1.5 rounded-full text-[10px] font-bold border bg-purple-600 border-purple-500 text-white hover:bg-purple-700 transition-all"
+                                >
+                                    Queue All Updates
+                                </button>
                             </div>
                         );
                     })()}
@@ -3331,48 +3476,16 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                     <thead className="bg-slate-50 dark:bg-slate-900 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-700">
                                         <tr className="text-slate-500 dark:text-slate-400 text-[10px] uppercase tracking-wider font-bold">
                                             <th className="px-3 py-3 w-[10%]">SKU</th>
-                                            <th className="px-3 py-3 w-[20%]">NAME</th>
+                                            <th className="px-3 py-3 w-[18%]">NAME</th>
                                             <th className="px-3 py-3 w-[14%]">CODES (AN / FC / EAN)</th>
                                             <th className="px-3 py-3 w-[6%] text-right">QTY</th>
-                                            <th className="px-3 py-3 w-[7%] text-right">INVOICE ¥</th>
-                                            <th className="px-3 py-3 w-[7%] text-right">MASTER ¥</th>
-                                            <th className="px-3 py-3 w-[7%] text-right">DIFF</th>
-                                            <th className="px-3 py-3 w-[17%]">
-                                                <div className="space-y-1.5">
-                                                    <span>ID / PRICE / EAN UPDATE</span>
-                                                    <div className="flex gap-1">
-                                                        <button
-                                                            onClick={() => {
-                                                                const allSet = validationRows.every(r => r.resolution_update_id);
-                                                                setValidationRows(prev => prev.map(r => ({ ...r, resolution_update_id: !allSet })));
-                                                            }}
-                                                            className="px-2 py-0.5 rounded text-[9px] font-bold bg-blue-600/20 text-blue-400 border border-blue-600/30 hover:bg-blue-600/40 transition-all"
-                                                        >ID All</button>
-                                                        <button
-                                                            onClick={() => {
-                                                                const allSet = validationRows.every(r => r.resolution_update_price);
-                                                                setValidationRows(prev => prev.map(r => ({ ...r, resolution_update_price: !allSet })));
-                                                            }}
-                                                            className="px-2 py-0.5 rounded text-[9px] font-bold bg-purple-600/20 text-purple-400 border border-purple-600/30 hover:bg-purple-600/40 transition-all"
-                                                        >¥ All</button>
-                                                        <button
-                                                            onClick={() => {
-                                                                const allSet = validationRows.every(r => r.resolution_update_ean);
-                                                                setValidationRows(prev => prev.map(r => ({ ...r, resolution_update_ean: !allSet })));
-                                                            }}
-                                                            className="px-2 py-0.5 rounded text-[9px] font-bold bg-teal-600/20 text-teal-400 border border-teal-600/30 hover:bg-teal-600/40 transition-all"
-                                                        >EAN All</button>
-                                                    </div>
-                                                </div>
-                                            </th>
+                                            <th className="px-3 py-3 w-[8%] text-right">INVOICE ¥</th>
+                                            <th className="px-3 py-3 w-[40%]">FLAGS</th>
                                             <th className="px-3 py-3 w-[4%]"></th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
                                         {p2FilteredRows.map((row) => {
-                                            const masterCost = toNum(row.master_cost || 0);
-                                            const { diff, percentage } = calculatePriceDiff(toNum(row.unit_price), masterCost);
-                                            const diffColor = diff > 0.01 ? 'text-red-500' : diff < -0.01 ? 'text-emerald-500' : 'text-slate-400';
                                             const rowCodes = (row.factory_code || '').split('|').filter(Boolean);
                                             const masterEan = productMasterList.find(p => p.id === (row.matched_sku || row.sku))?.ean || '';
                                             const eanIsNew = isNewEan(row);
@@ -3463,49 +3576,60 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                             placeholder="0.00"
                                                         />
                                                     </td>
-                                                    {/* MASTER PRICE */}
-                                                    <td className="px-3 py-3 text-right">
-                                                        <span className="font-mono text-sm text-slate-500 dark:text-slate-400">
-                                                            {masterCost > 0 ? `¥${masterCost.toFixed(2)}` : '—'}
-                                                        </span>
-                                                    </td>
-                                                    {/* DIFF */}
-                                                    <td className="px-3 py-3 text-right">
-                                                        {masterCost > 0 && row.unit_price > 0 ? (
-                                                            <div className="space-y-0.5">
-                                                                <p className={`text-sm font-black ${diffColor}`}>
-                                                                    {diff !== 0 ? `${diff > 0 ? '+' : ''}${fmtNumber(Math.abs(diff), 0)}` : '0'}
-                                                                </p>
-                                                                <p className={`text-xs font-bold ${diffColor}`}>
-                                                                    {percentage !== 0 ? `${percentage > 0 ? '+' : ''}${fmtNumber(percentage, 1)}%` : '0%'}
-                                                                </p>
-                                                            </div>
-                                                        ) : (
-                                                            <span className="text-slate-500 text-sm">—</span>
-                                                        )}
-                                                    </td>
-                                                    {/* ID / PRICE / EAN UPDATE TOGGLES */}
+                                                    {/* FLAGS */}
                                                     <td className="px-3 py-3">
-                                                        <div className="flex flex-col gap-1.5">
-                                                            <button
-                                                                onClick={() => handleRowChange(row.line_id, 'resolution_update_id', !row.resolution_update_id)}
-                                                                className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${row.resolution_update_id ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-300 dark:border-slate-700 hover:border-blue-500/50'}`}
-                                                            >
-                                                                {row.resolution_update_id ? '✓ ' : ''}Update ID in Master
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleRowChange(row.line_id, 'resolution_update_price', !row.resolution_update_price)}
-                                                                className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${row.resolution_update_price ? 'bg-purple-600 text-white border-purple-500' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-300 dark:border-slate-700 hover:border-purple-500/50'}`}
-                                                            >
-                                                                {row.resolution_update_price ? '✓ ' : ''}Update ¥ in Master
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleRowChange(row.line_id, 'resolution_update_ean', !row.resolution_update_ean)}
-                                                                className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${row.resolution_update_ean ? 'bg-teal-600 text-white border-teal-500' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-300 dark:border-slate-700 hover:border-teal-500/50'}`}
-                                                            >
-                                                                {row.resolution_update_ean ? '✓ ' : ''}Update EAN in Master
-                                                            </button>
-                                                        </div>
+                                                        {(() => {
+                                                            const flags = step3FlagsMap.get(row.line_id) || [];
+                                                            if (flags.length === 0) {
+                                                                return <Badge variant="success" className="text-[10px]">✓ Clean</Badge>;
+                                                            }
+                                                            return (
+                                                                <div className="space-y-2">
+                                                                    {flags.map(flag => {
+                                                                        const action = row.step3_actions?.[flag.key] || 'REQUEST_UPDATE';
+                                                                        const options = [
+                                                                            { value: 'REQUEST_UPDATE' as const, label: 'Request Update', activeClass: 'bg-purple-600 text-white border-purple-500' },
+                                                                            { value: 'ACCEPT_AS_IS' as const, label: 'Accept as-is', activeClass: 'bg-emerald-600 text-white border-emerald-500' },
+                                                                            { value: 'DISMISS' as const, label: 'Dismiss', activeClass: 'bg-slate-500 text-white border-slate-400' },
+                                                                        ];
+                                                                        return (
+                                                                            <div key={flag.key} className="flex flex-col gap-1 bg-slate-50 dark:bg-slate-900/40 rounded-lg px-2 py-1.5 border border-slate-200 dark:border-slate-700">
+                                                                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                                                    <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300">{flag.label}</span>
+                                                                                    <div className="flex gap-1">
+                                                                                        {options.map(opt => (
+                                                                                            <button
+                                                                                                key={opt.value}
+                                                                                                onClick={() => setStep3Action(row.line_id, flag.key, opt.value)}
+                                                                                                className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                                                                                                    action === opt.value
+                                                                                                        ? opt.activeClass
+                                                                                                        : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600 hover:border-slate-400'
+                                                                                                }`}
+                                                                                            >
+                                                                                                {opt.label}
+                                                                                            </button>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                </div>
+                                                                                <p className="text-[9px] text-slate-500 dark:text-slate-500">{flag.detail}</p>
+                                                                                {flag.reportToVendorEligible && (
+                                                                                    <label className="flex items-center gap-1.5 text-[9px] text-slate-500 dark:text-slate-400 cursor-pointer">
+                                                                                        <input
+                                                                                            type="checkbox"
+                                                                                            checked={!!row.step3_report_to_vendor}
+                                                                                            onChange={(e) => setStep3ReportToVendor(row.line_id, e.target.checked)}
+                                                                                            className="w-3 h-3"
+                                                                                        />
+                                                                                        Report to Vendor
+                                                                                    </label>
+                                                                                )}
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            );
+                                                        })()}
                                                     </td>
                                                     {/* NOTE ICON */}
                                                     <td className="px-2 py-3 text-center align-top">
