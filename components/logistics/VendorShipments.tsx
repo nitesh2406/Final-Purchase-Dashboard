@@ -2936,15 +2936,21 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                 <TrashIcon className="w-3 h-3" /> Remove
                                                             </button>
                                                         </div>
-                                                    ) : ['MATCH', 'MATCH_MULTIPLE_VARIANT', 'MISMATCH', 'MISMATCH_MULTIPLE_VARIANT', 'UNMATCHED'].includes(row.match_status) ? (
+                                                    ) : ['MATCH', 'MATCH_MULTIPLE_VARIANT', 'MISMATCH', 'MISMATCH_MULTIPLE_VARIANT', 'UNMATCHED'].includes(row.match_status) ? (() => {
+                                                        // Render as accepted whenever isRowAccepted() would already let this row
+                                                        // through to Allocation — not just when resolution_action literally
+                                                        // equals 'ACCEPT' — so a row that qualifies for auto-accept never shows
+                                                        // as "needs a click" even if the explicit stamp was somehow missed.
+                                                        const showsAccepted = isRowAccepted(row);
+                                                        return (
                                                         <div className="inline-flex items-stretch rounded-lg overflow-hidden">
                                                             {/* Primary label */}
                                                             <button
                                                                 onClick={() => handleRowChange(row.line_id, 'resolution_action',
-                                                                    row.resolution_action === 'ACCEPT' ? '' : 'ACCEPT'
+                                                                    showsAccepted && row.resolution_action === 'ACCEPT' ? '' : 'ACCEPT'
                                                                 )}
                                                                 className={`px-3 py-1.5 text-xs font-semibold transition-all whitespace-nowrap rounded-l-lg ${
-                                                                    row.resolution_action === 'ACCEPT'
+                                                                    showsAccepted
                                                                         ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                                                                         : row.resolution_action === 'REJECT_LINE'
                                                                             ? 'bg-orange-500 hover:bg-orange-600 text-white'
@@ -2953,13 +2959,14 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                                 : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
                                                                 }`}
                                                             >
-                                                                {row.resolution_action === 'REJECT_LINE' ? 'Skip'
+                                                                {showsAccepted ? 'Accept'
+                                                                    : row.resolution_action === 'REJECT_LINE' ? 'Skip'
                                                                     : row.resolution_action === 'REQUEST_NEW_SKU' ? 'New SKU'
                                                                     : 'Accept'}
                                                             </button>
                                                             {/* Divider */}
                                                             <div className={`w-px shrink-0 ${
-                                                                row.resolution_action === 'ACCEPT' ? 'bg-emerald-500'
+                                                                showsAccepted ? 'bg-emerald-500'
                                                                 : row.resolution_action === 'REJECT_LINE' ? 'bg-orange-400'
                                                                 : row.resolution_action === 'REQUEST_NEW_SKU' ? 'bg-blue-500'
                                                                 : 'bg-slate-300 dark:bg-slate-600'
@@ -2979,7 +2986,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                 }}
                                                                 aria-label="More actions"
                                                                 className={`px-2 py-1.5 text-xs font-semibold transition-all rounded-r-lg ${
-                                                                    row.resolution_action === 'ACCEPT'
+                                                                    showsAccepted
                                                                         ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
                                                                         : row.resolution_action === 'REJECT_LINE'
                                                                             ? 'bg-orange-600 hover:bg-orange-700 text-white'
@@ -2991,7 +2998,8 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                 <ChevronDownIcon className={`w-3.5 h-3.5 transition-transform ${openDropdownId === row.line_id ? 'rotate-180' : ''}`} />
                                                             </button>
                                                         </div>
-                                                    ) : (
+                                                        );
+                                                    })() : (
                                                         <span className="text-slate-500 dark:text-slate-600 text-xs italic">—</span>
                                                     )}
                                                 </td>
