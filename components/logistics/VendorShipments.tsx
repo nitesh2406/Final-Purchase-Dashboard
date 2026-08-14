@@ -464,6 +464,22 @@ const DEFAULT_NAME_MATCH_THRESHOLD = 50;
 const MATCH_CONDITION_STATUSES = new Set(['MATCH', 'MISMATCH', 'MATCH_MULTIPLE_VARIANT', 'MISMATCH_MULTIPLE_VARIANT', 'UNMATCHED']);
 
 /**
+ * Rows where both SKU identity and price validation already passed don't need a
+ * manual Accept click — pre-mark them so they flow straight through. Applied both
+ * right after a fresh upload and when restoring a saved draft from localStorage,
+ * so a draft saved before this rule existed still gets it applied on load. Never
+ * overrides an explicit resolution_action the user already set.
+ */
+const withAutoAccept = (rows: EnrichedRow[]): EnrichedRow[] =>
+    rows.map(r =>
+        !r.resolution_action
+        && (r.match_status === 'MATCH' || r.match_status === 'MATCH_MULTIPLE_VARIANT')
+        && r.price_check_status !== 'FAIL'
+            ? { ...r, resolution_action: 'ACCEPT' }
+            : r
+    );
+
+/**
  * Builds the "Match Condition" tooltip steps (Validate Items tab only) from the row's
  * actual match data, following: Code lookup (EAN/FC/ID) -> Multiple check -> MY ID check.
  * Price variance is deliberately not shown here — that's covered by the ID / Price / EAN
@@ -757,7 +773,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     setVendorCode(parsed.vendorCode || '');
                     setShipmentDate(parsed.shipmentDate || new Date().toISOString().split('T')[0]);
                     setShippingMode(parsed.shippingMode || '');
-                    setValidationRows(parsed.validationRows || []);
+                    setValidationRows(withAutoAccept(parsed.validationRows || []));
                     setAllocationData(parsed.allocationData || []);
                     setAllocationSummary(parsed.allocationSummary || null);
                     setReviewData(parsed.reviewData || null);
@@ -1136,13 +1152,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             setLastResponse(result);
 
             if (result.status === 'success') {
-                // Rows where both SKU identity and price validation already passed don't
-                // need a manual Accept click — pre-mark them so they flow straight through.
-                const rows = (result.rows || []).map((r: any) =>
-                    (r.match_status === 'MATCH' || r.match_status === 'MATCH_MULTIPLE_VARIANT') && r.price_check_status !== 'FAIL'
-                        ? { ...r, resolution_action: 'ACCEPT' }
-                        : r
-                );
+                const rows = withAutoAccept(result.rows || []);
                 setValidationRows(rows);
                 setBackendIssues(result.issues || []);
                 if (result.shipmentId) setInvoiceNumber(result.shipmentId);
