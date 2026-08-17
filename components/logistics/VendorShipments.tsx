@@ -1084,8 +1084,8 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
     // Gate for everything past Validate Items: only rows the user (explicitly or
     // implicitly, via an untouched clean MATCH) accepted move forward. Rows resolved
-    // as Skip (REJECT_LINE) or REQUEST_NEW_SKU — or left unresolved on an ambiguous
-    // match — stay behind and never reach ID/Price/EAN Review or Allocation.
+    // as REQUEST_NEW_SKU — or left unresolved on an ambiguous match — stay behind
+    // and never reach ID/Price/EAN Review or Allocation.
     // A row is implicitly accepted (no resolution_action set) purely on SKU-identity
     // match quality — price is intentionally NOT part of this gate; it's Step 3's
     // own concern, reviewed separately via its own per-flag actions.
@@ -1096,6 +1096,14 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             && (row.match_status === 'MATCH' || row.match_status === 'MATCH_MULTIPLE_VARIANT')) return true;
         return false;
     };
+
+    // A MISMATCH/UNMATCHED row's matched_sku may only be a best-guess suggestion —
+    // Accept must stay blocked until the user has manually confirmed which SKU was
+    // actually procured (via the SKU column). Confirming flips match_status to
+    // MATCH via handleManualMatch, at which point the row becomes acceptable like
+    // any other clean match.
+    const canAcceptRow = (row: EnrichedRow) =>
+        row.match_status === 'MATCH' || row.match_status === 'MATCH_MULTIPLE_VARIANT';
 
     // Step 3 flags (Price / ID(AN) / ID(FC) / EAN) per the Step 3 spec doc — computed once
     // per row and reused across the summary counters, filter bar, and table body.
@@ -1168,7 +1176,6 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             if (r.match_status === 'MISMATCH_MULTIPLE_VARIANT' && !r.matched_sku) return true;
 
             if (r.resolution_action === 'REQUEST_NEW_SKU') return false;
-            if (r.resolution_action === 'REJECT_LINE') return false;
             if (r.resolution_action === 'Skip Item') return false;
             if (r.resolution_action === 'ACCEPT') return false;
             if (r.resolution_action === 'OVERRIDE') return false;
@@ -1404,15 +1411,21 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             alert(`Please resolve ${unresolvedRows.length} unmatched items before proceeding.`);
             return;
         }
-        
+
+        // Mismatch/unmatched rows with a merely-suggested SKU still need the user
+        // to manually confirm it — "Approve All" only sweeps up already-clean matches.
+        const needsManualConfirm = validationRows.filter(row => !row.resolution_action && !canAcceptRow(row)).length;
+
         setValidationRows(prev => prev.map(row => {
-            if (!row.resolution_action) {
+            if (!row.resolution_action && canAcceptRow(row)) {
                 return { ...row, resolution_action: 'ACCEPT' };
             }
             return row;
         }));
-        
-        alert('All items validated! Use "Confirm and Proceed to Allocation" button.');
+
+        alert(needsManualConfirm > 0
+            ? `Accepted all clean matches. ${needsManualConfirm} item${needsManualConfirm !== 1 ? 's' : ''} still need a manually confirmed SKU before you can proceed.`
+            : 'All items validated! Use "Confirm and Proceed to Allocation" button.');
     };
 
     const handleConfirmValidation = async () => {
@@ -2749,13 +2762,14 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                 <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500 dark:text-slate-400">Resolution</span>
                                                 <button
                                                     onClick={() => {
-                                                        const allAccepted = filteredRows.every(r => r.resolution_action === 'ACCEPT');
-                                                        setValidationRows(prev => prev.map(r =>
-                                                            filteredRows.find(fr => fr.line_id === r.line_id)
-                                                                ? { ...r, resolution_action: allAccepted ? '' : 'ACCEPT' }
-                                                                : r
-                                                        ));
+                                                        const acceptable = filteredRows.filter(r => canAcceptRow(r));
+                                                        const allAccepted = acceptable.length > 0 && acceptable.every(r => r.resolution_action === 'ACCEPT');
+                                                        setValidationRows(prev => prev.map(r => {
+                                                            if (!canAcceptRow(r) || !filteredRows.some(fr => fr.line_id === r.line_id)) return r;
+                                                            return { ...r, resolution_action: allAccepted ? '' : 'ACCEPT' };
+                                                        }));
                                                     }}
+                                                    title="Accepts clean matches only — mismatch/unmatched rows still need a manually confirmed SKU"
                                                     className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 hover:bg-emerald-600/40 transition-all"
                                                 >
                                                     ✓ All
@@ -3094,32 +3108,39 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                         // equals 'ACCEPT' — so a row that qualifies for auto-accept never shows
                                                         // as "needs a click" even if the explicit stamp was somehow missed.
                                                         const showsAccepted = isRowAccepted(row);
+                                                        // Mismatch/unmatched rows can't be Accepted until the user has
+                                                        // manually confirmed the SKU via the SKU column — see canAcceptRow.
+                                                        const acceptable = canAcceptRow(row);
+                                                        const acceptLocked = !acceptable && !showsAccepted;
                                                         return (
                                                         <div className="inline-flex items-stretch rounded-lg overflow-hidden">
                                                             {/* Primary label */}
                                                             <button
-                                                                onClick={() => handleRowChange(row.line_id, 'resolution_action',
-                                                                    showsAccepted && row.resolution_action === 'ACCEPT' ? '' : 'ACCEPT'
-                                                                )}
+                                                                onClick={() => {
+                                                                    if (acceptLocked) return;
+                                                                    handleRowChange(row.line_id, 'resolution_action',
+                                                                        showsAccepted && row.resolution_action === 'ACCEPT' ? '' : 'ACCEPT'
+                                                                    );
+                                                                }}
+                                                                disabled={acceptLocked}
+                                                                title={acceptLocked ? 'Confirm the correct SKU (via the SKU column) before accepting' : undefined}
                                                                 className={`px-3 py-1.5 text-xs font-semibold transition-all whitespace-nowrap rounded-l-lg ${
                                                                     showsAccepted
                                                                         ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                                                        : row.resolution_action === 'REJECT_LINE'
-                                                                            ? 'bg-orange-500 hover:bg-orange-600 text-white'
-                                                                            : row.resolution_action === 'REQUEST_NEW_SKU'
-                                                                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                                                        : row.resolution_action === 'REQUEST_NEW_SKU'
+                                                                            ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                                                            : acceptLocked
+                                                                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
                                                                                 : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
                                                                 }`}
                                                             >
                                                                 {showsAccepted ? 'Accept'
-                                                                    : row.resolution_action === 'REJECT_LINE' ? 'Skip'
                                                                     : row.resolution_action === 'REQUEST_NEW_SKU' ? 'New SKU'
                                                                     : 'Accept'}
                                                             </button>
                                                             {/* Divider */}
                                                             <div className={`w-px shrink-0 ${
                                                                 showsAccepted ? 'bg-emerald-500'
-                                                                : row.resolution_action === 'REJECT_LINE' ? 'bg-orange-400'
                                                                 : row.resolution_action === 'REQUEST_NEW_SKU' ? 'bg-blue-500'
                                                                 : 'bg-slate-300 dark:bg-slate-600'
                                                             }`} />
@@ -3140,11 +3161,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                                                 className={`px-2 py-1.5 text-xs font-semibold transition-all rounded-r-lg ${
                                                                     showsAccepted
                                                                         ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
-                                                                        : row.resolution_action === 'REJECT_LINE'
-                                                                            ? 'bg-orange-600 hover:bg-orange-700 text-white'
-                                                                            : row.resolution_action === 'REQUEST_NEW_SKU'
-                                                                                ? 'bg-blue-700 hover:bg-blue-800 text-white'
-                                                                                : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'
+                                                                        : row.resolution_action === 'REQUEST_NEW_SKU'
+                                                                            ? 'bg-blue-700 hover:bg-blue-800 text-white'
+                                                                            : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'
                                                                 }`}
                                                             >
                                                                 <ChevronDownIcon className={`w-3.5 h-3.5 transition-transform ${openDropdownId === row.line_id ? 'rotate-180' : ''}`} />
@@ -3276,6 +3295,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     {openDropdownId && dropdownPos && (() => {
                         const targetRow = filteredRows.find(r => r.line_id === openDropdownId);
                         if (!targetRow) return null;
+                        const targetAcceptable = canAcceptRow(targetRow);
                         return (
                             <div
                                 onClick={e => e.stopPropagation()}
@@ -3283,16 +3303,20 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                 className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden"
                             >
                                 <button
-                                    onClick={() => { handleRowChange(openDropdownId, 'resolution_action', targetRow.resolution_action === 'ACCEPT' ? '' : 'ACCEPT'); setOpenDropdownId(null); setDropdownPos(null); }}
-                                    className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-left transition-colors ${targetRow.resolution_action === 'ACCEPT' ? 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' : 'text-slate-700 dark:text-slate-200 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-300'}`}
+                                    onClick={() => {
+                                        if (!targetAcceptable) return;
+                                        handleRowChange(openDropdownId, 'resolution_action', targetRow.resolution_action === 'ACCEPT' ? '' : 'ACCEPT');
+                                        setOpenDropdownId(null); setDropdownPos(null);
+                                    }}
+                                    disabled={!targetAcceptable}
+                                    title={!targetAcceptable ? 'Confirm the correct SKU (via the SKU column) before accepting' : undefined}
+                                    className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-left transition-colors ${
+                                        !targetAcceptable
+                                            ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                                            : targetRow.resolution_action === 'ACCEPT' ? 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' : 'text-slate-700 dark:text-slate-200 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-300'
+                                    }`}
                                 >
-                                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" /> Accept
-                                </button>
-                                <button
-                                    onClick={() => { handleRowChange(openDropdownId, 'resolution_action', targetRow.resolution_action === 'REJECT_LINE' ? '' : 'REJECT_LINE'); setOpenDropdownId(null); setDropdownPos(null); }}
-                                    className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-left transition-colors ${targetRow.resolution_action === 'REJECT_LINE' ? 'bg-orange-50 dark:bg-orange-500/15 text-orange-700 dark:text-orange-300' : 'text-slate-700 dark:text-slate-200 hover:bg-orange-50 dark:hover:bg-orange-500/10 hover:text-orange-700 dark:hover:text-orange-300'}`}
-                                >
-                                    <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" /> Skip
+                                    <span className={`w-2 h-2 rounded-full shrink-0 ${targetAcceptable ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`} /> Accept
                                 </button>
                                 <button
                                     onClick={() => { handleRowChange(openDropdownId, 'resolution_action', targetRow.resolution_action === 'REQUEST_NEW_SKU' ? '' : 'REQUEST_NEW_SKU'); setOpenDropdownId(null); setDropdownPos(null); }}
@@ -3352,28 +3376,16 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                 <button
                                     onClick={() => {
                                         setValidationRows(prev => prev.map(row =>
-                                            selectedRowIds.has(row.line_id) && row.match_status !== 'MANUAL_ENTRY'
+                                            selectedRowIds.has(row.line_id) && canAcceptRow(row)
                                                 ? { ...row, resolution_action: 'ACCEPT' }
                                                 : row
                                         ));
                                         setSelectedRowIds(new Set());
                                     }}
+                                    title="Accepts clean matches only — mismatch/unmatched rows still need a manually confirmed SKU"
                                     className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors shadow-sm"
                                 >
                                     Bulk Accept
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        setValidationRows(prev => prev.map(row =>
-                                            selectedRowIds.has(row.line_id) && row.match_status !== 'MANUAL_ENTRY'
-                                                ? { ...row, resolution_action: 'REJECT_LINE' }
-                                                : row
-                                        ));
-                                        setSelectedRowIds(new Set());
-                                    }}
-                                    className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-400 text-white text-xs font-bold transition-colors shadow-sm"
-                                >
-                                    Bulk Skip
                                 </button>
                                 <button
                                     onClick={() => setSelectedRowIds(new Set())}
