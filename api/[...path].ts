@@ -7,7 +7,7 @@
 // Static assets and all non-/api SPA routes are served by Vercel's own
 // static hosting per vercel.json, not by this function — this app only
 // registers /api/* routes (see server/app.ts), so nothing else reaches it.
-import { createApiApp } from "../server/app";
+import { createApiApp } from "../server/app.js";
 
 const app = createApiApp();
 

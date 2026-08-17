@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { google } from "googleapis";
-import { verifySessionToken } from "./session";
+import { verifySessionToken } from "./session.js";
 
 // Client IDs the frontend's Google Sign-In button may run under. Accepts a
 // comma-separated ADDITIONAL_GOOGLE_CLIENT_IDS env var so a different client

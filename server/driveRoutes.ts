@@ -1,8 +1,8 @@
 import { Router } from "express";
 import multer from "multer";
-import { driveStorageService, ConflictStrategy } from "./driveStorageService";
-import { getOAuth2Client } from "./driveClient";
-import { requireSession } from "./authMiddleware";
+import { driveStorageService, ConflictStrategy } from "./driveStorageService.js";
+import { getOAuth2Client } from "./driveClient.js";
+import { requireSession } from "./authMiddleware.js";
 
 const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"];
 

@@ -1,9 +1,9 @@
 import express from "express";
 import dns from "dns";
 import { GoogleGenAI } from "@google/genai";
-import { driveRouter } from "./driveRoutes";
-import { requireSession, verifyGoogleIdToken } from "./authMiddleware";
-import { issueSessionToken } from "./session";
+import { driveRouter } from "./driveRoutes.js";
+import { requireSession, verifyGoogleIdToken } from "./authMiddleware.js";
+import { issueSessionToken } from "./session.js";
 
 // Prefer IPv4 first in DNS resolution to prevent sandboxed environment IPv6 timeout fetch failures
 if (typeof dns.setDefaultResultOrder === "function") {

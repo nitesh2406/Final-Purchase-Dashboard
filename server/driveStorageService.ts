@@ -1,5 +1,5 @@
 import { Readable } from "stream";
-import { getDriveClient } from "./driveClient";
+import { getDriveClient } from "./driveClient.js";
 
 const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 const ROOT_FOLDER_NAME = "Finance Uploads";
