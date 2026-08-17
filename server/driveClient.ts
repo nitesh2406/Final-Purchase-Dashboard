@@ -1,8 +1,8 @@
 import { google } from "googleapis";
 
-// Lazy singleton, mirrors the getAiClient() pattern in server.ts.
-// Safe to cache in-memory: this server runs as a persistent Node process
-// (npm start -> node dist/server.cjs), not as stateless serverless functions.
+// Lazy singleton, mirrors the getAiClient() pattern in server/app.ts.
+// Also safe under Vercel's serverless runtime: recomputed once per cold
+// start, then reused across warm invocations within that same instance.
 let driveClient: ReturnType<typeof google.drive> | null = null;
 
 export function getOAuth2Client() {

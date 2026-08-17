@@ -1662,7 +1662,16 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
           headers: getSessionAuthHeaders(),
           body: formData
         });
-        const data = await response.json();
+
+        // A non-JSON response (e.g. the SPA's own index.html coming back because
+        // the upload endpoint isn't actually reachable) must not be swallowed as
+        // an empty success — treat it the same as an explicit failure below.
+        let data: any;
+        try {
+          data = await response.json();
+        } catch {
+          data = { success: false, error: `Upload endpoint returned an unexpected response (HTTP ${response.status}) — the request never reached Drive.` };
+        }
 
         if (data.success) {
           setDriveFolderInfo({ folderId: data.folder.folderId, folderUrl: data.folder.folderUrl });
@@ -1688,10 +1697,27 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             })
           }).catch(err => console.error('Failed to record Drive folder metadata:', err));
         } else {
-          setBackendError(data.error || 'Failed to upload shipment documents to Drive');
+          const message = data.error || 'Failed to upload shipment documents to Drive';
+          setBackendError(message);
+          // Surface this as a per-file failure in the same modal the success path
+          // populates, instead of silently opening it with an empty "0 of 0" list
+          // that reads as nothing-needed-uploading. Reuses the modal's existing
+          // failed-status Retry action, so retrying once the backend is reachable
+          // works the same way a per-file Drive error already does.
+          setDriveUploadResults(prev => {
+            const names = new Set(targets.map(f => f.file.name));
+            const merged = prev.filter(r => !names.has(r.fileName));
+            return [...merged, ...targets.map(f => ({ fileName: f.file.name, status: 'failed' as const, error: message }))];
+          });
         }
       } catch (error: any) {
-        setBackendError(error.message || 'Failed to upload shipment documents to Drive');
+        const message = error.message || 'Failed to upload shipment documents to Drive';
+        setBackendError(message);
+        setDriveUploadResults(prev => {
+          const names = new Set(targets.map(f => f.file.name));
+          const merged = prev.filter(r => !names.has(r.fileName));
+          return [...merged, ...targets.map(f => ({ fileName: f.file.name, status: 'failed' as const, error: message }))];
+        });
       } finally {
         setIsUploadingDocs(false);
         setShowDriveUploadModal(true);
