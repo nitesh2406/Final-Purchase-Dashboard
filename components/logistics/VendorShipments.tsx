@@ -1400,34 +1400,6 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         ));
     };
 
-    const handleApproveAll = () => {
-        const unresolvedRows = validationRows.filter(row => {
-            const needsSelection = row.match_status === 'UNMATCHED' || row.match_status === 'MISMATCH_MULTIPLE_VARIANT';
-            const hasNoSKU = !row.matched_sku && !row.sku;
-            return needsSelection && hasNoSKU;
-        });
-        
-        if (unresolvedRows.length > 0) {
-            alert(`Please resolve ${unresolvedRows.length} unmatched items before proceeding.`);
-            return;
-        }
-
-        // Mismatch/unmatched rows with a merely-suggested SKU still need the user
-        // to manually confirm it — "Approve All" only sweeps up already-clean matches.
-        const needsManualConfirm = validationRows.filter(row => !row.resolution_action && !canAcceptRow(row)).length;
-
-        setValidationRows(prev => prev.map(row => {
-            if (!row.resolution_action && canAcceptRow(row)) {
-                return { ...row, resolution_action: 'ACCEPT' };
-            }
-            return row;
-        }));
-
-        alert(needsManualConfirm > 0
-            ? `Accepted all clean matches. ${needsManualConfirm} item${needsManualConfirm !== 1 ? 's' : ''} still need a manually confirmed SKU before you can proceed.`
-            : 'All items validated! Use "Confirm and Proceed to Allocation" button.');
-    };
-
     const handleConfirmValidation = async () => {
         setAllocationLoading(true);
         setBackendError(null);
@@ -2725,7 +2697,6 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                     <Button variant="secondary" className="h-9 text-xs border-blue-500/30 text-blue-400 hover:bg-blue-500/10" onClick={handleAddManualLine}>
                                         <PlusIcon className="w-4 h-4 mr-1" /> Add Line
                                     </Button>
-                                    <Button className="h-9 text-xs bg-emerald-600 hover:bg-emerald-700" onClick={handleApproveAll}>Approve All Matches</Button>
                                 </div>
                             </div>
                         </>
