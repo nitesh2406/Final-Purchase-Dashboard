@@ -4278,7 +4278,19 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                             </label>
                             <select
                               value={selectedBatchId}
-                              onChange={(e) => setSelectedBatchId(e.target.value)}
+                              onChange={(e) => {
+                                const batchId = e.target.value;
+                                setSelectedBatchId(batchId);
+                                // Carrier + expected delivery are batch-level (the whole
+                                // batch ships together), so default them from the batch
+                                // instead of making the user retype what's already known.
+                                // Cartons/amount/invoice stay this shipment's own values.
+                                const batch = openBatches.find(b => b.batch_id === batchId);
+                                if (batch) {
+                                  setCarrier(batch.carrier || '');
+                                  setExpectedDelivery(batch.expected_delivery ? String(batch.expected_delivery).split('T')[0] : '');
+                                }
+                              }}
                               className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                             >
                               <option value="" className="text-slate-500">Select an open batch...</option>
@@ -4383,6 +4395,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                               className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                               placeholder="e.g. FedEx, DHL, UPS"
                             />
+                            {batchOption === 'existing' && selectedBatchId && carrier && (
+                              <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1 italic">From batch {selectedBatchId} — edit if needed.</p>
+                            )}
                           </div>
 
                           {/* Expected Delivery */}
@@ -4396,6 +4411,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                               onChange={(e) => setExpectedDelivery(e.target.value)}
                               className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                             />
+                            {batchOption === 'existing' && selectedBatchId && expectedDelivery && (
+                              <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1 italic">From batch {selectedBatchId} — edit if needed.</p>
+                            )}
                           </div>
 
                           {/* Notes */}
