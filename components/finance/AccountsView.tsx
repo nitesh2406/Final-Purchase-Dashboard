@@ -161,7 +161,11 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   // settlement-logging backend action, so the ledger is the source of truth here).
   const getInvoiceSettlementInfo = (inv: PurchaseInvoice) => {
     const relevantSettlements = settlementRecords.filter(s => s.invoiceId === inv.invoiceId && s.txnType === 'Invoice Settlement');
-    const totalSettledRmb = relevantSettlements.reduce((sum, s) => sum + s.amountRmb, 0);
+    // Auto FIFO-settlement rows store amountRmb as a negative debit (drawn from the
+    // vendor's own wallet); cross-vendor Adjustment Transfer In rows store it positive.
+    // Both represent the same thing from the invoice's perspective — money applied
+    // against it — so take the magnitude rather than the signed value.
+    const totalSettledRmb = relevantSettlements.reduce((sum, s) => sum + Math.abs(s.amountRmb), 0);
     const balance = Math.max(0, (inv.rmb || 0) - totalSettledRmb);
     const status: 'Unpaid' | 'Partial' | 'Settled' = totalSettledRmb <= 0 ? 'Unpaid' : balance <= 0.01 ? 'Settled' : 'Partial';
     return { totalSettledRmb, balance, status };
@@ -1184,7 +1188,9 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                               
                               // Total RMB spent on actual invoice settlements
                               const invoiceSettlementRecords = relevantRecords.filter(s => s.txnType === 'Invoice Settlement');
-                              const totalSettledRmb = invoiceSettlementRecords.reduce((sum, s) => sum + s.amountRmb, 0);
+                              // Same magnitude-not-sign fix as getInvoiceSettlementInfo above —
+                              // FIFO-settlement rows are stored as negative debits.
+                              const totalSettledRmb = invoiceSettlementRecords.reduce((sum, s) => sum + Math.abs(s.amountRmb), 0);
                               
                               // Checking if there is an explicit advance record in the Settlement Ledger
                               const hasAdvanceRecord = relevantRecords.some(s => s.invoiceId === 'ADVANCE' || s.txnType === 'Advance Payment');

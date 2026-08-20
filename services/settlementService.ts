@@ -729,9 +729,12 @@ export function isBatchFullySettled(
   return linkedInvoiceIds.every(invoiceId => {
     const invoice = purchaseInvoices.find(inv => (inv.invoiceId || '').trim() === invoiceId);
     if (!invoice) return false;
+    // FIFO-settlement rows are stored as negative debits against the vendor's wallet;
+    // cross-vendor Adjustment Transfer In rows are stored positive. Use magnitude, not
+    // signed value, so both count as money applied against the invoice.
     const settledRmb = settlementRecords
       .filter(r => (r.invoiceId || '').trim() === invoiceId && r.txnType === 'Invoice Settlement')
-      .reduce((sum, r) => sum + r.amountRmb, 0);
+      .reduce((sum, r) => sum + Math.abs(r.amountRmb), 0);
     const outstanding = Math.max(0, (invoice.rmb || 0) - settledRmb);
     return outstanding < 0.01; // same rounding tolerance as PaymentLedger.tsx's balanced-allocation check
   });
@@ -752,9 +755,12 @@ export function computeCnfBatchRate(
   const relevant = settlementRecords.filter(
     r => linkedInvoiceIds.has((r.invoiceId || '').trim()) && r.txnType === 'Invoice Settlement'
   );
-  const totalRmb = relevant.reduce((sum, r) => sum + r.amountRmb, 0);
+  // Weight by magnitude, not signed value — FIFO-settlement rows are stored as negative
+  // debits while cross-vendor Adjustment Transfer In rows are positive, and a batch can
+  // mix both kinds across its linked invoices.
+  const totalRmb = relevant.reduce((sum, r) => sum + Math.abs(r.amountRmb), 0);
   if (totalRmb === 0) return 0;
-  const weightedSum = relevant.reduce((sum, r) => sum + r.amountRmb * r.exchangeRateSettlement, 0);
+  const weightedSum = relevant.reduce((sum, r) => sum + Math.abs(r.amountRmb) * r.exchangeRateSettlement, 0);
   return weightedSum / totalRmb;
 }
 
