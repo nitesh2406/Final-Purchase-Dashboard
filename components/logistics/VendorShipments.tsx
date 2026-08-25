@@ -730,6 +730,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const [selectedBatchId, setSelectedBatchId] = useState('');
     const [openBatches, setOpenBatches] = useState<any[]>([]);
     const [openBatchesError, setOpenBatchesError] = useState<string | null>(null);
+    const [batchShipments, setBatchShipments] = useState<any[]>([]);
+    const [batchShipmentsLoading, setBatchShipmentsLoading] = useState(false);
+    const [batchShipmentsError, setBatchShipmentsError] = useState<string | null>(null);
     const [cartonCount, setCartonCount] = useState(0);
     const [finalShipmentAmount, setFinalShipmentAmount] = useState(0);
     const [notes, setNotes] = useState('');
@@ -992,6 +995,42 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         setOpenBatchesError(error?.message || 'Could not load open batches.');
       }
     };
+
+    // Fetch every shipment already riding in the selected existing batch, so the
+    // user can see what they're joining before finalizing this one.
+    const fetchBatchShipments = async (batchId: string) => {
+      setBatchShipmentsLoading(true);
+      setBatchShipmentsError(null);
+      try {
+        const response = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'get_vendor_shipments' })
+        });
+        const data = await response.json();
+
+        if (data.status === 'success' && Array.isArray(data.records)) {
+          const rows = data.records.filter((r: any) => String(r.batch_id || '').trim() === batchId);
+          setBatchShipments(rows);
+        } else {
+          setBatchShipmentsError(data.message || 'Could not load shipments for this batch.');
+        }
+      } catch (error: any) {
+        console.error('Failed to fetch batch shipments:', error);
+        setBatchShipmentsError(error?.message || 'Could not load shipments for this batch.');
+      } finally {
+        setBatchShipmentsLoading(false);
+      }
+    };
+
+    useEffect(() => {
+      if (batchOption === 'existing' && selectedBatchId) {
+        fetchBatchShipments(selectedBatchId);
+      } else {
+        setBatchShipments([]);
+        setBatchShipmentsError(null);
+      }
+    }, [batchOption, selectedBatchId]);
 
 
     // Load product master list for manual SKU selection
@@ -4309,6 +4348,57 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                           </div>
                         )}
                       </Card>
+
+                      {batchOption === 'existing' && selectedBatchId && (
+                        <Card className="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-6 space-y-4 shadow-sm">
+                          <h4 className="text-sm font-bold text-blue-600 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                            <ArchiveBoxIcon className="w-4 h-4" /> Shipments In {selectedBatchId}
+                          </h4>
+
+                          {batchShipmentsLoading ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Loading shipments…</p>
+                          ) : batchShipmentsError ? (
+                            <p className="text-red-500 dark:text-red-400 text-xs">Couldn't load shipments: {batchShipmentsError}</p>
+                          ) : batchShipments.length === 0 ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">No shipments found for this batch yet.</p>
+                          ) : (
+                            <div className="overflow-x-auto -mx-2">
+                              <table className="w-full text-left border-collapse text-xs min-w-[520px]">
+                                <thead>
+                                  <tr className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
+                                    <th className="px-2 py-2">Shipment ID</th>
+                                    <th className="px-2 py-2">Vendor</th>
+                                    <th className="px-2 py-2">Status</th>
+                                    <th className="px-2 py-2 text-right">Cartons</th>
+                                    <th className="px-2 py-2">Created</th>
+                                    <th className="px-2 py-2">Submitted</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                                  {batchShipments.map((s: any) => (
+                                    <tr key={s.shipment_id}>
+                                      <td className="px-2 py-2 font-mono font-bold text-slate-800 dark:text-white whitespace-nowrap">{s.shipment_id}</td>
+                                      <td className="px-2 py-2">
+                                        <span className="px-1.5 py-0.5 font-bold font-mono bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-600 rounded">
+                                          {s.vendor_code}
+                                        </span>
+                                      </td>
+                                      <td className="px-2 py-2">
+                                        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/40">
+                                          {s.status}
+                                        </span>
+                                      </td>
+                                      <td className="px-2 py-2 text-right font-mono">{s.carton_count}</td>
+                                      <td className="px-2 py-2 whitespace-nowrap text-slate-500 dark:text-slate-400">{formatDate(s.created_at)}</td>
+                                      <td className="px-2 py-2 whitespace-nowrap text-slate-500 dark:text-slate-400">{formatDate(s.submitted_at)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </Card>
+                      )}
                     </div>
 
                     {/* Right: Physical & Invoice Details */}
