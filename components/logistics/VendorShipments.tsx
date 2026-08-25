@@ -4385,7 +4385,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                                       </td>
                                       <td className="px-2 py-2">
                                         <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/40">
-                                          {s.status}
+                                          {/* The Vendor_Shipments sheet's Status column sometimes comes back
+                                              keyed as 'carton count' (with a space) instead of 'status' from
+                                              getSheetData_ — fall back to it so the badge doesn't render blank. */}
+                                          {s.status || s['carton count'] || '—'}
                                         </span>
                                       </td>
                                       <td className="px-2 py-2 text-right font-mono">{s.carton_count}</td>
