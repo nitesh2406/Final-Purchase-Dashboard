@@ -4363,15 +4363,15 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                             <p className="text-xs text-slate-500 dark:text-slate-400">No shipments found for this batch yet.</p>
                           ) : (
                             <div className="overflow-x-auto -mx-2">
-                              <table className="w-full text-left border-collapse text-xs min-w-[520px]">
+                              <table className="w-full text-left border-collapse table-fixed text-xs min-w-[520px]">
                                 <thead>
                                   <tr className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
-                                    <th className="px-2 py-2">Shipment ID</th>
-                                    <th className="px-2 py-2">Vendor</th>
-                                    <th className="px-2 py-2">Status</th>
-                                    <th className="px-2 py-2 text-right">Cartons</th>
-                                    <th className="px-2 py-2">Created</th>
-                                    <th className="px-2 py-2">Submitted</th>
+                                    <th className="px-2 py-2 w-[24%]">Shipment ID</th>
+                                    <th className="px-2 py-2 w-[12%]">Vendor</th>
+                                    <th className="px-2 py-2 w-[14%]">Status</th>
+                                    <th className="px-2 py-2 w-[12%] text-right">Cartons</th>
+                                    <th className="px-2 py-2 w-[19%]">Created</th>
+                                    <th className="px-2 py-2 w-[19%]">Submitted</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
