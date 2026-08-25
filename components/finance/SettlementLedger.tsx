@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  fetchSettlementRecords, 
-  logSettlementRecord, 
+  fetchSettlementRecords,
+  logSettlementRecord,
   submitAdjustmentEntry,
   submitPurchaseInvoice,
   fetchPurchaseInvoices,
+  executeEODExchangeRateEngine,
   SettlementRecord,
   PurchaseInvoice,
   PaymentLog,
@@ -91,6 +92,10 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
   // Sorting State
   const [sortField, setSortField] = useState<keyof SettlementRecord>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Pagination State
+  const [settlementPage, setSettlementPage] = useState(1);
+  const [settlementPageSize, setSettlementPageSize] = useState(10);
 
   // Form State for creating new record locally
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -255,6 +260,17 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
     });
     return data;
   }, [filteredRecords, sortField, sortDirection]);
+
+  useEffect(() => {
+    setSettlementPage(1);
+  }, [selectedVendor, selectedInvoiceId, selectedTxnType, searchQuery, settlementPageSize]);
+
+  const settlementTotalPages = Math.max(1, Math.ceil(sortedAndFilteredRecords.length / settlementPageSize));
+  const settlementEffectivePage = Math.min(settlementPage, settlementTotalPages);
+  const paginatedSettlementRecords = useMemo(() => {
+    const start = (settlementEffectivePage - 1) * settlementPageSize;
+    return sortedAndFilteredRecords.slice(start, start + settlementPageSize);
+  }, [sortedAndFilteredRecords, settlementEffectivePage, settlementPageSize]);
 
   // --- Real-time Dynamic Metrics Aggregation ---
   const dynamicMetrics = useMemo(() => {
@@ -445,6 +461,28 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
             });
           }
           await onRefresh();
+
+          // Auto-run the EOD exchange-rate engine so this invoice gets its ER1/INR
+          // immediately, matching the auto-run behavior on the Purchase Entries tab.
+          try {
+            const freshInvoices = await fetchPurchaseInvoices();
+            const result = await executeEODExchangeRateEngine(freshInvoices, (updated) => {
+              const uniqueMap = new Map();
+              updated.forEach(item => {
+                if (item && item.invoiceId) {
+                  uniqueMap.set(String(item.invoiceId).trim().toLowerCase(), item);
+                }
+              });
+              setPurchaseInvoices(Array.from(uniqueMap.values()));
+            }, vendors as any);
+            if (result.processedCount > 0) {
+              const reFetched = await fetchPurchaseInvoices();
+              setPurchaseInvoices(reFetched);
+              await onRefresh();
+            }
+          } catch (eodErr) {
+            console.warn("Auto EOD run after invoice creation failed (invoice was still saved):", eodErr);
+          }
         } else {
           throw new Error(response.message || 'Invoice propagation failed.');
         }
@@ -974,7 +1012,7 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
       {/* --- FINANCIAL PERSISTENCE MOBILE CARD LIST --- */}
       <div className="md:hidden space-y-4">
         {sortedAndFilteredRecords.length > 0 ? (
-          sortedAndFilteredRecords.map((rec) => {
+          paginatedSettlementRecords.map((rec) => {
             const isGain = rec.forexGainLoss > 0;
             const isLoss = rec.forexGainLoss < 0;
             
@@ -1139,7 +1177,7 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                {sortedAndFilteredRecords.length > 0 ? (
-                 sortedAndFilteredRecords.map((rec) => {
+                 paginatedSettlementRecords.map((rec) => {
                    const isGain = rec.forexGainLoss > 0;
                    const isLoss = rec.forexGainLoss < 0;
                    
@@ -1256,6 +1294,52 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
           </table>
         </div>
       </div>
+
+      {/* PAGINATION CONTROLS (shared by the mobile card list and desktop table above) */}
+      {sortedAndFilteredRecords.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-md px-5 py-3">
+          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+            <span>
+              Showing {(settlementEffectivePage - 1) * settlementPageSize + 1}
+              –{Math.min(settlementEffectivePage * settlementPageSize, sortedAndFilteredRecords.length)} of {sortedAndFilteredRecords.length}
+            </span>
+            <span className="text-gray-300 dark:text-gray-600">|</span>
+            <label className="flex items-center gap-1.5">
+              <span>Rows per page</span>
+              <select
+                value={settlementPageSize}
+                onChange={e => setSettlementPageSize(Number(e.target.value))}
+                className="bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 text-xs text-gray-900 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition cursor-pointer"
+              >
+                {[10, 20, 50].map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setSettlementPage(p => Math.max(1, p - 1))}
+              disabled={settlementEffectivePage <= 1}
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+            >
+              Prev
+            </button>
+            <span className="px-2 text-xs font-mono text-gray-600 dark:text-gray-300">
+              Page {settlementEffectivePage} / {settlementTotalPages}
+            </span>
+            <button
+              onClick={() => setSettlementPage(p => Math.min(settlementTotalPages, p + 1))}
+              disabled={settlementEffectivePage >= settlementTotalPages}
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+
           {/* --- ADD TRANSACTION MODAL FORM --- */}
       {isFormOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4">

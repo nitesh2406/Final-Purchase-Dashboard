@@ -98,7 +98,16 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   // URL-synced filter state
   const [searchQuery, setSearchQuery] = useQueryParamFast('search', '');
   const [selectedVendorFilter, setSelectedVendorFilter] = useQueryParam<string>('vendor', '');
+  const [statusFilter, setStatusFilter] = useQueryParam<string>('status', 'all');
   const [configError, setConfigError] = useState<string | null>(null);
+
+  // Purchase Entries pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Payment Entries pagination
+  const [paymentsPage, setPaymentsPage] = useState(1);
+  const [paymentsPageSize, setPaymentsPageSize] = useState(10);
   
   // EOD calculations report log console
   const [engineLogs, setEngineLogs] = useState<string[]>([]);
@@ -272,14 +281,14 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   };
 
   // Filter criteria computation
-  const filteredInvoices = useMemo(() => {
+  const searchVendorFilteredInvoices = useMemo(() => {
     const list = invoices.filter(inv => {
-      const matchSearch = 
-        inv.invoiceId.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      const matchSearch =
+        inv.invoiceId.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (inv.notes || '').toLowerCase().includes(searchQuery.toLowerCase());
-      
+
       const matchVendor = selectedVendorFilter === '' || inv.vendorCode === selectedVendorFilter;
-      
+
       return matchSearch && matchVendor;
     });
 
@@ -292,6 +301,40 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
       return true;
     });
   }, [invoices, searchQuery, selectedVendorFilter]);
+
+  // Counts for the status filter badges reflect search/vendor filters, but not the
+  // status filter itself, so switching badges doesn't move the other badges' counts.
+  const statusFilterCounts = useMemo(() => {
+    let settled = 0;
+    let unpaid = 0;
+    searchVendorFilteredInvoices.forEach(inv => {
+      if (getInvoiceSettlementInfo(inv).status === 'Settled') settled++;
+      else unpaid++;
+    });
+    return { all: searchVendorFilteredInvoices.length, settled, unpaid };
+  }, [searchVendorFilteredInvoices, settlementRecords]);
+
+  const filteredInvoices = useMemo(() => {
+    if (statusFilter === 'all') return searchVendorFilteredInvoices;
+    // "Unpaid" bucket covers both 'Unpaid' and 'Partial' — anything with money still owed.
+    return searchVendorFilteredInvoices.filter(inv =>
+      statusFilter === 'settled'
+        ? getInvoiceSettlementInfo(inv).status === 'Settled'
+        : getInvoiceSettlementInfo(inv).status !== 'Settled'
+    );
+  }, [searchVendorFilteredInvoices, statusFilter, settlementRecords]);
+
+  // Reset to page 1 whenever the visible result set would change under the current page
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedVendorFilter, statusFilter, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / pageSize));
+  const effectivePage = Math.min(currentPage, totalPages);
+  const paginatedInvoices = useMemo(() => {
+    const start = (effectivePage - 1) * pageSize;
+    return filteredInvoices.slice(start, start + pageSize);
+  }, [filteredInvoices, effectivePage, pageSize]);
 
   const filteredPaymentLogs = useMemo(() => {
     const list = paymentLogs.filter(log => {
@@ -314,6 +357,17 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
       return true;
     });
   }, [paymentLogs, searchQuery, selectedVendorFilter]);
+
+  useEffect(() => {
+    setPaymentsPage(1);
+  }, [searchQuery, selectedVendorFilter, paymentsPageSize]);
+
+  const paymentsTotalPages = Math.max(1, Math.ceil(filteredPaymentLogs.length / paymentsPageSize));
+  const paymentsEffectivePage = Math.min(paymentsPage, paymentsTotalPages);
+  const paginatedPaymentLogs = useMemo(() => {
+    const start = (paymentsEffectivePage - 1) * paymentsPageSize;
+    return filteredPaymentLogs.slice(start, start + paymentsPageSize);
+  }, [filteredPaymentLogs, paymentsEffectivePage, paymentsPageSize]);
 
   // Aggregate metrics
   const statsSummary = useMemo(() => {
@@ -471,6 +525,17 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
             });
           }
           await onRefresh(); // Force reload direct true server state
+
+          // Auto-run the EOD exchange-rate engine so this invoice gets its ER1/INR
+          // immediately instead of sitting "Pending" until someone clicks Run EOD Loop.
+          // Best-effort: fetch a server-fresh invoice list (the `invoices` prop here is
+          // stale until next render) and hand it straight to the engine.
+          try {
+            const freshInvoices = await fetchPurchaseInvoices();
+            await handleRunEodEngine(freshInvoices);
+          } catch (eodErr) {
+            console.warn("Auto EOD run after invoice creation failed (invoice was still saved):", eodErr);
+          }
         } else {
           throw new Error(response.message || 'Invoice save propagation aborted.');
         }
@@ -484,19 +549,22 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     });
   };
 
-  // Run calculation engine
-  const handleRunEodEngine = async () => {
+  // Run calculation engine. Pass invoicesOverride when calling right after a write
+  // (e.g. auto-run after logging a new invoice) since the `invoices` prop won't
+  // reflect that write until the next render.
+  const handleRunEodEngine = async (invoicesOverride?: (PurchaseInvoice & { temp?: boolean })[]) => {
+    const invoicesToProcess = invoicesOverride ?? invoices;
     setIsEodRunning(true);
     setEngineLogs([]);
     setShowLogs(true);
     setSuccessBanner(null);
     setErrorBanner(null);
-    const previousInvoices = [...invoices];
+    const previousInvoices = [...invoicesToProcess];
 
     try {
       // Small timeout to simulate secure database pipeline run animation
       await new Promise(resolve => setTimeout(resolve, 500));
-      const result = await executeEODExchangeRateEngine(invoices, (updated) => {
+      const result = await executeEODExchangeRateEngine(invoicesToProcess, (updated) => {
         // Instantly apply updated records containing calculated exchange rates to state before write-back completes
         const uniqueMap = new Map();
         updated.forEach(item => {
@@ -855,15 +923,44 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   ))}
                 </select>
 
+                {/* Status filter badges */}
+                <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg p-1">
+                  {([
+                    { key: 'all', label: 'All', count: statusFilterCounts.all },
+                    { key: 'settled', label: 'Settled', count: statusFilterCounts.settled },
+                    { key: 'unpaid', label: 'Unpaid', count: statusFilterCounts.unpaid }
+                  ] as const).map(opt => (
+                    <button
+                      key={opt.key}
+                      onClick={() => setStatusFilter(opt.key)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-wide transition cursor-pointer ${
+                        statusFilter === opt.key
+                          ? opt.key === 'settled'
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : opt.key === 'unpaid'
+                            ? 'bg-rose-600 text-white shadow-sm'
+                            : 'bg-primary-600 text-white shadow-sm'
+                          : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                      }`}
+                    >
+                      <span>{opt.label}</span>
+                      <span className={`px-1.5 rounded-full text-[10px] ${statusFilter === opt.key ? 'bg-white/20' : 'bg-gray-200 dark:bg-gray-700'}`}>
+                        {opt.count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
                 {/* Reset Filter Button */}
-                {(searchQuery || selectedVendorFilter) && (
+                {(searchQuery || selectedVendorFilter || statusFilter !== 'all') && (
                   <button
                     onClick={() => {
                       setSearchQuery('');
                       setSelectedVendorFilter('');
+                      setStatusFilter('all');
                     }}
                     className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white bg-slate-50 hover:bg-slate-100 dark:bg-slate-700 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 rounded-lg shadow-sm transition active:scale-95 cursor-pointer"
-                    title="Reset Search and Vendor Filters"
+                    title="Reset Search, Vendor, and Status Filters"
                   >
                     <RotateCcw className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
                     <span>Reset Filter</span>
@@ -881,8 +978,8 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   <p className="text-[10px] text-gray-500">Auto sequential fallback lookup script</p>
                 </div>
 
-                <Button 
-                  onClick={handleRunEodEngine} 
+                <Button
+                  onClick={() => handleRunEodEngine()}
                   disabled={isEodRunning}
                   className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold px-4 py-2 rounded-lg shadow-sm font-mono text-sm active:scale-98 transition disabled:opacity-50 shrink-0"
                 >
@@ -946,7 +1043,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                         </td>
                       </tr>
                     ) : (
-                      filteredInvoices.map((inv) => {
+                      paginatedInvoices.map((inv) => {
                         const isProcessed = inv.status === 'Processed';
                         return (
                           <tr key={inv.invoiceId} className="hover:bg-slate-50/40 dark:hover:bg-slate-700/25 transition">
@@ -1065,6 +1162,51 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   </tbody>
                 </table>
               </div>
+
+              {/* PAGINATION CONTROLS */}
+              {filteredInvoices.length > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3 border-t border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    <span>
+                      Showing {(effectivePage - 1) * pageSize + 1}
+                      –{Math.min(effectivePage * pageSize, filteredInvoices.length)} of {filteredInvoices.length}
+                    </span>
+                    <span className="text-gray-300 dark:text-gray-600">|</span>
+                    <label className="flex items-center gap-1.5">
+                      <span>Rows per page</span>
+                      <select
+                        value={pageSize}
+                        onChange={e => setPageSize(Number(e.target.value))}
+                        className="bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 text-xs text-gray-900 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition cursor-pointer"
+                      >
+                        {[10, 20, 50].map(n => (
+                          <option key={n} value={n}>{n}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={effectivePage <= 1}
+                      className="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                    >
+                      Prev
+                    </button>
+                    <span className="px-2 text-xs font-mono text-gray-600 dark:text-gray-300">
+                      Page {effectivePage} / {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={effectivePage >= totalPages}
+                      className="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1142,7 +1284,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                         </td>
                       </tr>
                     ) : (
-                      filteredPaymentLogs.map((log) => (
+                      paginatedPaymentLogs.map((log) => (
                         <tr key={log.paymentId} className="hover:bg-slate-50/40 dark:hover:bg-slate-700/25 transition text-xs font-medium">
                           
                           {/* ID */}
@@ -1239,6 +1381,51 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   </tbody>
                 </table>
               </div>
+
+              {/* PAGINATION CONTROLS */}
+              {filteredPaymentLogs.length > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3 border-t border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    <span>
+                      Showing {(paymentsEffectivePage - 1) * paymentsPageSize + 1}
+                      –{Math.min(paymentsEffectivePage * paymentsPageSize, filteredPaymentLogs.length)} of {filteredPaymentLogs.length}
+                    </span>
+                    <span className="text-gray-300 dark:text-gray-600">|</span>
+                    <label className="flex items-center gap-1.5">
+                      <span>Rows per page</span>
+                      <select
+                        value={paymentsPageSize}
+                        onChange={e => setPaymentsPageSize(Number(e.target.value))}
+                        className="bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 text-xs text-gray-900 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition cursor-pointer"
+                      >
+                        {[10, 20, 50].map(n => (
+                          <option key={n} value={n}>{n}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setPaymentsPage(p => Math.max(1, p - 1))}
+                      disabled={paymentsEffectivePage <= 1}
+                      className="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                    >
+                      Prev
+                    </button>
+                    <span className="px-2 text-xs font-mono text-gray-600 dark:text-gray-300">
+                      Page {paymentsEffectivePage} / {paymentsTotalPages}
+                    </span>
+                    <button
+                      onClick={() => setPaymentsPage(p => Math.min(paymentsTotalPages, p + 1))}
+                      disabled={paymentsEffectivePage >= paymentsTotalPages}
+                      className="px-2.5 py-1.5 text-xs font-semibold rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
           </div>
