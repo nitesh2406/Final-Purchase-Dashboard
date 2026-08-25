@@ -4362,42 +4362,47 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                           ) : batchShipments.length === 0 ? (
                             <p className="text-xs text-slate-500 dark:text-slate-400">No shipments found for this batch yet.</p>
                           ) : (
-                            <div className="overflow-x-auto -mx-2">
-                              <table className="w-full text-left border-collapse table-fixed text-xs min-w-[520px]">
-                                <thead>
-                                  <tr className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
-                                    <th className="px-2 py-2 w-[24%]">Shipment ID</th>
-                                    <th className="px-2 py-2 w-[12%]">Vendor</th>
-                                    <th className="px-2 py-2 w-[14%]">Status</th>
-                                    <th className="px-2 py-2 w-[12%] text-right">Cartons</th>
-                                    <th className="px-2 py-2 w-[19%]">Created</th>
-                                    <th className="px-2 py-2 w-[19%]">Submitted</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                                  {batchShipments.map((s: any) => (
-                                    <tr key={s.shipment_id}>
-                                      <td className="px-2 py-2 font-mono font-bold text-slate-800 dark:text-white whitespace-nowrap">{s.shipment_id}</td>
-                                      <td className="px-2 py-2">
+                            // A CSS Grid "table" rather than a real <table>: every column sizes
+                            // to its own widest content (max-content) and justify-between hands
+                            // whatever width is left in the card to the gaps between columns,
+                            // split evenly — so every gap matches and the row still reaches both
+                            // edges, regardless of how short/long any given batch's data is.
+                            <div className="overflow-x-auto">
+                              <div className="grid grid-cols-[repeat(6,max-content)] justify-between w-full text-xs">
+                                <div className="py-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">Shipment ID</div>
+                                <div className="py-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">Vendor</div>
+                                <div className="py-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">Status</div>
+                                <div className="py-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 whitespace-nowrap text-right">Cartons</div>
+                                <div className="py-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">Created</div>
+                                <div className="py-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">Submitted</div>
+
+                                {batchShipments.map((s: any, idx: number) => {
+                                  const rowBorder = idx < batchShipments.length - 1
+                                    ? 'border-b border-slate-100 dark:border-slate-700/50'
+                                    : '';
+                                  return (
+                                    <React.Fragment key={s.shipment_id}>
+                                      <div className={`py-2 font-mono font-bold text-slate-800 dark:text-white whitespace-nowrap ${rowBorder}`}>{s.shipment_id}</div>
+                                      <div className={`py-2 whitespace-nowrap ${rowBorder}`}>
                                         <span className="px-1.5 py-0.5 font-bold font-mono bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-600 rounded">
                                           {s.vendor_code}
                                         </span>
-                                      </td>
-                                      <td className="px-2 py-2">
+                                      </div>
+                                      <div className={`py-2 whitespace-nowrap ${rowBorder}`}>
                                         <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/40">
                                           {/* The Vendor_Shipments sheet's Status column sometimes comes back
                                               keyed as 'carton count' (with a space) instead of 'status' from
                                               getSheetData_ — fall back to it so the badge doesn't render blank. */}
                                           {s.status || s['carton count'] || '—'}
                                         </span>
-                                      </td>
-                                      <td className="px-2 py-2 text-right font-mono">{s.carton_count}</td>
-                                      <td className="px-2 py-2 whitespace-nowrap text-slate-500 dark:text-slate-400">{formatDate(s.created_at)}</td>
-                                      <td className="px-2 py-2 whitespace-nowrap text-slate-500 dark:text-slate-400">{formatDate(s.submitted_at)}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                                      </div>
+                                      <div className={`py-2 text-right font-mono whitespace-nowrap ${rowBorder}`}>{s.carton_count}</div>
+                                      <div className={`py-2 whitespace-nowrap text-slate-500 dark:text-slate-400 ${rowBorder}`}>{formatDate(s.created_at)}</div>
+                                      <div className={`py-2 whitespace-nowrap text-slate-500 dark:text-slate-400 ${rowBorder}`}>{formatDate(s.submitted_at)}</div>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </div>
                             </div>
                           )}
                         </Card>
