@@ -888,10 +888,13 @@ export function compileVendorLedgerRows(
         // an invoice into it — some PurchaseInvoices rows never make it there. Union
         // in any invoice for this vendor not already represented so the ledger
         // reflects the full PurchaseInvoices sheet, not just what got mirrored.
+        // Matches on ReferenceId alone, not Particulars === 'Purchase' — a cross-vendor
+        // transfer shortfall invoice (XFER-*) is a real PurchaseInvoices row but mirrors
+        // into VendorLedger as 'Adjustment (Paid to X)', not 'Purchase' (it's a payment
+        // event, not a goods purchase); matching only on 'Purchase' would miss it and
+        // union-inject a duplicate row for it.
         const representedInvoiceIds = new Set(
-          filteredLive
-            .filter(row => row.Particulars === 'Purchase')
-            .map(row => row.ReferenceId)
+          filteredLive.map(row => row.ReferenceId)
         );
         const safeInvoicesForLive = invoices || [];
         safeInvoicesForLive
