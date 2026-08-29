@@ -31,6 +31,7 @@ interface VendorLedgerTabProps {
   liveLedger?: VendorLedgerEntry[];
   vendors?: VendorMaster[];
   onOpenAdjustmentModal?: (vendorCode: string) => void;
+  onViewPurchases?: (vendorCode: string) => void;
 }
 
 export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
@@ -39,7 +40,8 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
   settlementRecords = [],
   liveLedger = [],
   vendors = [],
-  onOpenAdjustmentModal
+  onOpenAdjustmentModal,
+  onViewPurchases
 }) => {
   // Master vendors compiled list
   const masterVendors = useMemo(() => {
@@ -397,14 +399,29 @@ export const VendorLedgerTab: React.FC<VendorLedgerTabProps> = ({
                 </div>
               </div>
 
-              {/* Reset button inside active vendor card */}
-              <button
-                onClick={resetFilter}
-                className="flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-350 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm transition cursor-pointer self-start md:self-auto"
-              >
-                <X className="w-4 h-4" />
-                <span>Close Reporting</span>
-              </button>
+              <div className="flex items-center gap-2 self-start md:self-auto">
+                {/* Purchases-only view — Purchase Entries filtered to this vendor, never
+                    mixed with the ledger's adjustment/transfer rows */}
+                {onViewPurchases && (
+                  <button
+                    onClick={() => onViewPurchases(selectedVendor.code)}
+                    className="flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-350 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm transition cursor-pointer"
+                    title="View invoice-only purchases for this vendor (no adjustments/transfers)"
+                  >
+                    <Package className="w-4 h-4 text-indigo-500" />
+                    <span>Purchases Only</span>
+                  </button>
+                )}
+
+                {/* Reset button inside active vendor card */}
+                <button
+                  onClick={resetFilter}
+                  className="flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-350 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                  <span>Close Reporting</span>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-6 mt-6 border-t border-slate-200 dark:border-slate-800">

@@ -174,6 +174,14 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     navigate(payingVendor ? `${path}?payingVendor=${encodeURIComponent(payingVendor)}` : path);
   };
 
+  // "Purchases" for a vendor is just Purchase Entries filtered to that vendor — invoice-only,
+  // never mixed with the Vendor Ledger's adjustment/transfer rows. Reuses the existing tab
+  // instead of duplicating its table.
+  const handleViewVendorPurchases = (vendorCode: string) => {
+    setSelectedVendorFilter(vendorCode);
+    setActiveTab('purchase_entries');
+  };
+
   // Derives an invoice's outstanding balance from actual 'Invoice Settlement' records
   // (the invoice's own stored balance/settledAmount fields aren't kept in sync by the
   // settlement-logging backend action, so the ledger is the source of truth here).
@@ -1245,34 +1253,14 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                             ₹{log.inrAmount.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                           </td>
 
-                          {/* Balance */}
+                          {/* Balance — reads PaymentLogs.Balance directly (same source as the
+                              Active Wallets summary cards above), not re-derived from
+                              SettlementLedger. That derivation couldn't tell "never touched"
+                              from "fully spent" and showed a dash for both. */}
                           <td className="px-5 py-4 font-black font-mono text-indigo-600 dark:text-indigo-400 text-right">
-                            {(() => {
-                              // Find all records in the Settlement Ledger for this payment ID
-                              const relevantRecords = settlementRecords.filter(s => s.paymentId === log.paymentId);
-                              
-                              // Total RMB spent on actual invoice settlements
-                              const invoiceSettlementRecords = relevantRecords.filter(s => s.txnType === 'Invoice Settlement');
-                              // Same magnitude-not-sign fix as getInvoiceSettlementInfo above —
-                              // FIFO-settlement rows are stored as negative debits.
-                              const totalSettledRmb = invoiceSettlementRecords.reduce((sum, s) => sum + Math.abs(s.amountRmb), 0);
-                              
-                              // Checking if there is an explicit advance record in the Settlement Ledger
-                              const hasAdvanceRecord = relevantRecords.some(s => s.invoiceId === 'ADVANCE' || s.txnType === 'Advance Payment');
-                              
-                              // Checking if there is any partial settlement (some settled, but not all)
-                              const isPartiallySettled = totalSettledRmb > 0 && totalSettledRmb < log.rmbAmount;
-                              
-                              // Remaining amount left for settlement
-                              const remainingRmb = Math.max(0, log.rmbAmount - totalSettledRmb);
-                              
-                              // We only showcase the balance if it's an advance or partially settled
-                              // (and there's still some remaining amount left)
-                              if ((hasAdvanceRecord || isPartiallySettled) && remainingRmb > 0) {
-                                return `¥${remainingRmb.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-                              }
-                              return <span className="text-gray-300 dark:text-slate-650 font-normal select-none">—</span>;
-                            })()}
+                            {(log.balance || 0) > 0.01
+                              ? `¥${(log.balance || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
+                              : <span className="text-gray-300 dark:text-slate-650 font-normal select-none">—</span>}
                           </td>
 
                           {/* Details */}
@@ -1356,13 +1344,14 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
 
         {/* --- TAB 3: VENDOR LEDGER (RECONCILIATION PANEL) --- */}
         {activeTab === 'vendor_ledger' && (
-          <VendorLedgerTab 
+          <VendorLedgerTab
             invoices={invoices}
             paymentLogs={paymentLogs}
             settlementRecords={settlementRecords}
             liveLedger={vendorLedger}
             vendors={vendors}
             onOpenAdjustmentModal={handleOpenAdjustmentModal}
+            onViewPurchases={handleViewVendorPurchases}
           />
         )}
 
