@@ -4,8 +4,6 @@ import {
   logSettlementRecord,
   submitAdjustmentEntry,
   submitPurchaseInvoice,
-  fetchPurchaseInvoices,
-  executeEODExchangeRateEngine,
   SettlementRecord,
   PurchaseInvoice,
   PaymentLog,
@@ -313,15 +311,16 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
     const liabilitySumInr = unpaidList.reduce((sum, { inv, balance }) => sum + balance * (inv.er1 || 0), 0);
 
     // 2. Advance Payments Total
-    // Sum up advance payment transactions in current filtered ledger subset. The backend
-    // never populates an INR amount for these rows, so derive it from RMB x exchange rate
-    // the same way the rest of the app does.
-    const totalAdvanceInr = filteredRecords
-      .filter(rec => rec.txnType === 'Advance Payment')
-      .reduce((sum, rec) => {
-        const rate = rec.exchangeRateSettlement || rec.exchangeRatePrimary || 0;
-        return sum + Math.abs(rec.amountRmb) * rate;
-      }, 0);
+    // SettlementLedger no longer ever writes an "Advance Payment" row (fifoLiquidate_
+    // stopped doing that — leftover payment is just unspent wallet balance now, not a
+    // settlement event). "Advance" is genuinely the sum of unused PaymentLogs.Balance
+    // across wallets instead, scoped to the same vendor filter as everything else here.
+    const advanceWallets = selectedVendor
+      ? paymentLogs.filter(p => p.vendorCode === selectedVendor)
+      : paymentLogs;
+    const totalAdvanceInr = advanceWallets
+      .filter(p => (p.balance || 0) > 0.01)
+      .reduce((sum, p) => sum + (p.balance || 0) * (p.fxRate || 0), 0);
 
     // 3. Forex Gain / Loss Balance
     // Sum of net forex performance over the current active filtered records
@@ -334,7 +333,7 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
       totalAdvanceInr,
       netForexGainLoss
     };
-  }, [filteredRecords, localInvoices, records, selectedVendor, selectedInvoiceId]);
+  }, [filteredRecords, localInvoices, records, selectedVendor, selectedInvoiceId, paymentLogs]);
 
   // Trigger sorting column change
   const handleSort = (field: keyof SettlementRecord) => {
@@ -460,29 +459,10 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
               notes: ''
             });
           }
+          // The backend prices this invoice (ER1/INR) and auto-settles it against any
+          // existing wallet balance synchronously inside addPurchaseInvoice now
+          // (runEodForInvoice_) — onRefresh() above already pulls the priced result back.
           await onRefresh();
-
-          // Auto-run the EOD exchange-rate engine so this invoice gets its ER1/INR
-          // immediately, matching the auto-run behavior on the Purchase Entries tab.
-          try {
-            const freshInvoices = await fetchPurchaseInvoices();
-            const result = await executeEODExchangeRateEngine(freshInvoices, (updated) => {
-              const uniqueMap = new Map();
-              updated.forEach(item => {
-                if (item && item.invoiceId) {
-                  uniqueMap.set(String(item.invoiceId).trim().toLowerCase(), item);
-                }
-              });
-              setPurchaseInvoices(Array.from(uniqueMap.values()));
-            }, vendors as any);
-            if (result.processedCount > 0) {
-              const reFetched = await fetchPurchaseInvoices();
-              setPurchaseInvoices(reFetched);
-              await onRefresh();
-            }
-          } catch (eodErr) {
-            console.warn("Auto EOD run after invoice creation failed (invoice was still saved):", eodErr);
-          }
         } else {
           throw new Error(response.message || 'Invoice propagation failed.');
         }

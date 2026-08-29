@@ -61,8 +61,8 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
   const [paymentMode, setPaymentMode] = useState<string>('Bank Transfer');
   const [referenceNo, setReferenceNo] = useState<string>('');
 
-  // Payment serial ID logic
-  const [paymentId, setPaymentId] = useState<string>('PAY-00001');
+  // Payment serial ID logic — DP- ("direct payment") series, replacing PAY-.
+  const [paymentId, setPaymentId] = useState<string>('DP-00001');
 
   // Cross-vendor allocation array lists
   const [allocations, setAllocations] = useState<AllocationRow[]>([]);
@@ -76,15 +76,16 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
 
-  // Load existing payments to compute next sequential ID
+  // Load existing payments to compute next sequential ID (DP- series — old PAY- rows are
+  // ignored for this scan since they're a separate, historical numbering).
   useEffect(() => {
     const checkPaymentId = async () => {
       try {
         const list = await fetchPaymentLogs();
         let maxSeq = 0;
         list.forEach((log) => {
-          if (log.paymentId && log.paymentId.startsWith('PAY-')) {
-            const seqStr = log.paymentId.replace('PAY-', '');
+          if (log.paymentId && log.paymentId.startsWith('DP-')) {
+            const seqStr = log.paymentId.replace('DP-', '');
             const seqVal = parseInt(seqStr, 10);
             if (!isNaN(seqVal) && seqVal > maxSeq) {
               maxSeq = seqVal;
@@ -92,22 +93,22 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
           }
         });
         const nextSeq = maxSeq + 1;
-        const formattedId = `PAY-${nextSeq.toString().padStart(5, '0')}`;
+        const formattedId = `DP-${nextSeq.toString().padStart(5, '0')}`;
         setPaymentId(formattedId);
       } catch (err) {
         // Fallback to local
         const list = getPaymentLogs();
         let maxSeq = 0;
         list.forEach((log) => {
-          if (log.paymentId && log.paymentId.startsWith('PAY-')) {
-            const seqStr = log.paymentId.replace('PAY-', '');
+          if (log.paymentId && log.paymentId.startsWith('DP-')) {
+            const seqStr = log.paymentId.replace('DP-', '');
             const seqVal = parseInt(seqStr, 10);
             if (!isNaN(seqVal) && seqVal > maxSeq) {
               maxSeq = seqVal;
             }
           }
         });
-        const formattedId = `PAY-${(maxSeq + 1).toString().padStart(5, '0')}`;
+        const formattedId = `DP-${(maxSeq + 1).toString().padStart(5, '0')}`;
         setPaymentId(formattedId);
       }
     };

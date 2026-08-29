@@ -1,15 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { viewToPath } from '../../routes';
 import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
 import {
   getPurchaseInvoices,
-  submitPurchaseInvoice, 
-  executeEODExchangeRateEngine,
+  submitPurchaseInvoice,
+  fetchHistoricalFxRates,
   PurchaseInvoice,
-  fetchPurchaseInvoices,
   logAdjustmentTransfer,
-  generateAdjustmentId,
+  generateSequentialIndirectPayId,
   fetchPaymentLogs,
   getPaymentLogs,
   PaymentLog,
@@ -91,7 +90,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   // Navigation & UI tabs
   const [activeTab, setActiveTab ] = useQueryParam<ActiveTabType>('accountsTab', 'purchase_entries');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isEodRunning, setIsEodRunning] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -109,11 +107,22 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   const [paymentsPage, setPaymentsPage] = useState(1);
   const [paymentsPageSize, setPaymentsPageSize] = useState(10);
   
-  // EOD calculations report log console
-  const [engineLogs, setEngineLogs] = useState<string[]>([]);
-  const [showLogs, setShowLogs] = useState(false);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+
+  // Yesterday's CNY→INR closing rate, for the Payable (INR) metric card. EOD pricing now
+  // runs automatically on the backend per-invoice (runEodForInvoice_) — this is purely a
+  // display conversion for the dashboard summary, not invoice pricing itself.
+  const [lastClosingRate, setLastClosingRate] = useState<number | null>(null);
+  useEffect(() => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dateStr = yesterday.toISOString().split('T')[0];
+    fetchHistoricalFxRates([dateStr]).then(rates => {
+      const r = rates[dateStr];
+      if (r && r.success && r.rate > 0) setLastClosingRate(r.rate);
+    }).catch(() => {});
+  }, []);
 
   // New Invoice form inputs (isolated entirely from ER1 & INR)
   const [newInvoice, setNewInvoice] = useState({
@@ -186,6 +195,9 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   // uses (add_adjustment_entry, mirrored into VendorLedger for both sides) instead of the
   // old direct logSettlementRecord call, which only ever wrote to SettlementLedger and never
   // actually moved the paying/receiving vendors' live Vendor Ledger balances.
+  // Tracks the last IDP- sequence number handed out this session — see the matching ref
+  // in CrossVendorSettlement.tsx for why this exists.
+  const idpSeqFloorRef = useRef(0);
   const [settleModalInvoice, setSettleModalInvoice] = useState<PurchaseInvoice | null>(null);
   const [settleForm, setSettleForm] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -233,7 +245,8 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
 
       const payingVendor = settleForm.payingVendor;
       const payingVendorName = VENDOR_OPTIONS.find(v => v.code === payingVendor)?.name || payingVendor;
-      const adjId = generateAdjustmentId(settlementRecords);
+      const adjId = generateSequentialIndirectPayId(paymentLogs, idpSeqFloorRef.current);
+      idpSeqFloorRef.current = parseInt(adjId.replace('IDP-', ''), 10);
 
       try {
         // No fxRate is sent here — the backend derives the real settled rate itself by
@@ -336,15 +349,17 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     return filteredInvoices.slice(start, start + pageSize);
   }, [filteredInvoices, effectivePage, pageSize]);
 
-  const filteredPaymentLogs = useMemo(() => {
+  const [showActiveWalletsOnly, setShowActiveWalletsOnly] = useState(false);
+
+  const vendorAndSearchFilteredPaymentLogs = useMemo(() => {
     const list = paymentLogs.filter(log => {
-      const matchSearch = 
-        log.paymentId.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      const matchSearch =
+        log.paymentId.toLowerCase().includes(searchQuery.toLowerCase()) ||
         log.vendorCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (log.referenceNo || '').toLowerCase().includes(searchQuery.toLowerCase());
-      
+
       const matchVendor = selectedVendorFilter === '' || log.vendorCode === selectedVendorFilter;
-      
+
       return matchSearch && matchVendor;
     });
 
@@ -358,9 +373,24 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     });
   }, [paymentLogs, searchQuery, selectedVendorFilter]);
 
+  // Active Wallets / Total Balance (RMB) metrics — scoped to vendor+search filters but not
+  // the "active only" table toggle, so the summary stays stable while you switch views.
+  const paymentWalletMetrics = useMemo(() => {
+    const active = vendorAndSearchFilteredPaymentLogs.filter(log => (log.balance || 0) > 0.01);
+    return {
+      activeCount: active.length,
+      totalBalanceRmb: active.reduce((sum, log) => sum + (log.balance || 0), 0)
+    };
+  }, [vendorAndSearchFilteredPaymentLogs]);
+
+  const filteredPaymentLogs = useMemo(() => {
+    if (!showActiveWalletsOnly) return vendorAndSearchFilteredPaymentLogs;
+    return vendorAndSearchFilteredPaymentLogs.filter(log => (log.balance || 0) > 0.01);
+  }, [vendorAndSearchFilteredPaymentLogs, showActiveWalletsOnly]);
+
   useEffect(() => {
     setPaymentsPage(1);
-  }, [searchQuery, selectedVendorFilter, paymentsPageSize]);
+  }, [searchQuery, selectedVendorFilter, paymentsPageSize, showActiveWalletsOnly]);
 
   const paymentsTotalPages = Math.max(1, Math.ceil(filteredPaymentLogs.length / paymentsPageSize));
   const paymentsEffectivePage = Math.min(paymentsPage, paymentsTotalPages);
@@ -370,25 +400,33 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   }, [filteredPaymentLogs, paymentsEffectivePage, paymentsPageSize]);
 
   // Aggregate metrics
+  // Vendors billed in INR store their raw INR amount in the `rmb` field (see
+  // executeEODExchangeRateEngine's comment on this) — excluded from the RMB payable sum
+  // below since it isn't actually RMB.
+  const inrVendorCodes = useMemo(
+    () => new Set((vendors || []).filter(v => v.currency === 'INR').map(v => v.vendor_id)),
+    [vendors]
+  );
+
   const statsSummary = useMemo(() => {
     const totalCount = invoices.length;
     const pendingCount = invoices.filter(i => i.status === 'Pending EOD').length;
     const processedCount = invoices.filter(i => i.status === 'Processed').length;
-    const totalRmbPending = invoices
-      .filter(i => i.status === 'Pending EOD')
-      .reduce((sum, i) => sum + i.rmb, 0);
-    const totalInrProcessed = invoices
-      .filter(i => i.status === 'Processed' && i.inr)
-      .reduce((sum, i) => sum + (i.inr || 0), 0);
-    
+    const unsettledCount = invoices.filter(i => (i.balance ?? i.rmb) > 0.01).length;
+    const payableRmb = invoices
+      .filter(i => !inrVendorCodes.has(i.vendorCode))
+      .reduce((sum, i) => sum + Math.max(0, i.balance ?? i.rmb), 0);
+    const payableInr = lastClosingRate !== null ? payableRmb * lastClosingRate : 0;
+
     return {
       totalCount,
       pendingCount,
       processedCount,
-      totalRmbPending,
-      totalInrProcessed
+      unsettledCount,
+      payableRmb,
+      payableInr
     };
-  }, [invoices]);
+  }, [invoices, inrVendorCodes, lastClosingRate]);
 
   const { isSubmitting: isSubmittingInvoice, withSubmissionGuard: withInvoiceGuard } = useSubmissionLock();
 
@@ -524,18 +562,11 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
               notes: ''
             });
           }
+          // The backend prices this invoice (ER1/INR) and auto-settles it against any
+          // existing wallet balance synchronously inside addPurchaseInvoice now
+          // (runEodForInvoice_) — onRefresh() above already pulls the priced result back,
+          // no separate client-side EOD run needed.
           await onRefresh(); // Force reload direct true server state
-
-          // Auto-run the EOD exchange-rate engine so this invoice gets its ER1/INR
-          // immediately instead of sitting "Pending" until someone clicks Run EOD Loop.
-          // Best-effort: fetch a server-fresh invoice list (the `invoices` prop here is
-          // stale until next render) and hand it straight to the engine.
-          try {
-            const freshInvoices = await fetchPurchaseInvoices();
-            await handleRunEodEngine(freshInvoices);
-          } catch (eodErr) {
-            console.warn("Auto EOD run after invoice creation failed (invoice was still saved):", eodErr);
-          }
         } else {
           throw new Error(response.message || 'Invoice save propagation aborted.');
         }
@@ -547,78 +578,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
         setErrorBanner("Sync Failure: Transaction could not be written to Google Sheets. Please check your connection and try again.");
       }
     });
-  };
-
-  // Run calculation engine. Pass invoicesOverride when calling right after a write
-  // (e.g. auto-run after logging a new invoice) since the `invoices` prop won't
-  // reflect that write until the next render.
-  const handleRunEodEngine = async (invoicesOverride?: (PurchaseInvoice & { temp?: boolean })[]) => {
-    const invoicesToProcess = invoicesOverride ?? invoices;
-    setIsEodRunning(true);
-    setEngineLogs([]);
-    setShowLogs(true);
-    setSuccessBanner(null);
-    setErrorBanner(null);
-    const previousInvoices = [...invoicesToProcess];
-
-    try {
-      // Small timeout to simulate secure database pipeline run animation
-      await new Promise(resolve => setTimeout(resolve, 500));
-      const result = await executeEODExchangeRateEngine(invoicesToProcess, (updated) => {
-        // Instantly apply updated records containing calculated exchange rates to state before write-back completes
-        const uniqueMap = new Map();
-        updated.forEach(item => {
-          if (item && item.invoiceId) {
-            uniqueMap.set(String(item.invoiceId).trim().toLowerCase(), item);
-          }
-        });
-        setPurchaseInvoices(Array.from(uniqueMap.values()));
-      }, vendors);
-
-      setEngineLogs(result.logs);
-
-      console.log("[EOD] Engine completed successfully");
-
-      console.log("[EOD] Fetching fresh PurchaseInvoices");
-      const freshInvoices = await fetchPurchaseInvoices();
-      console.log(`[EOD] Received ${freshInvoices.length} invoices from server`);
-
-      console.log("Current UI State", invoices);
-      console.log("Incoming Server State", freshInvoices);
-
-      if (freshInvoices && freshInvoices.length > 0) {
-        const firstAffected = freshInvoices.find(inv => inv.status === 'Processed' || inv.er1);
-        if (firstAffected) {
-          console.log("First affected invoice:", {
-            invoiceId: firstAffected.invoiceId,
-            er1: firstAffected.er1,
-            inr: firstAffected.inr
-          });
-        }
-      }
-
-      console.log("[EOD] Replacing frontend state");
-      setPurchaseInvoices(freshInvoices);
-      console.log("State Replaced");
-
-      console.log("[EOD] Dashboard metrics recalculated");
-      console.log("[EOD] UI refresh complete");
-
-      // Update remaining states silently
-      await onRefresh();
-
-      if (result.processedCount > 0) {
-        setSuccessBanner(`EOD Engine finished! Parsed & updated closing rates for ${result.processedCount} transactions.`);
-      } else {
-        setSuccessBanner('Scan complete. No outstanding pending EOD rows require rate conversions.');
-      }
-    } catch (err: any) {
-      console.error("EOD engine run failed, reverting states:", err);
-      setPurchaseInvoices(previousInvoices);
-      setErrorBanner(err.message || 'Exchange rate serverless calculation error.');
-    } finally {
-      setIsEodRunning(false);
-    }
   };
 
   return (
@@ -840,56 +799,40 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
         {activeTab === 'purchase_entries' && (
           <div className="space-y-6 animate-fade-in">
             {/* Quick Metrics ribbon indicator bar */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white shadow-md rounded-xl p-5 flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-lg transition duration-200">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 tracking-wider uppercase">Total Invoice Records</span>
-                  <span className="p-2 bg-blue-50 dark:bg-blue-500/10 border border-blue-250 dark:border-blue-500/20 rounded-lg text-blue-600 dark:text-blue-400">
-                    <Database className="w-4 h-4" />
-                  </span>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white shadow-sm rounded-lg p-3 flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 transition duration-200">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 tracking-wider uppercase">Total Invoice</span>
+                  <Database className="w-3.5 h-3.5 text-blue-500" />
                 </div>
-                <div>
-                  <div className="text-2xl font-bold text-slate-800 dark:text-white shrink-0">{statsSummary.totalCount}</div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Logged in storage pipeline</p>
-                </div>
+                <div className="text-lg font-bold text-slate-800 dark:text-white shrink-0">{statsSummary.totalCount}</div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white shadow-md rounded-xl p-5 flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-lg transition duration-200">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 tracking-wider uppercase">Pending EOD Runs</span>
-                  <span className="p-2 bg-amber-50 dark:bg-amber-500/10 border border-amber-250 dark:border-amber-500/20 rounded-lg text-amber-600 dark:text-amber-400">
-                    <Clock className="w-4 h-4 animate-pulse" />
-                  </span>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white shadow-sm rounded-lg p-3 flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 transition duration-200">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 tracking-wider uppercase">Unsettled Invoice</span>
+                  <Clock className="w-3.5 h-3.5 text-amber-500" />
                 </div>
-                <div>
-                  <div className="text-2xl font-bold text-amber-600 dark:text-amber-500 shrink-0">{statsSummary.pendingCount}</div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Awaiting conversion closure</p>
-                </div>
+                <div className="text-lg font-bold text-amber-600 dark:text-amber-500 shrink-0">{statsSummary.unsettledCount}</div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white shadow-md rounded-xl p-5 flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-lg transition duration-200">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 tracking-wider uppercase">Pending RMB Valuation</span>
-                  <span className="p-2 bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-250 dark:border-slate-700 rounded-lg text-yellow-600 dark:text-amber-300">
-                    <DollarSign className="w-4 h-4" />
-                  </span>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white shadow-sm rounded-lg p-3 flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 transition duration-200">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 tracking-wider uppercase">Payable (RMB)</span>
+                  <DollarSign className="w-3.5 h-3.5 text-yellow-500" />
                 </div>
-                <div>
-                  <div className="text-2xl font-bold text-yellow-600 dark:text-amber-300 shrink-0">¥{statsSummary.totalRmbPending.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Pending exchange computation</p>
-                </div>
+                <div className="text-lg font-bold text-yellow-600 dark:text-amber-300 shrink-0">¥{statsSummary.payableRmb.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white shadow-md rounded-xl p-5 flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-lg transition duration-200">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 tracking-wider uppercase">Processed INR Valuation</span>
-                  <span className="p-2 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-250 dark:border-emerald-500/20 rounded-lg text-emerald-600 dark:text-emerald-400">
-                    <TrendingUp className="w-4 h-4 animate-pulse" />
-                  </span>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white shadow-sm rounded-lg p-3 flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 transition duration-200">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 tracking-wider uppercase">Payable (INR)</span>
+                  <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
                 </div>
-                <div>
-                  <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 shrink-0">₹{statsSummary.totalInrProcessed.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Converted ledger capitalization</p>
+                <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
+                  {lastClosingRate !== null
+                    ? `₹${statsSummary.payableInr.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
+                    : '—'}
                 </div>
               </div>
             </div>
@@ -967,57 +910,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   </button>
                 )}
               </div>
-
-              {/* Automatic EOD calculations script handler widget */}
-              <div className="flex items-center gap-3 shrink-0 w-full md:w-auto justify-end border-t md:border-t-0 pt-3 md:pt-0 border-gray-150">
-                <div className="text-right hidden lg:block">
-                  <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1 justify-end">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                    <span>EOD Closing Rate Engine</span>
-                  </div>
-                  <p className="text-[10px] text-gray-500">Auto sequential fallback lookup script</p>
-                </div>
-
-                <Button
-                  onClick={() => handleRunEodEngine()}
-                  disabled={isEodRunning}
-                  className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold px-4 py-2 rounded-lg shadow-sm font-mono text-sm active:scale-98 transition disabled:opacity-50 shrink-0"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isEodRunning ? 'anim-spin' : ''}`} />
-                  <span>{isEodRunning ? 'Processing...' : 'Run EOD Loop'}</span>
-                </Button>
-              </div>
             </div>
-
-            {/* PIPELINE ENGINE CONSOLE DISPLAY LOG */}
-            {showLogs && (
-              <div className="bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-4 rounded-xl shadow-inner animate-slide-in">
-                <div className="flex items-center justify-between border-b border-slate-300 dark:border-slate-800 pb-2 mb-3">
-                  <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 font-mono text-xs uppercase font-bold">
-                    <Terminal className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                    <span className="text-emerald-600 dark:text-emerald-400 font-black">Calculation Suite Live Console Log</span>
-                  </div>
-                  <button 
-                    onClick={() => setShowLogs(false)} 
-                    className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-350 text-xs font-semibold font-mono"
-                  >
-                    [Close]
-                  </button>
-                </div>
-                <div className="space-y-1 bg-slate-100 dark:bg-slate-900 text-[11px] font-mono text-emerald-600 dark:text-emerald-400 max-h-56 overflow-y-auto leading-relaxed scrollbar-thin">
-                  {isEodRunning ? (
-                    <p className="animate-pulse flex items-center gap-2 text-slate-550 dark:text-slate-400">
-                      <Clock className="w-3.5 h-3.5 animate-spin text-amber-500" />
-                      <span>Scanning database tables... Connecting to global currency feeds via GOOGLEFINANCE API...</span>
-                    </p>
-                  ) : engineLogs.length > 0 ? (
-                    engineLogs.map((log, index) => <div key={index}>{log}</div>)
-                  ) : (
-                    <span className="text-slate-500 dark:text-slate-500 italic">Console ready. Click "Run EOD Loop" to calculate valuations.</span>
-                  )}
-                </div>
-              </div>
-            )}
 
             {/* DATA GRID TABLE CONTAINER */}
             <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-md overflow-hidden rounded-xl animate-fade-in">
@@ -1214,7 +1107,25 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
         {/* --- TAB 2: PAYMENT ENTRIES (LIVE REMITTANCE LOG DATA GRID) --- */}
         {activeTab === 'payment_entries' && (
           <div className="space-y-6">
-            
+
+            {/* Active Wallets / Total Balance metrics */}
+            <div className="grid grid-cols-2 gap-3 max-w-md">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm rounded-lg p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 tracking-wider uppercase">Active Wallets</span>
+                  <CreditCard className="w-3.5 h-3.5 text-indigo-500" />
+                </div>
+                <div className="text-lg font-bold text-slate-800 dark:text-white">{paymentWalletMetrics.activeCount}</div>
+              </div>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm rounded-lg p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 tracking-wider uppercase">Total Balance (RMB)</span>
+                  <DollarSign className="w-3.5 h-3.5 text-yellow-500" />
+                </div>
+                <div className="text-lg font-bold text-yellow-600 dark:text-amber-300">¥{paymentWalletMetrics.totalBalanceRmb.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+              </div>
+            </div>
+
             {/* Header info card */}
             <div className="bg-slate-50 dark:bg-gray-850 border border-slate-200 dark:border-gray-800 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm animate-fade-in">
               <div>
@@ -1229,6 +1140,18 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
 
               {/* Vendor filter + Refresh trigger */}
               <div className="flex items-center gap-3 shrink-0 w-full md:w-auto justify-end">
+                <button
+                  onClick={() => setShowActiveWalletsOnly(prev => !prev)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-wide rounded-lg border transition active:scale-95 cursor-pointer ${
+                    showActiveWalletsOnly
+                      ? 'bg-primary-600 text-white border-primary-600 shadow-sm'
+                      : 'bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800'
+                  }`}
+                  title="Show only wallets with unspent balance"
+                >
+                  <span>Active only</span>
+                </button>
+
                 <select
                   value={selectedVendorFilter}
                   onChange={e => setSelectedVendorFilter(e.target.value)}

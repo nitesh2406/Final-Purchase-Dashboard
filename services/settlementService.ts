@@ -376,165 +376,6 @@ export async function fetchPurchaseInvoices(): Promise<PurchaseInvoice[]> {
 }
 
 /**
- * Triggers the End-of-Day (EOD) calculation and write-back.
- * Accepts an immediate UI update callback to render values before sheet write completes.
- */
-export async function executeEODExchangeRateEngine(
-  currentInvoices?: PurchaseInvoice[],
-  onImmediateUIUpdate?: (updated: PurchaseInvoice[]) => void,
-  vendors?: VendorMaster[]
-): Promise<{
-  processedCount: number;
-  logs: string[];
-  updatedRecords: PurchaseInvoice[];
-}> {
-  const logs: string[] = [];
-  logs.push(`[EOD Engine] Starting sequential lookup processing at ${new Date().toLocaleTimeString()}...`);
-
-  const records = currentInvoices && currentInvoices.length > 0 ? currentInvoices : getPurchaseInvoices();
-  const normalizeDate = (d: string) => (d || '').split('T')[0];
-
-  // Vendors billed in INR never need a real market rate — they're paid 1:1 in INR.
-  const inrVendorCodes = new Set(
-    (vendors || []).filter(v => v.currency === 'INR').map(v => v.vendor_id)
-  );
-
-  // Resolve every needed date's real closing rate in one batched backend round-trip,
-  // rather than one call per invoice.
-  const uncalculatedDates = records
-    .filter(rec => (rec.status === 'Pending EOD' || !rec.er1 || !rec.inr) && !inrVendorCodes.has(rec.vendorCode))
-    .map(rec => normalizeDate(rec.date));
-  const rateMap = await fetchHistoricalFxRates(uncalculatedDates);
-
-  let count = 0;
-  const updatesList: { invoiceId: string; er1: number }[] = [];
-  const updatedRecordsForSweep: PurchaseInvoice[] = [];
-
-  const updated = records.map(rec => {
-    // Treat invoice as uncalculated if status is 'Pending EOD' or missing ER1/INR valuation
-    if (rec.status === 'Pending EOD' || !rec.er1 || !rec.inr) {
-      const isInrVendor = inrVendorCodes.has(rec.vendorCode);
-      logs.push(`\nProcessing Invoice: ${rec.invoiceId} (Date: ${rec.date}, RMB: ${isInrVendor ? '₹' : '¥'}${rec.rmb})`);
-
-      let rate: number;
-
-      if (isInrVendor) {
-        rate = 1;
-        logs.push(`  ↳ Vendor is INR-native — skipping forex lookup, rate fixed at 1.0000.`);
-      } else {
-        const dateKey = normalizeDate(rec.date);
-        const resolved = rateMap[dateKey];
-        rate = resolved && resolved.success ? resolved.rate : 11.50;
-
-        if (resolved && resolved.success) {
-          if (resolved.resolvedDate !== dateKey) {
-            logs.push(`  ↳ ${dateKey} had no trading data. Cascaded back to nearest prior trading day: ${resolved.resolvedDate}.`);
-          }
-          logs.push(`  ↳ Resolved closing exchange rate on ${resolved.resolvedDate}: ${rate} INR/RMB (via GOOGLEFINANCE historical lookup)`);
-        } else {
-          logs.push(`  ↳ Historical rate lookup failed for ${dateKey}. Defaulted to fallback rate ${rate}.`);
-        }
-      }
-
-      // Note: for INR-native vendors, rec.rmb is repurposed to hold the raw INR amount
-      // entered at Purchase-entry time — not an actual RMB figure. With rate = 1 above,
-      // this multiplication is a passthrough, not a currency conversion.
-      const inr = rec.rmb * rate;
-      logs.push(`  ↳ Calculated Settlement valuation: ₹${inr.toLocaleString('en-IN', { maximumFractionDigits: 2 })} INR`);
-      
-      count++;
-      updatesList.push({
-        invoiceId: rec.invoiceId,
-        er1: rate
-      });
-      const newRec = {
-        ...rec,
-        er1: rate,
-        inr: inr,
-        status: 'Processed' as const,
-        settledAmount: rec.settledAmount ?? 0,
-        balance: rec.balance ?? rec.rmb,
-        temp: false
-      };
-      updatedRecordsForSweep.push(newRec);
-      return newRec;
-    }
-    return rec;
-  });
-
-  if (count > 0) {
-    // Trigger immediate UI state rendering before starting server write-back
-    if (onImmediateUIUpdate) {
-      onImmediateUIUpdate(updated);
-    }
-
-    // Update local in-memory store and localStorage immediately to ensure subsequent reads get the calculated rates
-    purchaseInvoicesMemory = updated;
-    localStorage.setItem('purchase_invoices_table', JSON.stringify(updated));
-    localStorage.setItem('last_eod_success_time', Date.now().toString());
-
-    // Execute Reverse Sweep for each invoice that just got an ER1 assigned
-    updatedRecordsForSweep.forEach(rec => runFIFOReverseSweepForInvoice(rec));
-
-    logs.push(`\n[EOD Engine] Successfully processed ${count} uncalculated transaction(s).`);
-
-    // Synchronous backend write to fully ensure reliable pipeline state
-    try {
-      if (appsScriptUrl) {
-        console.log(`[EOD Engine] Committing ${count} batch update(s) to production sheet...`);
-        const result = await executeAppsScriptProxy<any>(
-          appsScriptUrl,
-          'commit_eod_engine',
-          'PurchaseInvoices',
-          'POST',
-          {
-            logs: logs.join('\n'),
-            updates: updatesList
-          }
-        );
-        if (result && result.status === 'success') {
-          console.log(`[EOD Engine] Synchronized with Apps Script successfully:`, result.message);
-          
-          // Force a fresh refetch of all related tables to synchronize auto-settlement changes
-          // triggered downstream by the EOD engine.
-          try {
-             await Promise.all([
-               fetchPurchaseInvoices(),
-               fetchPaymentLogs(),
-               fetchSettlementRecords()
-             ]);
-          } catch(syncErr: any) {
-             // The backend commit above already succeeded — this refetch is
-             // purely to pull the resulting auto-settlement changes back
-             // into view. Was only console.warn'd on failure, meaning the
-             // user could keep looking at pre-EOD numbers with no
-             // indication anything was stale. Surfaced through the same
-             // `logs` panel the rest of this run's narrative already goes
-             // through, rather than inventing a separate notice.
-             console.warn('[EOD Engine] Late-fetch sync warning:', syncErr);
-             logs.push(`\n[EOD Engine] WARNING: The backend commit succeeded, but refreshing the displayed data afterward failed (${syncErr?.message || syncErr}). Reload the page to confirm you're seeing the latest figures.`);
-          }
-        } else {
-          console.warn(`[EOD Engine] Warning: Apps Script backend rejected transactional commit:`, result?.message);
-          throw new Error(result?.message || 'Apps Script transaction rejected');
-        }
-      }
-    } catch (err: any) {
-      console.error(`[EOD Engine] Database sheet write-back failed:`, err);
-      throw err;
-    }
-  } else {
-    logs.push(`\n[EOD Engine] Scan complete. No uncalculated rows require correction.`);
-  }
-
-  return {
-    processedCount: count,
-    logs,
-    updatedRecords: updated
-  };
-}
-
-/**
  * Fetches all Settlement Records from Google Apps Script.
  */
 export async function fetchSettlementRecords(): Promise<SettlementRecord[]> {
@@ -900,34 +741,26 @@ export async function submitAdjustmentEntry(record: any): Promise<any> {
 }
 
 /**
- * Next sequential ADJ-YYYYMMDD-NNN reference ID for a cross-vendor settlement/adjustment
- * batch, scoped to today's date. Shared by every screen that creates adjustment entries so
- * there's a single place to fix sequencing bugs instead of drifting copies.
+ * Next sequential IDP-NNNNN id for a cross-vendor ("indirect payment") transfer —
+ * replaces the old ADJ-YYYYMMDD-NNN-XXXX format. Shared by every screen that creates
+ * Transfer adjustment entries so there's a single place to fix sequencing bugs instead
+ * of drifting copies. Scans PaymentLogs (every cross-vendor transfer materializes a real
+ * wallet row there — see settleViaWalletTransfer_ backend-side), not SettlementLedger,
+ * since a plain top-up transfer no longer writes any SettlementLedger row at all.
  */
-// Computed purely client-side from already-loaded records, with no backend
-// atomic counter — two admins submitting adjustments within the same
-// window, both computing "next sequence" from the same stale snapshot,
-// could compute the identical id. A short random suffix doesn't make this
-// a true atomicity guarantee (that would need a server-side generated id
-// under a lock), but it makes an accidental collision astronomically
-// unlikely without needing a backend change, while keeping the id's
-// date+sequence prefix meaningful for reporting.
-export function generateAdjustmentId(allRecords: SettlementRecord[]): string {
-  const todayStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
-  const prefix = `ADJ-${todayStr}`;
-  const matches = allRecords.filter(r => (r.paymentId || r.id || '').startsWith(prefix));
-  const seqs = matches.map(r => {
-    // Sequence is always the 3rd segment (ADJ-<date>-<seq>[-<nonce>]) — a
-    // fixed index, not "last part", since older records (pre-nonce) have 3
-    // segments and newer ones have 4; `parts.length`-relative indexing
-    // would silently parse the date as the sequence for one of the two.
-    const parts = (r.paymentId || r.id || '').split('-');
-    const lastPart = parseInt(parts[2], 10);
-    return isNaN(lastPart) ? 0 : lastPart;
+// `floor` lets a caller avoid colliding with an id it already handed out this session but
+// that hasn't round-tripped through a refresh into `paymentLogs` yet (e.g. "Log Another"
+// on the Cross-Vendor Settlement page, submitted before onRefresh() completes) — pass the
+// numeric suffix of the last id you generated, or 0 the first time.
+export function generateSequentialIndirectPayId(paymentLogs: PaymentLog[], floor: number = 0): string {
+  let maxSeq = floor;
+  paymentLogs.forEach(log => {
+    if (log.paymentId && log.paymentId.startsWith('IDP-')) {
+      const seqVal = parseInt(log.paymentId.replace('IDP-', ''), 10);
+      if (!isNaN(seqVal) && seqVal > maxSeq) maxSeq = seqVal;
+    }
   });
-  const nextSeq = seqs.length > 0 ? Math.max(...seqs) + 1 : 1;
-  const nonce = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `${prefix}-${String(nextSeq).padStart(3, '0')}-${nonce}`;
+  return `IDP-${(maxSeq + 1).toString().padStart(5, '0')}`;
 }
 
 /**
@@ -1391,108 +1224,14 @@ initializeTableInMemory();
 // so: the backend's addPaymentLog already calls fifoLiquidate_ on every
 // real payment insert, so wiring this up would have double-settled every
 // payment, not filled a gap. Removed rather than connected.
+//
+// "Logic 3" (runFIFOReverseSweepForInvoice) and its caller, executeEODExchangeRateEngine
+// (the "Run EOD Loop" button's client-side pricing engine), are also removed. Both were a
+// localStorage-only duplicate of what the backend now does authoritatively and
+// synchronously: addPurchaseInvoice / syncShipmentsToInvoices_ call runEodForInvoice_ on
+// every invoice the moment it's logged (server-side historical-rate resolution + real
+// autoSettleAdvanceFromInvoice_ writes to the actual sheet), not a client sweep run later
+// against a browser-local snapshot that a failed refetch could leave stuck out of sync
+// with the real Google Sheet.
 
-/**
- * SETTLEMENT ENGINE LOGIC 3:
- * Reverse-FIFO sweep of new invoices against open unspent advances pool.
- */
-export function runFIFOReverseSweepForInvoice(invoice: PurchaseInvoice) {
-  if (typeof window === 'undefined') return;
-
-  const invoices = getPurchaseInvoices();
-  const invIndex = invoices.findIndex(i => i.invoiceId === invoice.invoiceId);
-  if (invIndex === -1) return;
-
-  const targetInvoice = invoices[invIndex];
-
-  // Check if invoice itself is eligible for settlement calculations
-  if (
-    targetInvoice.status === 'Pending EOD' ||
-    targetInvoice.er1 === undefined || targetInvoice.er1 === null || String(targetInvoice.er1).trim() === '' ||
-    targetInvoice.inr === undefined || targetInvoice.inr === null || String(targetInvoice.inr).trim() === ''
-  ) {
-    return;
-  }
-
-  if (targetInvoice.settledAmount === undefined) targetInvoice.settledAmount = 0;
-  if (targetInvoice.balance === undefined) targetInvoice.balance = targetInvoice.rmb;
-
-  const payments = getPaymentLogs();
-  // Sort all open advances chronologically by date
-  const openAdvances = payments
-    .filter(p => p.vendorCode === targetInvoice.vendorCode && p.balance && p.balance > 0)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-  if (openAdvances.length === 0) return;
-
-  const settlements = getSettlementRecordsLocal();
-  const newSettlementRecords: SettlementRecord[] = [];
-
-  // The guard clause above already returned early if er1 were missing, so it's always set here.
-  const er1 = targetInvoice.er1 as number;
-
-  for (const advance of openAdvances) {
-    if (targetInvoice.balance <= 0) break;
-
-    const settlementRmb = Math.min(targetInvoice.balance, advance.balance || 0);
-
-    // Update target invoice in-place
-    targetInvoice.settledAmount += settlementRmb;
-    targetInvoice.balance -= settlementRmb;
-
-    // Update advance in-place
-    advance.balance = (advance.balance || 0) - settlementRmb;
-
-    const advanceIdx = payments.findIndex(p => p.paymentId === advance.paymentId);
-    if (advanceIdx !== -1) {
-      payments[advanceIdx].balance = advance.balance;
-    }
-
-    const totalRecords = settlements.length + newSettlementRecords.length;
-    const newRecordId = `SET-${(1001 + totalRecords).toString()}`;
-    const amountInr = settlementRmb * advance.fxRate;
-    const forexGainLoss = settlementRmb * er1 - settlementRmb * advance.fxRate;
-
-    const settlementRecord: SettlementRecord = {
-      id: newRecordId,
-      date: targetInvoice.date,
-      invoiceId: targetInvoice.invoiceId,
-      vendorNo: targetInvoice.vendorCode,
-      vendorName: getVendorName(targetInvoice.vendorCode),
-      txnType: 'Invoice Settlement',
-      amountRmb: settlementRmb,
-      amountInr: amountInr,
-      exchangeRatePrimary: er1,
-      exchangeRateSettlement: advance.fxRate,
-      forexGainLoss: forexGainLoss,
-      notes: `Reverse FIFO sweep match of Invoice ${targetInvoice.invoiceId} against Advance ${advance.paymentId}`,
-      paymentId: advance.paymentId
-    };
-
-    newSettlementRecords.push(settlementRecord);
-  }
-
-  const round2 = (val: number | undefined) => val === undefined ? undefined : Math.round(val * 100) / 100;
-  
-  const roundedInvoices = invoices.map(i => ({ 
-    ...i, 
-    settledAmount: round2(i.settledAmount), 
-    balance: round2(i.balance) 
-  }));
-  const roundedPayments = payments.map(p => ({
-    ...p,
-    balance: round2(p.balance)
-  }));
-  const roundedSettlements = [...newSettlementRecords, ...settlements].map(s => ({
-    ...s,
-    amountInr: round2(s.amountInr),
-    forexGainLoss: round2(s.forexGainLoss),
-    amountRmb: round2(s.amountRmb)
-  }));
-
-  // Save to LocalStorage
-  localStorage.setItem('purchase_invoices_table', JSON.stringify(roundedInvoices));
-  localStorage.setItem('payment_logs_table', JSON.stringify(roundedPayments));
-  localStorage.setItem('settlement_records_table', JSON.stringify(roundedSettlements));
-}
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -18,7 +18,7 @@ import { ViewType } from '../../types';
 import {
   submitAdjustmentEntry,
   computeVendorBalance,
-  generateAdjustmentId,
+  generateSequentialIndirectPayId,
   VendorMaster,
   PurchaseInvoice,
   PaymentLog,
@@ -70,6 +70,10 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
   };
 
   // Form state
+  // Tracks the last IDP- sequence number handed out this session, so a same-session
+  // "Log Another" submission (before onRefresh() lands) doesn't recompute a colliding
+  // sequence from a paymentLogs prop that hasn't caught up yet.
+  const idpSeqFloorRef = useRef(0);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [payingVendor, setPayingVendor] = useState(prefillPayingVendor);
   const [notes, setNotes] = useState('');
@@ -132,7 +136,8 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
       setErrorMessage(null);
 
       try {
-        const adjId = generateAdjustmentId(settlementRecords);
+        const adjId = generateSequentialIndirectPayId(paymentLogs, idpSeqFloorRef.current);
+        idpSeqFloorRef.current = parseInt(adjId.replace('IDP-', ''), 10);
 
         // No fxRate is sent here — the backend derives the real settled rate itself by
         // draining the paying vendor's own unspent payment wallets FIFO (falling back to
@@ -149,11 +154,12 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
 
         await Promise.all(promises);
 
-        // Merge the new records into local state immediately (synchronously, ahead of
-        // the network refresh below) so that a same-session "Log Another" submission's
-        // generateAdjustmentId() call sees them and can't recompute a colliding sequence
-        // number — App.tsx's onRefresh() fires the real fetch without awaiting it, so it
-        // cannot be relied on alone to make the next ID generation see fresh data in time.
+        // Same-session "Log Another" collision avoidance for the IDP- sequence is handled
+        // via idpSeqFloorRef above, not by merging into local state here — App.tsx's
+        // onRefresh() fires the real fetch without awaiting it, so paymentLogs/settlementRecords
+        // props can't be relied on alone to reflect this submission in time for the next one.
+        //
+        // Still merge optimistic records into local state immediately for instant UI feedback.
         const newLocalRecords: (SettlementRecord & { temp?: boolean; createdAtTimestamp?: number })[] = allocations.map((alloc, idx) => {
           const amount = parseFloat(alloc.amount) || 0;
           return {
