@@ -361,7 +361,12 @@ export async function fetchPurchaseInvoices(): Promise<PurchaseInvoice[]> {
              row['Amount INR'] !== undefined && row['Amount INR'] !== null && row['Amount INR'] !== '' ? parseFloat(row['Amount INR']) : undefined,
         status: row.Status || row.status || 'Pending EOD',
         settledAmount: parseFloat(row['Settled Amount'] || row.settledAmount || '0') || 0,
-        balance: parseFloat(row['Balance'] || row.balance || (row.RMB || row.rmb || '0')) || 0
+        // row.Balance/row.balance may legitimately be 0 (fully settled) — `||` treats 0 as
+        // falsy and would wrongly fall through to the full RMB amount, reporting a settled
+        // invoice as still fully outstanding. Explicit presence checks avoid that.
+        balance: row['Balance'] !== undefined && row['Balance'] !== null && row['Balance'] !== '' ? parseFloat(row['Balance']) :
+                 row.balance !== undefined && row.balance !== null && row.balance !== '' ? parseFloat(row.balance) :
+                 parseFloat(row.RMB || row.rmb || '0') || 0
       }));
 
       purchaseInvoicesMemory = mappedRecords;
@@ -830,6 +835,8 @@ export function compileVendorLedgerRows(
           const isTransferIn = row.Particulars?.includes('Transfer In');
           const isRefund = row.Particulars?.includes('Refund');
           const isForex = row.Particulars?.includes('Forex');
+          const isAdjustmentPaid = row.Particulars?.includes('Adjustment (Paid to');
+          const isAdjustmentReceived = row.Particulars?.includes('Adjustment (Received from');
 
           // From company perspective:
           // Purchase/Liability: Negative
@@ -838,6 +845,8 @@ export function compileVendorLedgerRows(
           // Transfer In: Positive
           // Refund Adjustment: Positive
           // Forex Adjustment: Negative (if it matches old sign direction)
+          // Adjustment (Paid to X): Negative (cross-vendor wallet transfer, source side)
+          // Adjustment (Received from X): Positive (cross-vendor wallet transfer, target side)
           let amount = parseFloat(String(row.RMB)) || 0;
           if (isPurchase) {
             amount = -Math.abs(amount);
@@ -851,6 +860,10 @@ export function compileVendorLedgerRows(
             amount = Math.abs(amount);
           } else if (isForex) {
             amount = -amount;
+          } else if (isAdjustmentPaid) {
+            amount = -Math.abs(amount);
+          } else if (isAdjustmentReceived) {
+            amount = Math.abs(amount);
           } else {
             // Unrecognized Particulars string — was silently flipping sign
             // with no record of it. A typo'd or new transaction-type label
@@ -1138,7 +1151,12 @@ export async function fetchPaymentLogs(): Promise<PaymentLog[]> {
         paymentMode: row['Payment Mode'] || row.paymentMode || '',
         referenceNo: row['Reference No'] || row.referenceNo || '',
         allocations: row.Allocations ? (typeof row.Allocations === 'string' ? JSON.parse(row.Allocations) : row.Allocations) : undefined,
-        balance: parseFloat(row.Balance || row.balance || (row['RMB Amount'] || row.RMB || row.rmbAmount || row.rmb || '0')) || 0
+        // row.Balance may legitimately be 0 (wallet fully consumed) — `||` treats 0 as
+        // falsy and would wrongly fall through to the full RMB amount, reporting a spent
+        // wallet as still fully active. Explicit presence checks avoid that.
+        balance: row.Balance !== undefined && row.Balance !== null && row.Balance !== '' ? parseFloat(row.Balance) :
+                 row.balance !== undefined && row.balance !== null && row.balance !== '' ? parseFloat(row.balance) :
+                 parseFloat(row['RMB Amount'] || row.RMB || row.rmbAmount || row.rmb || '0') || 0
       }));
       const validRecords = mappedRecords.filter(r => r.paymentId);
       localStorage.setItem('payment_logs_table', JSON.stringify(validRecords));
