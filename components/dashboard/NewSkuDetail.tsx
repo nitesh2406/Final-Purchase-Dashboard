@@ -244,7 +244,12 @@ const Spinner: React.FC = () => (
 export const NewSkuDetail: React.FC<{
   requestId: string;
   onBack: () => void;
-}> = ({ requestId, onBack }) => {
+  // Already-fetched New SKU Requests list (from the dashboard's cache), used
+  // for a client-side FC/AN duplicate check without a dedicated backend call.
+  // May be empty/stale if this page was opened without visiting the
+  // dashboard first — a fallback fetch below covers that case.
+  cachedRequests?: any[];
+}> = ({ requestId, onBack, cachedRequests }) => {
   const isNew = requestId === 'NEW';
 
   // Multi-listing (variant) support
@@ -498,6 +503,10 @@ export const NewSkuDetail: React.FC<{
   const [isRejected, setIsRejected] = useState(sourceData.status === 'REJECTED');
   const [showConfigPanel, setShowConfigPanel] = useState(false);
 
+  // Mark as Complete UI
+  const [showMarkCompleteConfirm, setShowMarkCompleteConfirm] = useState(false);
+  const [markCompleteLoading, setMarkCompleteLoading] = useState(false);
+
   // Parent SKU lookup
   const [parentSkuDetails, setParentSkuDetails] = useState<{
     parent_product_name: string;
@@ -518,6 +527,59 @@ export const NewSkuDetail: React.FC<{
   const updateField = (field: keyof FormData, value: any) => {
     setForm(f => ({ ...f, [field]: value }));
     setIsDirty(true);
+  };
+
+  // ─── FC/AN duplicate check (warn, don't block) ───
+  // Falls back to a one-time fetch of the same list the dashboard uses, in
+  // case this page was opened directly (e.g. a bookmarked/typed link)
+  // without the dashboard's cache ever being populated.
+  const [fallbackRequests, setFallbackRequests] = useState<any[]>([]);
+  useEffect(() => {
+    if (cachedRequests && cachedRequests.length > 0) return;
+    (async () => {
+      try {
+        const response = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: API_ACTIONS.GET_NEW_SKU_REQUESTS })
+        });
+        const result = await response.json();
+        if (result.success) setFallbackRequests(result.data || []);
+      } catch (err) {
+        console.error('fallback getNewSkuRequests error:', err);
+      }
+    })();
+    // Only ever needs to run once per mount — cachedRequests is a prop
+    // snapshot, not expected to change while this page is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [factoryDupWarning, setFactoryDupWarning] = useState<string | null>(null);
+  const [articleDupWarning, setArticleDupWarning] = useState<string | null>(null);
+
+  const checkFactoryDuplicate = () => {
+    const source = (cachedRequests && cachedRequests.length > 0) ? cachedRequests : fallbackRequests;
+    const others = source.filter(x => x.request_id !== requestId);
+
+    const fc = form.factory_code_other.trim();
+    const an = form.article_number.trim();
+
+    const fcMatch = fc && others.find(x => {
+      const [otherFc] = String(x.factory_code || '').split('|').map((s: string) => s.trim());
+      return otherFc === fc;
+    });
+    setFactoryDupWarning(fcMatch
+      ? `Matches existing SKU request ${fcMatch.request_id}${fcMatch.listing_name ? ` (${fcMatch.listing_name})` : ''}`
+      : null);
+
+    const anMatch = an && others.find(x => {
+      const parts = String(x.factory_code || '').split('|');
+      const otherAn = (parts[1] || '').trim();
+      return otherAn === an;
+    });
+    setArticleDupWarning(anMatch
+      ? `Matches existing SKU request ${anMatch.request_id}${anMatch.listing_name ? ` (${anMatch.listing_name})` : ''}`
+      : null);
   };
 
   // ─── Derived pricing calculations ───
@@ -589,19 +651,26 @@ export const NewSkuDetail: React.FC<{
     [unitPrice, weightGm, pricingConfig]
   );
 
-  // Track whether we have auto-filled pricing already
-  const pricingAutoFilled = React.useRef(false);
+  // Tracks the last value we auto-wrote into mrp / shopify_selling_price, so
+  // this effect can tell "still showing what we last computed" (safe to
+  // recompute on the next price/weight change) apart from "the user has
+  // since typed something else" (must not clobber it).
+  const lastAutoMrp = React.useRef<number | null>(null);
+  const lastAutoSp  = React.useRef<number | null>(null);
 
   useEffect(() => {
     if (!pricing || pricing.needsWeight) return;
     if (!pricingConfigLoaded) return;
-    if (pricingAutoFilled.current) return;
-    pricingAutoFilled.current = true;
-    setForm(f => ({
-      ...f,
-      mrp:                   f.mrp                   || pricing.mrp,
-      shopify_selling_price: f.shopify_selling_price || pricing.suggested_sp,
-    }));
+    setForm(f => {
+      const next = { ...f };
+      if (f.mrp === '' || f.mrp === lastAutoMrp.current) next.mrp = pricing.mrp;
+      if (f.shopify_selling_price === '' || f.shopify_selling_price === lastAutoSp.current) {
+        next.shopify_selling_price = pricing.suggested_sp;
+      }
+      return next;
+    });
+    lastAutoMrp.current = pricing.mrp;
+    lastAutoSp.current  = pricing.suggested_sp;
   }, [pricing, pricingConfigLoaded]);
 
   const currentSP    = Number(form.shopify_selling_price) || 0;
@@ -1232,7 +1301,15 @@ export const NewSkuDetail: React.FC<{
     if (!ok) setStepFailed(f => ({ ...f, [step]: true }));
   };
 
+  // True once any platform step has actually created something live — a
+  // request in this state can no longer be safely rejected, since Reject
+  // only flips our internal tracking status and never touches
+  // EasyEcom/Zoho/Shopify/the PO. Rejecting past this point would hide a
+  // still-live duplicate listing instead of preventing one.
+  const anyPlatformDone = platformStatus.ee || platformStatus.zoho || platformStatus.shopify || platformStatus.ee_po;
+
   const handleConfirmReject = async (remark: string) => {
+    if (anyPlatformDone) return; // defense-in-depth — button is disabled, but guard the call too
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
@@ -1254,6 +1331,33 @@ export const NewSkuDetail: React.FC<{
     } catch (err) {
       alert('Network error');
       console.error(err);
+    }
+  };
+
+  const handleMarkComplete = async () => {
+    setMarkCompleteLoading(true);
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action:       API_ACTIONS.MARK_SKU_COMPLETE,
+          request_id:   requestId,
+          completed_by: 'user'
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        setSourceData(d => ({ ...d, status: 'CREATED' }));
+        setShowMarkCompleteConfirm(false);
+      } else {
+        alert('Mark as Complete failed: ' + result.error);
+      }
+    } catch (err) {
+      alert('Network error');
+      console.error(err);
+    } finally {
+      setMarkCompleteLoading(false);
     }
   };
 
@@ -1421,6 +1525,40 @@ export const NewSkuDetail: React.FC<{
                     {sourceData.requested_at ? formatDate(sourceData.requested_at) : '—'}
                   </div>
                 </div>
+                <div>
+                  <FieldLabel>Other Factory Code</FieldLabel>
+                  <input
+                    type="text"
+                    className={inputClasses}
+                    value={form.factory_code_other}
+                    onChange={e => updateField('factory_code_other', e.target.value)}
+                    onBlur={() => { checkFactoryDuplicate(); handleBlurSave(); }}
+                    placeholder="e.g. DSYH009"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Maps to Accounting SKU in EasyEcom
+                  </p>
+                  {factoryDupWarning && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">⚠ {factoryDupWarning}</p>
+                  )}
+                </div>
+                <div>
+                  <FieldLabel>Article Number</FieldLabel>
+                  <input
+                    type="text"
+                    className={inputClasses}
+                    value={form.article_number}
+                    onChange={e => updateField('article_number', e.target.value)}
+                    onBlur={() => { checkFactoryDuplicate(); handleBlurSave(); }}
+                    placeholder="e.g. T220031MS"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Maps to Article Number custom field in EasyEcom
+                  </p>
+                  {articleDupWarning && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">⚠ {articleDupWarning}</p>
+                  )}
+                </div>
               </div>
             </Card>
           ) : (
@@ -1493,12 +1631,15 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.factory_code_other}
                     onChange={e => updateField('factory_code_other', e.target.value)}
-                    onBlur={handleBlurSave}
+                    onBlur={() => { checkFactoryDuplicate(); handleBlurSave(); }}
                     placeholder="e.g. DSYH009"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
                     Maps to Accounting SKU in EasyEcom
                   </p>
+                  {factoryDupWarning && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">⚠ {factoryDupWarning}</p>
+                  )}
                 </div>
                 <div>
                   <FieldLabel>Article Number</FieldLabel>
@@ -1507,12 +1648,15 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.article_number}
                     onChange={e => updateField('article_number', e.target.value)}
-                    onBlur={handleBlurSave}
+                    onBlur={() => { checkFactoryDuplicate(); handleBlurSave(); }}
                     placeholder="e.g. T220031MS"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
                     Maps to Article Number custom field in EasyEcom
                   </p>
+                  {articleDupWarning && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">⚠ {articleDupWarning}</p>
+                  )}
                 </div>
               </div>
             </Card>
@@ -2406,17 +2550,64 @@ export const NewSkuDetail: React.FC<{
                 {loading.save ? <Spinner /> : null}
                 {isDirty ? 'Save Draft' : 'No Changes'}
               </Button>
+              {/* Mark as Complete — for Action Required requests where no
+                  further action is actually needed; forces status straight
+                  to CREATED without running remaining platform steps. */}
+              {!isNew && sourceData.status === 'ACTION_REQ' && (
+                <>
+                  <Button
+                    variant="secondary"
+                    className="w-full text-xs"
+                    onClick={() => setShowMarkCompleteConfirm(prev => !prev)}
+                  >
+                    <CheckBadgeIcon className="w-4 h-4 mr-1" />
+                    Mark as Complete
+                  </Button>
+
+                  {showMarkCompleteConfirm && (
+                    <div className="mt-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800/50 space-y-2 animate-in slide-in-from-top-1 duration-200">
+                      <p className="text-xs text-amber-700 dark:text-amber-400">
+                        Force-complete this request without running the remaining platform steps? Any steps not yet done will stay as they are.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="primary"
+                          className="text-xs flex-1"
+                          onClick={handleMarkComplete}
+                          disabled={markCompleteLoading}
+                        >
+                          {markCompleteLoading ? <Spinner /> : null}
+                          Confirm Complete
+                        </Button>
+                        <button
+                          onClick={() => setShowMarkCompleteConfirm(false)}
+                          className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
               {/* Reject Request */}
               {!isNew && !isRejected && sourceData.status !== 'REJECTED' && (
                 <>
                   <Button
                     variant="danger"
                     className="w-full text-xs"
+                    disabled={anyPlatformDone}
+                    title={anyPlatformDone ? 'Cannot reject — EasyEcom/Zoho/Shopify listing(s) already exist for this request.' : undefined}
                     onClick={() => setShowRejectConfirm(prev => !prev)}
                   >
                     <XMarkIcon className="w-4 h-4 mr-1" />
                     Reject Request
                   </Button>
+                  {anyPlatformDone && (
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500 -mt-1">
+                      Cannot reject — EasyEcom/Zoho/Shopify listing(s) already exist for this request.
+                    </p>
+                  )}
 
                   {showRejectConfirm && (
                     <div className="mt-2 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800/50 space-y-2 animate-in slide-in-from-top-1 duration-200">

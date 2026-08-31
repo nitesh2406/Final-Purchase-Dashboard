@@ -904,6 +904,7 @@ const App: React.FC = () => {
                     <NewSkuDetail
                         requestId={selectedSkuRequestId}
                         onBack={() => setCurrentView('Create SKU')}
+                        cachedRequests={skuRequests}
                     />
                 ) : <NewSkuDashboard
                     onOpenDetail={(id) => {

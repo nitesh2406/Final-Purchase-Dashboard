@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { PlusIcon, MagnifyingGlassIcon, ChevronRightIcon, ExclamationTriangleIcon } from '../icons/Icons';
+import { PlusIcon, MagnifyingGlassIcon, ChevronRightIcon, ExclamationTriangleIcon, CheckBadgeIcon, ChevronDownIcon, ArrowPathIcon, XMarkIcon } from '../icons/Icons';
 
 // ─────────────────────────────────────────
 // TYPES
@@ -51,6 +51,21 @@ const hasOutstandingImpFields = (r: SkuRequest): boolean => {
     !r.pkg_height_cm || !r.pkg_length_cm || !r.pkg_width_cm
   );
 };
+
+// Physical Specs completeness — surfaced for every row regardless of status,
+// separate from hasOutstandingImpFields above (which is CREATED-only and
+// covers a broader field set). This exists so an ACTION_REQ row — which
+// backend-side just means "some platform step isn't done yet", not
+// "something's missing" — can still show at a glance which of the 4
+// package-dimension fields haven't been filled in.
+const MISSING_SPEC_LABELS: { key: keyof SkuRequest; label: string }[] = [
+  { key: 'pkg_weight_gm', label: 'Pkg Weight' },
+  { key: 'pkg_height_cm', label: 'Pkg Height' },
+  { key: 'pkg_length_cm', label: 'Pkg Length' },
+  { key: 'pkg_width_cm',  label: 'Pkg Width'  },
+];
+const getMissingPhysicalSpecs = (r: SkuRequest): string[] =>
+  MISSING_SPEC_LABELS.filter(f => !r[f.key]).map(f => f.label);
 
 // ─────────────────────────────────────────
 // STATUS CONFIG
@@ -225,6 +240,106 @@ export const NewSkuDashboard: React.FC<{
     });
   };
 
+  // ─── Per-row actions menu — retry a stuck Create Listing run, or mark an
+  // Action Required row complete, without leaving the dashboard ───
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [rowBusy, setRowBusy] = useState<Record<string, string | null>>({});
+  const [rowError, setRowError] = useState<Record<string, string | null>>({});
+  const menuRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [openMenuId]);
+
+  // Re-fetches a single row from the backend (same derivation the dashboard
+  // list itself uses) and patches it into local state — avoids hand-rolling
+  // *_done/status derivation client-side after a retry or mark-complete call.
+  const refreshRow = async (requestId: string) => {
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID, request_id: requestId })
+      });
+      const result = await response.json();
+      if (result.success && result.data) {
+        setData(prev => {
+          const next = prev.map(row => row.request_id === requestId ? { ...row, ...result.data } : row);
+          onDataLoaded(next);
+          return next;
+        });
+      }
+    } catch (err) {
+      console.error('refreshRow error:', err);
+    }
+  };
+
+  const PLATFORM_STEPS: { key: 'ee' | 'zoho' | 'shopify' | 'ee_po'; label: string; action: string; doneKey: keyof SkuRequest }[] = [
+    { key: 'ee',      label: 'EasyEcom', action: API_ACTIONS.CREATE_SKU_ON_EE,     doneKey: 'ee_done' },
+    { key: 'zoho',    label: 'Zoho',     action: API_ACTIONS.CREATE_SKU_ON_ZOHO,   doneKey: 'zoho_done' },
+    { key: 'shopify', label: 'Shopify',  action: API_ACTIONS.CREATE_SKU_ON_SHOPIFY, doneKey: 'shopify_done' },
+    { key: 'ee_po',   label: 'EE Purchase Order', action: API_ACTIONS.UPDATE_EE_PO, doneKey: 'ee_po_updated' },
+  ];
+
+  const handleRetryStep = async (r: SkuRequest) => {
+    const steps = PLATFORM_STEPS.filter(s => s.key !== 'ee_po' || !!r.shipment_id);
+    const nextStep = steps.find(s => !r[s.doneKey]);
+    if (!nextStep) return;
+
+    setRowBusy(prev => ({ ...prev, [r.request_id]: nextStep.label }));
+    setRowError(prev => ({ ...prev, [r.request_id]: null }));
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: nextStep.action, request_id: r.request_id })
+      });
+      const result = await response.json();
+      if (result.success) {
+        await refreshRow(r.request_id);
+        setOpenMenuId(null);
+      } else {
+        setRowError(prev => ({ ...prev, [r.request_id]: result.error || `${nextStep.label} failed` }));
+      }
+    } catch (err) {
+      setRowError(prev => ({ ...prev, [r.request_id]: 'Network error' }));
+      console.error('handleRetryStep error:', err);
+    } finally {
+      setRowBusy(prev => ({ ...prev, [r.request_id]: null }));
+    }
+  };
+
+  const handleMarkCompleteRow = async (r: SkuRequest) => {
+    setRowBusy(prev => ({ ...prev, [r.request_id]: 'Mark Complete' }));
+    setRowError(prev => ({ ...prev, [r.request_id]: null }));
+    try {
+      const response = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: API_ACTIONS.MARK_SKU_COMPLETE, request_id: r.request_id, completed_by: 'user' })
+      });
+      const result = await response.json();
+      if (result.success) {
+        await refreshRow(r.request_id);
+        setOpenMenuId(null);
+      } else {
+        setRowError(prev => ({ ...prev, [r.request_id]: result.error || 'Mark as Complete failed' }));
+      }
+    } catch (err) {
+      setRowError(prev => ({ ...prev, [r.request_id]: 'Network error' }));
+      console.error('handleMarkCompleteRow error:', err);
+    } finally {
+      setRowBusy(prev => ({ ...prev, [r.request_id]: null }));
+    }
+  };
+
   const statusChips: (SkuStatus | 'ALL')[] = ['ALL', 'PENDING', 'IN_PROGRESS', 'ACTION_REQ', 'CREATED', 'REJECTED'];
 
   return (
@@ -373,14 +488,15 @@ export const NewSkuDashboard: React.FC<{
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-right w-[90px]">Cost (¥)</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-left w-[110px]">Requested</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-left w-[160px]">Platforms</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center w-[90px]">Specs</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center w-[110px]">Status</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center w-[60px]"></th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center w-[80px]"></th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={11}>
+                  <td colSpan={12}>
                     <div className="py-16 text-center">
                       <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent 
                                       rounded-full animate-spin mx-auto mb-4" />
@@ -392,7 +508,7 @@ export const NewSkuDashboard: React.FC<{
                 </tr>
               ) : fetchError ? (
                 <tr>
-                  <td colSpan={11}>
+                  <td colSpan={12}>
                     <div className="py-16 text-center">
                       <ExclamationTriangleIcon className="w-8 h-8 text-red-400 mx-auto mb-3" />
                       <p className="text-sm font-medium text-red-500">{fetchError}</p>
@@ -407,7 +523,7 @@ export const NewSkuDashboard: React.FC<{
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={11}>
+                  <td colSpan={12}>
                     <div className="py-16 text-center">
                       <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-700 
                                       flex items-center justify-center mx-auto mb-4">
@@ -507,14 +623,94 @@ export const NewSkuDashboard: React.FC<{
                       />
                     </td>
 
-                    {/* 10. Status */}
+                    {/* 10. Specs — missing physical-spec fields, independent of status */}
+                    <td className="px-4 py-3 text-center">
+                      {(() => {
+                        const missing = getMissingPhysicalSpecs(r);
+                        return missing.length === 0 ? (
+                          <CheckBadgeIcon className="w-4 h-4 text-green-500 dark:text-green-400 mx-auto" />
+                        ) : (
+                          <span
+                            title={`Missing: ${missing.join(', ')}`}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                          >
+                            <ExclamationTriangleIcon className="w-3 h-3" />
+                            {missing.length}
+                          </span>
+                        );
+                      })()}
+                    </td>
+
+                    {/* 11. Status */}
                     <td className="px-4 py-3 text-center">
                       <StatusBadge status={r.status} />
                     </td>
 
-                    {/* 11. Action */}
-                    <td className="px-4 py-3 text-center">
-                      <ChevronRightIcon className="w-4 h-4 text-gray-400 dark:text-gray-500 mx-auto" />
+                    {/* 12. Row actions — retry a stuck platform step or mark
+                        Action Required complete, without opening the detail page */}
+                    <td className="px-4 py-3 text-center relative">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            setOpenMenuId(prev => prev === r.request_id ? null : r.request_id);
+                          }}
+                          className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                          title="Row actions"
+                        >
+                          <ChevronDownIcon className="w-4 h-4" />
+                        </button>
+                        <ChevronRightIcon className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                      </div>
+
+                      {openMenuId === r.request_id && (
+                        <div
+                          ref={menuRef}
+                          onClick={e => e.stopPropagation()}
+                          className="absolute right-4 top-full mt-1 z-20 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 text-left"
+                        >
+                          {rowBusy[r.request_id] ? (
+                            <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                              <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                              {rowBusy[r.request_id]}...
+                            </div>
+                          ) : (
+                            <>
+                              {r.status !== 'CREATED' && r.status !== 'REJECTED' && (
+                                <button
+                                  onClick={() => handleRetryStep(r)}
+                                  className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
+                                >
+                                  <ArrowPathIcon className="w-3.5 h-3.5" />
+                                  Retry Create Listing
+                                </button>
+                              )}
+                              {r.status === 'ACTION_REQ' && (
+                                <button
+                                  onClick={() => handleMarkCompleteRow(r)}
+                                  className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
+                                >
+                                  <CheckBadgeIcon className="w-3.5 h-3.5" />
+                                  Mark as Complete
+                                </button>
+                              )}
+                              <button
+                                onClick={() => { setOpenMenuId(null); onOpenDetail(r.request_id); }}
+                                className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
+                              >
+                                <ChevronRightIcon className="w-3.5 h-3.5" />
+                                Open Detail
+                              </button>
+                            </>
+                          )}
+                          {rowError[r.request_id] && (
+                            <div className="px-3 py-2 text-[10px] text-red-500 border-t border-gray-100 dark:border-gray-700 flex items-start gap-1">
+                              <XMarkIcon className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                              {rowError[r.request_id]}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))

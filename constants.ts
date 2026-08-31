@@ -61,6 +61,7 @@ export const API_ACTIONS = {
     CREATE_SKU_ON_SHOPIFY:     'createSkuOnShopify',
     UPDATE_EE_PO:              'updateEePurchaseOrder',
     REJECT_SKU_REQUEST:        'rejectSkuRequest',
+    MARK_SKU_COMPLETE:         'markSkuComplete',
     CREATE_MANUAL_SKU:         'createManualSkuRequest',
     GET_BRANDS:                'getBrands',
     ADD_BRAND:                 'addBrand',
