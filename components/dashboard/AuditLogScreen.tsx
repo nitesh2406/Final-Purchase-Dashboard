@@ -7,6 +7,8 @@ import {
   CheckBadgeIcon,
   XMarkIcon,
   ExclamationTriangleIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
 } from '../icons/Icons';
 
 // ─────────────────────────────────────────
@@ -28,7 +30,21 @@ interface AuditLogRow {
   status: 'SUCCESS' | 'FAILED' | string;
   actor: string;
   request_id: string;
+  payload?: string;
+  response?: string;
 }
+
+// payload/response are stored as JSON strings when they came from an
+// object — pretty-print if parseable, otherwise show as-is (they may just
+// be a plain error message string).
+const formatDetail = (raw?: string): string => {
+  if (!raw) return '';
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+};
 
 const CHANNEL_LABELS: Record<Channel, string> = {
   ALL: 'All',
@@ -79,12 +95,14 @@ export const AuditLogScreen: React.FC<{
   const [rows, setRows] = useState<AuditLogRow[]>(auditLogCache?.rows || []);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   useEffect(() => {
     auditLogCache = { channel, dateFrom, dateTo, search, rows };
   }, [channel, dateFrom, dateTo, search, rows]);
 
   const fetchLog = useCallback(async () => {
+    setExpandedIdx(null);
     if (channel === 'IDENTIFIER_REMOVAL') {
       setRows([]);
       return;
@@ -204,34 +222,38 @@ export const AuditLogScreen: React.FC<{
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-left w-[140px]">Entity</th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-left">Summary</th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center w-[100px]">Status</th>
+                  <th className="px-2 py-3 w-[40px]" />
                 </tr>
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={6}>
+                  <tr><td colSpan={7}>
                     <div className="py-16 text-center">
                       <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
                       <p className="text-sm text-gray-500 dark:text-gray-400">Loading audit log...</p>
                     </div>
                   </td></tr>
                 ) : fetchError ? (
-                  <tr><td colSpan={6}>
+                  <tr><td colSpan={7}>
                     <div className="py-16 text-center">
                       <ExclamationTriangleIcon className="w-8 h-8 text-red-400 mx-auto mb-3" />
                       <p className="text-sm font-medium text-red-500">{fetchError}</p>
                     </div>
                   </td></tr>
                 ) : rows.length === 0 ? (
-                  <tr><td colSpan={6}>
+                  <tr><td colSpan={7}>
                     <div className="py-16 text-center">
                       <p className="text-sm font-medium text-gray-500 dark:text-gray-400">No events found</p>
                       <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Try adjusting your filters</p>
                     </div>
                   </td></tr>
                 ) : (
-                  rows.map((r, idx) => (
+                  rows.map((r, idx) => {
+                    const hasDetail = !!(r.payload || r.response);
+                    const isExpanded = expandedIdx === idx;
+                    return (
+                    <React.Fragment key={idx}>
                     <tr
-                      key={idx}
                       className={`border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors ${
                         r.request_id && onOpenUpdateSku ? 'cursor-pointer' : ''
                       }`}
@@ -259,8 +281,41 @@ export const AuditLogScreen: React.FC<{
                           </span>
                         )}
                       </td>
+                      <td className="px-2 py-3 text-center">
+                        {hasDetail && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setExpandedIdx(isExpanded ? null : idx); }}
+                            className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                            title={isExpanded ? 'Hide details' : 'Show payload & response'}
+                          >
+                            {isExpanded ? <ChevronUpIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />}
+                          </button>
+                        )}
+                      </td>
                     </tr>
-                  ))
+                    {isExpanded && hasDetail && (
+                      <tr className="bg-gray-50 dark:bg-gray-900/40 border-b border-gray-100 dark:border-gray-700/50">
+                        <td colSpan={7} className="px-4 py-3">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">Payload sent</p>
+                              <pre className="text-[11px] font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 max-h-48 overflow-auto whitespace-pre-wrap break-all">
+                                {formatDetail(r.payload) || '—'}
+                              </pre>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">Response</p>
+                              <pre className="text-[11px] font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 max-h-48 overflow-auto whitespace-pre-wrap break-all">
+                                {formatDetail(r.response) || '—'}
+                              </pre>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
+                    );
+                  })
                 )}
               </tbody>
             </table>
