@@ -4,6 +4,7 @@ import {
   MagnifyingGlassIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   ShipIcon,
   AirplaneIcon,
   CheckIcon,
@@ -13,10 +14,10 @@ import {
   ArchiveBoxIcon,
   ArrowPathIcon,
   ExclamationTriangleIcon,
-  ClipboardDocumentCheckIcon
+  BanknotesIcon
 } from '../icons/Icons';
 import { Batch, BatchVendorShipment } from '../../types';
-import { APPS_SCRIPT_URL } from '../../constants';
+import { callGasAuthed } from '../../services/gasApi';
 import { Button } from '../ui/Button';
 
 // Status Badge Component
@@ -43,16 +44,16 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   );
 };
 
-// DOC Badge
-const DOCBadge: React.FC<{ doc: number | null }> = ({ doc }) => {
-  if (doc === null) return <span className="text-slate-600 text-sm">-</span>;
-  const color = doc > 30
-    ? 'bg-green-500/10 text-green-500'
-    : doc >= 15
-    ? 'bg-yellow-500/10 text-yellow-500'
-    : 'bg-red-500/10 text-red-500';
-  return <span className={`inline-block px-2 py-1 rounded text-sm font-medium ${color}`}>{doc}d</span>;
+const PAYMENT_STATUS_BADGE: Record<string, string> = {
+  'Paid': 'text-emerald-600 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-400/10',
+  'Partial': 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-400/10',
+  'Unpaid': 'text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-400/10',
 };
+
+const BATCH_STATUS_OPTIONS = [
+  'Shipped', 'In-Transit China', 'At Port China', 'In-Transit Ocean', 'In-Transit Air',
+  'Customs Clearance', 'In-Transit India', 'Out for Delivery', 'Delivered'
+];
 
 // Check Cell
 const CheckCell: React.FC<{ value: boolean | null }> = ({ value }) => {
@@ -68,9 +69,30 @@ const VendorShipmentRow: React.FC<{
   isExpanded: boolean;
   onToggle: () => void;
   isSearching: boolean;
-}> = ({ vendor, isExpanded, onToggle, isSearching }) => {
+  isAdmin: boolean;
+  onSaveShipmentFinance: (shipmentId: string, data: { invoice_no: string; total_amount: number; currency: string; remarks: string }) => Promise<void>;
+}> = ({ vendor, isExpanded, onToggle, isSearching, isAdmin, onSaveShipmentFinance }) => {
   const ChevronIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
   const totalUnits = vendor.line_items.reduce((sum, item) => sum + (item.incoming_qty || 0), 0);
+  const [isEditingFinance, setIsEditingFinance] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [form, setForm] = useState({
+    invoice_no: vendor.invoiceId || '',
+    total_amount: vendor.total_amount || 0,
+    currency: vendor.currency || 'RMB',
+    remarks: vendor.remarks || ''
+  });
+
+  const handleSave = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsSaving(true);
+    try {
+      await onSaveShipmentFinance(vendor.shipment_id, form);
+      setIsEditingFinance(false);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div className="border-b border-slate-700 last:border-0">
@@ -86,15 +108,68 @@ const VendorShipmentRow: React.FC<{
               <span className="text-slate-400 dark:text-slate-600">|</span>
               <span className="text-base text-slate-900 dark:text-slate-300">{vendor.vendor_name}</span>
               <span className="text-slate-600">|</span>
-              <span className="text-sm text-slate-500">Invoice: {vendor.invoice_no}</span>
+              <span className="text-sm text-slate-500">Invoice: {vendor.invoiceId}</span>
+              {isAdmin && vendor.payment_status && (
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${PAYMENT_STATUS_BADGE[vendor.payment_status]}`}>
+                  {vendor.payment_status}
+                </span>
+              )}
             </div>
             <div className="text-sm text-slate-500 mt-1">
               {vendor.carton_count} cartons • {totalUnits} units
               {isSearching && <span className="text-blue-400 ml-2 font-medium">• {vendor.line_items.length} matching items</span>}
+              {isAdmin && vendor.total_amount !== undefined && (
+                <span className="ml-2">• {vendor.currency} {vendor.total_amount?.toLocaleString()}
+                  {vendor.amount_inr != null ? ` (₹${vendor.amount_inr.toLocaleString()})` : ' (Rate N/A)'}
+                </span>
+              )}
             </div>
           </div>
         </div>
+        {isAdmin && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setIsEditingFinance(!isEditingFinance); }}
+            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+          >
+            {isEditingFinance ? 'Cancel' : 'Edit Finance'}
+          </button>
+        )}
       </button>
+
+      {isAdmin && isEditingFinance && (
+        <div className="bg-slate-100 dark:bg-slate-900/70 px-6 py-4 border-t border-slate-300 dark:border-slate-700" onClick={e => e.stopPropagation()}>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 block">Invoice No</label>
+              <input type="text" value={form.invoice_no} onChange={e => setForm({ ...form, invoice_no: e.target.value })}
+                className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-2 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 block">Amount</label>
+              <input type="number" value={form.total_amount} onChange={e => setForm({ ...form, total_amount: Number(e.target.value) })}
+                className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-2 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 block">Currency</label>
+              <select value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value as 'RMB' | 'USD' })}
+                className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-2 py-1.5 text-sm">
+                <option value="RMB">RMB</option>
+                <option value="USD">USD</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 block">Remarks</label>
+              <input type="text" value={form.remarks} onChange={e => setForm({ ...form, remarks: e.target.value })}
+                className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-2 py-1.5 text-sm" />
+            </div>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <Button onClick={handleSave} disabled={isSaving} className="text-xs py-1.5 px-4">
+              {isSaving ? 'Saving...' : 'Save Shipment Finance'}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {isExpanded && (
         <div className="bg-slate-100 dark:bg-slate-900/50 px-6 py-4 animate-in slide-in-from-top-2 duration-200">
@@ -102,10 +177,10 @@ const VendorShipmentRow: React.FC<{
             <table className="w-full min-w-max text-sm">
               <thead>
                 <tr className="border-b border-slate-350 dark:border-slate-700">
-                  {['SKU', 'Item Name', 'Incoming', 'Current Stock', 'Future Stock', 'MMA', 'DOC', 'Logo', 'Pkg', 'Manual', 'OPP'].map((label, i) => (
+                  {['SKU', 'Item Name', 'Incoming', 'Current Stock', 'Future Stock', 'Logo', 'Pkg', 'Manual', 'OPP'].map((label, i) => (
                     <th
                       key={label}
-                      className={`py-3 px-3 text-xs font-bold text-slate-600 dark:text-slate-500 uppercase tracking-wider ${i < 2 ? 'text-left' : i > 6 ? 'text-center' : 'text-right'}`}
+                      className={`py-3 px-3 text-xs font-bold text-slate-600 dark:text-slate-500 uppercase tracking-wider ${i < 2 ? 'text-left' : i > 4 ? 'text-center' : 'text-right'}`}
                     >
                       {label}
                     </th>
@@ -120,8 +195,6 @@ const VendorShipmentRow: React.FC<{
                     <td className="py-3 px-3 text-right font-bold text-slate-900 dark:text-white">{item.incoming_qty}</td>
                     <td className="py-3 px-3 text-right text-slate-700 dark:text-slate-400">{item.current_stock ?? '-'}</td>
                     <td className="py-3 px-3 text-right font-medium text-slate-900 dark:text-slate-100">{item.future_stock ?? '-'}</td>
-                    <td className="py-3 px-3 text-right text-slate-700 dark:text-slate-400">{item.mma ?? '-'}</td>
-                    <td className="py-3 px-3 text-right"><DOCBadge doc={item.doc_after_arrival} /></td>
                     <td className="py-3 px-3 text-center"><CheckCell value={item.has_logo} /></td>
                     <td className="py-3 px-3 text-center"><CheckCell value={item.has_packaging} /></td>
                     <td className="py-3 px-3 text-center"><CheckCell value={item.has_manual} /></td>
@@ -140,15 +213,22 @@ const VendorShipmentRow: React.FC<{
 interface BatchDetailProps {
   batchId: string;
   onBack: () => void;
+  isAdmin?: boolean;
 }
 
-export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack }) => {
+export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack, isAdmin = false }) => {
   const [batch, setBatch] = useState<Batch | null>(null);
   const [filteredVendors, setFilteredVendors] = useState<BatchVendorShipment[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedVendors, setExpandedVendors] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Admin edit / payment history state
+  const [isEditingBatch, setIsEditingBatch] = useState(false);
+  const [isSavingBatch, setIsSavingBatch] = useState(false);
+  const [batchForm, setBatchForm] = useState<any>(null);
+  const [isPaymentHistoryExpanded, setIsPaymentHistoryExpanded] = useState(false);
 
   // Debug states
   const [showDebug, setShowDebug] = useState(false);
@@ -164,16 +244,20 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack }) => 
     setLastTimestamp(new Date().toLocaleTimeString());
 
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload)
-      });
-      const result = await response.json();
+      const result = await callGasAuthed('get_batch_details', { batch_id: batchId });
       setLastResponse(result);
 
       if (result.status === 'success') {
         setBatch(result.batch);
+        setBatchForm({
+          carrier: result.batch.carrier,
+          tracking_number: result.batch.tracking_number,
+          expected_delivery: result.batch.expected_delivery ? result.batch.expected_delivery.split('T')[0] : '',
+          status: result.batch.status,
+          notes: result.batch.notes,
+          total_amount: result.batch.total_amount,
+          total_currency: result.batch.total_currency || 'RMB'
+        });
       } else {
         throw new Error(result.message || "Failed to load batch details");
       }
@@ -222,6 +306,44 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack }) => 
       else next.add(shipmentId);
       return next;
     });
+  };
+
+  const handleSaveBatch = async () => {
+    setIsSavingBatch(true);
+    const payload = { action: 'update_batch_tracking', batch_id: batchId, ...batchForm };
+    setLastRequest(payload);
+    try {
+      const result = await callGasAuthed('update_batch_tracking', { batch_id: batchId, ...batchForm });
+      setLastResponse(result);
+      if (result.status === 'success') {
+        setIsEditingBatch(false);
+        loadBatch();
+      } else {
+        alert(result.message || 'Update failed');
+      }
+    } catch (err: any) {
+      console.error('Update error:', err);
+      alert('Network error updating batch');
+    } finally {
+      setIsSavingBatch(false);
+    }
+  };
+
+  const handleSaveShipmentFinance = async (shipmentId: string, data: { invoice_no: string; total_amount: number; currency: string; remarks: string }) => {
+    const payload = { action: 'update_shipment_finance', shipment_id: shipmentId, ...data };
+    setLastRequest(payload);
+    try {
+      const result = await callGasAuthed('update_shipment_finance', { shipment_id: shipmentId, ...data });
+      setLastResponse(result);
+      if (result.status === 'success') {
+        loadBatch();
+      } else {
+        alert(result.message || 'Update failed');
+      }
+    } catch (err: any) {
+      console.error('Update error:', err);
+      alert('Network error updating shipment finance');
+    }
   };
 
   const handleCopyDebug = (data: any) => {
@@ -317,6 +439,14 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack }) => 
                 Delayed {batch.delay_days}d
               </span>
             )}
+            {isAdmin && (
+              <>
+                <span className="px-2 py-0.5 bg-red-500/20 text-red-500 border border-red-500/30 rounded text-[10px] font-bold uppercase tracking-widest">Admin</span>
+                <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={() => setIsEditingBatch(!isEditingBatch)}>
+                  {isEditingBatch ? 'Cancel Edit' : 'Edit Batch'}
+                </Button>
+              </>
+            )}
             <div className="ml-auto relative">
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
               <input
@@ -335,7 +465,7 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack }) => 
           </div>
 
           {/* Compact info strip */}
-          <div className="grid grid-cols-2 md:grid-cols-4 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden mb-6">
+          <div className={`grid grid-cols-2 ${isAdmin ? 'md:grid-cols-4' : 'md:grid-cols-4'} border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden mb-6`}>
             <div className="px-5 py-4 border-r border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
               <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Carrier & Tracking</p>
               <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{batch.carrier || '—'}</p>
@@ -358,14 +488,82 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack }) => 
               <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{batch.total_units} units · {batch.total_cartons} cartons</p>
               <p className="text-[11px] text-slate-500 mt-0.5">{batch.total_vendors} vendor{batch.total_vendors !== 1 ? 's' : ''}</p>
             </div>
-            <div className="px-5 py-4 bg-slate-50 dark:bg-slate-800/50">
-              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Mode</p>
-              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                {batch.batch_type === 'sea' ? '🚢 Sea Freight' : '✈️ Air Freight'}
-              </p>
-              <p className="text-[11px] text-slate-500 mt-0.5">{batch.batch_id}</p>
-            </div>
+            {isAdmin ? (
+              <div className="px-5 py-4 bg-slate-50 dark:bg-slate-800/50">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Total Amount</p>
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{batch.total_currency} {batch.total_amount?.toLocaleString()}</p>
+                <p className="text-[11px] mt-0.5">
+                  {batch.amount_inr != null
+                    ? <span className="text-blue-600 dark:text-blue-400 font-semibold">₹{batch.amount_inr.toLocaleString()}</span>
+                    : <span className="text-amber-600 dark:text-amber-500">FX Rate N/A</span>}
+                  {' · '}
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${PAYMENT_STATUS_BADGE[batch.payment_status || 'Unpaid']}`}>
+                    {batch.payment_status || 'Unpaid'}
+                  </span>
+                </p>
+              </div>
+            ) : (
+              <div className="px-5 py-4 bg-slate-50 dark:bg-slate-800/50">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Mode</p>
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {batch.batch_type === 'sea' ? '🚢 Sea Freight' : '✈️ Air Freight'}
+                </p>
+              </div>
+            )}
           </div>
+
+          {/* Admin batch edit panel */}
+          {isAdmin && isEditingBatch && batchForm && (
+            <div className="bg-white dark:bg-slate-800 border border-blue-500/50 rounded-xl p-6 mb-6 animate-in slide-in-from-top-4 duration-300">
+              <h3 className="text-sm font-bold mb-4 text-slate-800 dark:text-white uppercase tracking-wide">Edit Batch Details</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Carrier</label>
+                  <input type="text" value={batchForm.carrier} onChange={e => setBatchForm({ ...batchForm, carrier: e.target.value })}
+                    className="w-full mt-1 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tracking Number</label>
+                  <input type="text" value={batchForm.tracking_number} onChange={e => setBatchForm({ ...batchForm, tracking_number: e.target.value })}
+                    className="w-full mt-1 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">ETA</label>
+                  <input type="date" value={batchForm.expected_delivery} onChange={e => setBatchForm({ ...batchForm, expected_delivery: e.target.value })}
+                    className="w-full mt-1 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Status</label>
+                  <select value={batchForm.status} onChange={e => setBatchForm({ ...batchForm, status: e.target.value })}
+                    className="w-full mt-1 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm">
+                    {BATCH_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Amount</label>
+                  <input type="number" value={batchForm.total_amount} onChange={e => setBatchForm({ ...batchForm, total_amount: Number(e.target.value) })}
+                    className="w-full mt-1 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Currency</label>
+                  <select value={batchForm.total_currency} onChange={e => setBatchForm({ ...batchForm, total_currency: e.target.value })}
+                    className="w-full mt-1 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm">
+                    <option value="RMB">RMB</option>
+                    <option value="USD">USD</option>
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Notes</label>
+                  <input type="text" value={batchForm.notes} onChange={e => setBatchForm({ ...batchForm, notes: e.target.value })}
+                    className="w-full mt-1 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm" placeholder="Internal notes..." />
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-3">
+                <Button variant="secondary" onClick={() => setIsEditingBatch(false)}>Cancel</Button>
+                <Button onClick={handleSaveBatch} disabled={isSavingBatch}>{isSavingBatch ? 'Saving...' : 'Save Batch Changes'}</Button>
+              </div>
+            </div>
+          )}
 
           {/* Shipment contents */}
           <div className="bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-lg">
@@ -394,6 +592,8 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack }) => 
                     isExpanded={expandedVendors.has(vendor.shipment_id)}
                     onToggle={() => toggleVendor(vendor.shipment_id)}
                     isSearching={searchTerm.trim().length > 0}
+                    isAdmin={isAdmin}
+                    onSaveShipmentFinance={handleSaveShipmentFinance}
                   />
                 ))}
               </div>
@@ -407,6 +607,51 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack }) => 
                 <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Internal Batch Notes</h3>
               </div>
               <p className="text-slate-300 text-sm italic leading-relaxed border-l-2 border-slate-700 pl-4">"{batch.notes}"</p>
+            </div>
+          )}
+
+          {isAdmin && (
+            <div className="mt-8 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <button
+                onClick={() => setIsPaymentHistoryExpanded(!isPaymentHistoryExpanded)}
+                className="w-full p-4 flex justify-between items-center hover:bg-slate-100 dark:hover:bg-slate-700/30 transition-colors"
+              >
+                <h3 className="font-bold flex items-center gap-2 text-slate-800 dark:text-white text-sm">
+                  <BanknotesIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  Payment History ({(batch.payments || []).length})
+                </h3>
+                {isPaymentHistoryExpanded ? <ChevronUpIcon className="w-4 h-4 text-slate-500" /> : <ChevronDownIcon className="w-4 h-4 text-slate-500" />}
+              </button>
+              {isPaymentHistoryExpanded && (
+                <div className="border-t border-slate-300 dark:border-slate-700 overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-sm">
+                    <thead>
+                      <tr className="bg-slate-100 dark:bg-slate-900/50 text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-300 dark:border-slate-700">
+                        <th className="px-6 py-3">Date</th>
+                        <th className="px-6 py-3">Vendor</th>
+                        <th className="px-6 py-3">Amount INR</th>
+                        <th className="px-6 py-3">Amount Foreign</th>
+                        <th className="px-6 py-3">Rate</th>
+                        <th className="px-6 py-3">Reference</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
+                      {(batch.payments || []).length === 0 ? (
+                        <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-500">No payments logged for this batch yet.</td></tr>
+                      ) : (batch.payments || []).map(p => (
+                        <tr key={p.payment_id}>
+                          <td className="px-6 py-3 text-slate-600 dark:text-slate-400">{new Date(p.payment_date).toLocaleDateString()}</td>
+                          <td className="px-6 py-3 font-bold text-slate-800 dark:text-slate-300">{p.vendor_id}</td>
+                          <td className="px-6 py-3 font-bold text-emerald-600 dark:text-emerald-400">₹{p.amount_inr?.toLocaleString()}</td>
+                          <td className="px-6 py-3 text-slate-800 dark:text-slate-300">{p.currency} {p.amount_foreign?.toLocaleString()}</td>
+                          <td className="px-6 py-3 font-mono text-xs text-slate-500">{p.day_fx_rate}</td>
+                          <td className="px-6 py-3 font-mono text-xs text-slate-500">{p.reference_no}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 

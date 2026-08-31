@@ -475,6 +475,8 @@ export interface Batch {
   total_vendors: number;
   total_cartons: number;
   total_units: number;
+  total_value_rmb: number;
+  item_type_prefixes: string[];
   created_at: string;
   created_by: string;
   shipped_at: string;
@@ -486,12 +488,49 @@ export interface Batch {
   is_delayed: boolean;
   delay_days: number;
   vendor_shipments?: BatchVendorShipment[];
-  
+  vendor_summary?: BatchVendorSummary[];
+
   // Financial reconciliation fields
-  original_amount_rmb: number;
-  duty_charges_inr: number;
-  landing_charges_inr: number;
-  final_total_inr: number;
+  original_amount_rmb?: number;
+  duty_charges_inr?: number;
+  landing_charges_inr?: number;
+  final_total_inr?: number;
+
+  // ── Finance fields — present ONLY when the request resolved to Admin
+  // server-side (see getBatches/getBatchDetails in PO+Shipment Codes.js).
+  // Genuinely absent for non-admins, never present-but-null.
+  total_amount?: number;
+  total_currency?: 'RMB' | 'USD';
+  amount_inr?: number | null;
+  blended_rate?: number | null;
+  rate_period?: string | null;
+  payment_status?: 'Unpaid' | 'Partial' | 'Paid';
+  paid_inr?: number;
+  payments?: BatchPayment[];
+}
+
+export interface BatchVendorSummary {
+  vendor_code: string;
+  shipment_id: string;
+  carton_count: number;
+  invoice_no: string;
+  invoice_date: string;
+  total_units: number;
+}
+
+export interface BatchPayment {
+  payment_id: string;
+  payment_date: string;
+  vendor_id: string;
+  account_type?: string;
+  amount_inr: number;
+  amount_foreign?: number;
+  currency?: string;
+  day_fx_rate?: number;
+  reference_no?: string;
+  notes?: string;
+  batch_id?: string;
+  shipment_id?: string;
 }
 
 export type BatchStatus = 
@@ -513,10 +552,17 @@ export interface BatchVendorShipment {
   invoiceId: string;
   invoice_date: string;
   total_units: number;
-  total_amount?: number; // compat
   carton_count: number;
   remarks: string;
   line_items: BatchLineItem[];
+
+  // ── Finance fields — Admin-only, see Batch above for the same contract.
+  total_amount?: number;
+  currency?: 'RMB' | 'USD';
+  amount_inr?: number | null;
+  payment_status?: 'Unpaid' | 'Partial' | 'Paid';
+  paid_inr?: number;
+  payments?: BatchPayment[];
 }
 
 // Line Item with Inventory Context
@@ -527,19 +573,19 @@ export interface BatchLineItem {
   factory_code: string;
   ean: string;
   incoming_qty: number;
-  
+
   // Compatibility fields
   invoice_qty?: number;
   unit_price?: number;
   total_price?: number;
 
-  // Inventory placeholders
+  // Inventory
   current_stock: number | null;
   future_stock: number | null;
-  mma: number | null;
-  doc_after_arrival: number | null;
-  
-  // Product specs placeholders
+
+  // Product specs — sourced from Purchase_Order_Lines, "first PO match wins"
+  // when a line was fulfilled from more than one PO (see
+  // buildVendorShipmentsForBatch_ in PO+Shipment Codes.js)
   has_logo: boolean | null;
   has_packaging: boolean | null;
   has_manual: boolean | null;
@@ -551,6 +597,13 @@ export interface BatchFilters {
   search: string;
   status: BatchStatus | 'All';
   mode: 'All' | 'sea' | 'air';
+  vendor: string; // vendor_code, or 'All'
+  carrier: string; // exact carrier string, or 'All'
+  dateFrom: string; // shipped_at lower bound, yyyy-mm-dd, or ''
+  dateTo: string; // shipped_at upper bound, yyyy-mm-dd, or ''
+  itemTypePrefix: string; // a SKU_Config prefix (possibly shared by >1 category), or 'All'
+  sortBy: 'expected_delivery' | 'batch_id' | 'shipped_at' | 'total_value';
+  paymentStatus?: 'All' | 'Unpaid' | 'Partial' | 'Paid'; // Admin-only column, ignored for non-admins
 }
 
 // Dashboard metrics
@@ -559,32 +612,27 @@ export interface BatchMetrics {
   inTransitValue: number;
   arrivingThisWeek: number;
   delayedShipments: number;
+  newShipmentsThisWeek: number;
+  avgTransitTimeAirDays: number | null;
+  avgTransitTimeSeaDays: number | null;
+  // ── Admin-only, see Batch above for the same contract.
+  totalOutstandingINR?: number;
+  pendingPaymentsCount?: number;
 }
 
-// ==========================================
-// FINANCE MODULE TYPES
-// ==========================================
-
-export interface BatchFinance extends Batch {
-  total_currency: 'RMB' | 'USD';
-  payment_status: 'Unpaid' | 'Partial' | 'Paid';
-  total_amount: number;
-  amount_inr?: number;
-  blended_rate?: number;
-  rate_period?: string;
+export interface SkuCategory {
+  category: string;
+  prefix: string;
 }
 
-export interface ShipmentFinanceData {
-  shipment_id: string;
+export interface SkuShipmentSearchResult {
   batch_id: string;
+  batch_type: 'sea' | 'air';
   vendor_code: string;
-  vendor_name?: string;
-  invoiceId: string;
-  total_amount: number;
-  currency: 'RMB' | 'USD';
-  amount_inr?: number;
-  payment_status: 'Unpaid' | 'Partial' | 'Paid';
-  account_type?: 'Trade' | 'Pool';
+  sku: string;
+  item_name: string;
+  quantity: number;
+  status: BatchStatus;
 }
 
 export interface CnfLedgerEntry {
@@ -648,8 +696,8 @@ export interface CnfInvoiceBatch {
 
 export type ViewType =
   | 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders'
-  | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance'
-  | 'Inventory Analytics' | 'Settings' | 'Shipment Finance' | 'Shipment Finance Detail'
+  | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'SKU Item Search' | 'Finance'
+  | 'Inventory Analytics' | 'Settings'
   | 'Payment Ledger' | 'Accounts View' | 'Settlement Ledger' | 'Cross Vendor Settlement'
   | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU' | 'Audit Log'
   | 'CNF Agent Accounting';

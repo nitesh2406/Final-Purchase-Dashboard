@@ -34,8 +34,8 @@ export const API_ACTIONS = {
     GET_OPEN_BATCHES: 'get_open_batches',
     UPDATE_SHIPMENT_DRIVE_DOCS: 'update_shipment_drive_docs',
     // Finance Operations
-    GET_BATCHES_FINANCE: 'get_batches_finance',
-    GET_BATCH_FINANCE_DETAIL: 'get_batch_finance_detail',
+    // get_batches_finance / get_batch_finance_detail retired — merged into
+    // get_batches / get_batch_details (role-gated server-side).
     UPDATE_BATCH_TRACKING: 'update_batch_tracking',
     UPDATE_SHIPMENT_FINANCE: 'update_shipment_finance',
     GET_PURCHASE_INVOICES: 'get_purchase_invoices',

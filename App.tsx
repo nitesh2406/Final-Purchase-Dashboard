@@ -34,8 +34,7 @@ import { NewSkuDashboard } from './components/dashboard/NewSkuDashboard.tsx';
 import { NewSkuDetail } from './components/dashboard/NewSkuDetail.tsx';
 import { UpdateSkuScreen } from './components/dashboard/UpdateSkuScreen.tsx';
 import { AuditLogScreen } from './components/dashboard/AuditLogScreen.tsx';
-import { ShipmentFinance } from './components/finance/ShipmentFinance.tsx';
-import { ShipmentFinanceDetail } from './components/finance/ShipmentFinanceDetail.tsx';
+import { SkuSearchScreen } from './components/logistics/SkuSearchScreen.tsx';
 import { PaymentLedger } from './components/finance/PaymentLedger.tsx';
 import { AccountsView } from './components/finance/AccountsView.tsx';
 import { SettlementLedger } from './components/finance/SettlementLedger.tsx';
@@ -62,7 +61,6 @@ const App: React.FC = () => {
     const currentView: ViewType = matchedRoute?.view || 'Dashboard';
     const setCurrentView = useCallback((v: ViewType) => navigate(viewToPath(v)), [navigate]);
     const selectedBatchId: string | null = currentView === 'Batch Detail' ? (matchedRoute?.params.batchId || null) : null;
-    const selectedFinanceBatchId: string | null = currentView === 'Shipment Finance Detail' ? (matchedRoute?.params.batchId || null) : null;
     const selectedSkuRequestId: string | null = currentView === 'SKU Detail' ? (matchedRoute?.params.requestId || null) : null;
     const [skuRequests, setSkuRequests] = useState<any[]>([]);
     const [skuRequestsLoaded, setSkuRequestsLoaded] = useState(false);
@@ -561,7 +559,7 @@ const App: React.FC = () => {
         }
     }, []);
 
-    const FINANCE_VIEWS = ['Finance', 'Payment Ledger', 'Accounts View', 'Settlement Ledger', 'Cross Vendor Settlement', 'Shipment Finance', 'Shipment Finance Detail'];
+    const FINANCE_VIEWS = ['Finance', 'Payment Ledger', 'Accounts View', 'Settlement Ledger', 'Cross Vendor Settlement'];
     useEffect(() => {
         if (!user || user.role === 'CNF_AGENT') return;
         if (FINANCE_VIEWS.includes(currentView)) fetchFinanceData();
@@ -782,18 +780,29 @@ const App: React.FC = () => {
                     productMasterList={skus}
                 />;
             case 'Shipment Tracker':
-                return <ShipmentTracker onNavigateToBatch={(id) => {
-                    navigate(viewToPath('Batch Detail', { batchId: id }));
-                }} />;
+                return <ShipmentTracker
+                    isAdmin={user?.role === 'ADMIN'}
+                    onNavigateToBatch={(id) => {
+                        navigate(viewToPath('Batch Detail', { batchId: id }));
+                    }}
+                />;
             case 'CNF Agent Accounting':
                 return <CnfAgentAccounting />;
             case 'Batch Detail':
                 return selectedBatchId ? (
                     <BatchDetail
                         batchId={selectedBatchId}
+                        isAdmin={user?.role === 'ADMIN'}
                         onBack={() => setCurrentView('Shipment Tracker')}
                     />
-                ) : <ShipmentTracker onNavigateToBatch={(id) => {
+                ) : <ShipmentTracker
+                    isAdmin={user?.role === 'ADMIN'}
+                    onNavigateToBatch={(id) => {
+                        navigate(viewToPath('Batch Detail', { batchId: id }));
+                    }}
+                />;
+            case 'SKU Item Search':
+                return <SkuSearchScreen onNavigateToBatch={(id) => {
                     navigate(viewToPath('Batch Detail', { batchId: id }));
                 }} />;
             case 'Finance':
@@ -808,19 +817,6 @@ const App: React.FC = () => {
                     addVendor={addVendor}
                     updateVendor={updateVendor}
                 />;
-            case 'Shipment Finance':
-                return <ShipmentFinance onNavigateToDetail={(id) => {
-                    navigate(viewToPath('Shipment Finance Detail', { batchId: id }));
-                }} />;
-            case 'Shipment Finance Detail':
-                return selectedFinanceBatchId ? (
-                    <ShipmentFinanceDetail
-                        batchId={selectedFinanceBatchId}
-                        onBack={() => setCurrentView('Shipment Finance')}
-                    />
-                ) : <ShipmentFinance onNavigateToDetail={(id) => {
-                    navigate(viewToPath('Shipment Finance Detail', { batchId: id }));
-                }} />;
             case 'Payment Ledger':
                 return <PaymentLedger
                     onNavigate={(v) => setCurrentView(v)}
@@ -858,7 +854,7 @@ const App: React.FC = () => {
                     vendorLedger={vendorLedger}
                     vendors={displayVendorMasters}
                     onNavigateToDetail={(id) => {
-                        navigate(viewToPath('Shipment Finance Detail', { batchId: id }));
+                        navigate(viewToPath('Batch Detail', { batchId: id }));
                     }}
                     onNavigate={(v) => setCurrentView(v)}
                     onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}

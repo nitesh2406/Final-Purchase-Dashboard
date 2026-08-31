@@ -12,11 +12,10 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   'Shipment Tracker': '/logistics/shipment-tracker',
   'CNF Agent Accounting': '/logistics/cnf-agent-accounting',
   'Batch Detail': '/logistics/shipment-tracker/:batchId',
+  'SKU Item Search': '/logistics/sku-search',
   'Finance': '/finance',
   'Inventory Analytics': '/inventory/analytics',
   'Settings': '/settings',
-  'Shipment Finance': '/finance/shipments',
-  'Shipment Finance Detail': '/finance/shipments/:batchId',
   'Payment Ledger': '/finance/payment-ledger',
   'Accounts View': '/finance/accounts',
   'Settlement Ledger': '/finance/settlement-ledger',
@@ -35,7 +34,6 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
 // highlight a parent nav item when active.
 const DETAIL_VIEW_PARENT: Partial<Record<ViewType, ViewType>> = {
   'Batch Detail': 'Shipment Tracker',
-  'Shipment Finance Detail': 'Shipment Finance',
   'SKU Detail': 'Create SKU',
 };
 

@@ -182,7 +182,27 @@ export function createApiApp() {
       };
 
       if (actualBody !== undefined && actualBody !== null) {
-        fetchOptions.body = typeof actualBody === 'string' ? actualBody : JSON.stringify(actualBody);
+        // Stamp the session-verified email onto the outgoing payload,
+        // overwriting whatever (if anything) the client put in user_email.
+        // This is what lets GAS-side role checks (getUserRole_) trust the
+        // email — a client editing the request body can't claim to be
+        // someone else, since requireSession already verified who's calling.
+        // Only object-shaped JSON payloads get stamped; anything else (a
+        // bare string, form data) is forwarded unchanged since there's no
+        // well-defined field to stamp it into.
+        let parsedBody: any = null;
+        if (typeof actualBody === 'string') {
+          try { parsedBody = JSON.parse(actualBody); } catch { parsedBody = null; }
+        } else if (typeof actualBody === 'object') {
+          parsedBody = actualBody;
+        }
+
+        if (parsedBody && typeof parsedBody === 'object' && !Array.isArray(parsedBody)) {
+          parsedBody.user_email = (req as any).userEmail;
+          fetchOptions.body = JSON.stringify(parsedBody);
+        } else {
+          fetchOptions.body = typeof actualBody === 'string' ? actualBody : JSON.stringify(actualBody);
+        }
       }
 
       console.log(`[Proxy] Routing ${method || 'GET'} request to ${url}...`);
