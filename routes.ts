@@ -15,6 +15,7 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   'SKU Item Search': '/logistics/sku-search',
   'Finance': '/finance',
   'Inventory Analytics': '/inventory/analytics',
+  'Inventory': '/inventory/valuation',
   'Settings': '/settings',
   'Payment Ledger': '/finance/payment-ledger',
   'Accounts View': '/finance/accounts',

@@ -694,10 +694,21 @@ export interface CnfInvoiceBatch {
   rejectionReason?: string;
 }
 
+export interface InventoryValuationRow {
+  sku: string;
+  name: string | null;
+  brand: string | null;
+  category: string | null;
+  channel: string;
+  in_stock: number;
+  inbound: number;
+  mrp: number | null;
+}
+
 export type ViewType =
   | 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders'
   | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'SKU Item Search' | 'Finance'
-  | 'Inventory Analytics' | 'Settings'
+  | 'Inventory Analytics' | 'Inventory' | 'Settings'
   | 'Payment Ledger' | 'Accounts View' | 'Settlement Ledger' | 'Cross Vendor Settlement'
   | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU' | 'Audit Log'
   | 'CNF Agent Accounting';

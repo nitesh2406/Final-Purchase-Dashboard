@@ -28,6 +28,7 @@ import { Logistics } from './components/logistics/Logistics.tsx';
 import { Finance } from './components/finance/Finance.tsx';
 import { InventoryAnalytics } from './components/inventory/InventoryAnalytics.tsx';
 import { InventoryForecasting } from './components/inventory/InventoryForecasting.tsx';
+import { InventoryValuation } from './components/inventory/InventoryValuation.tsx';
 import { Settings } from './components/settings/Settings.tsx';
 import { AmazonForecasting } from './pages/AmazonForecasting.tsx';
 import { NewSkuDashboard } from './components/dashboard/NewSkuDashboard.tsx';
@@ -867,6 +868,8 @@ const App: React.FC = () => {
                 />;
             case 'Inventory Analytics':
                 return <InventoryAnalytics />;
+            case 'Inventory':
+                return <InventoryValuation />;
             case 'Amazon Forecasting':
                 return <AmazonForecasting
                     amazonConfig={amazonConfig}
