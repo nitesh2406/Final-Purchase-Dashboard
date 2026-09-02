@@ -56,6 +56,7 @@ interface FormData {
   // Section C — Pricing
   mrp: number | '';
   shopify_selling_price: number | '';
+  shopify_compare_price: number | '';
   // Section D — Physical Specs
   pkg_height_cm: number | '';
   pkg_length_cm: number | '';
@@ -88,6 +89,7 @@ interface PricingConfig {
   min_margin_pct:   number;
   cm1_brackets:     { floor: number; value: number }[];
   mrp_brackets:     { floor: number; value: number }[];
+  compare_brackets: { floor: number; value: number }[];
 }
 
 
@@ -287,6 +289,7 @@ export const NewSkuDetail: React.FC<{
     is_sample: false,
     mrp: '',
     shopify_selling_price: '',
+    shopify_compare_price: '',
     pkg_height_cm: '',
     pkg_length_cm: '',
     pkg_width_cm: '',
@@ -344,6 +347,7 @@ export const NewSkuDetail: React.FC<{
           is_sample:             !!result.data.is_sample,
           mrp:                   result.data.mrp                  || '',
           shopify_selling_price: result.data.shopify_selling_price|| '',
+          shopify_compare_price: result.data.shopify_compare_price|| '',
           pkg_height_cm:         result.data.pkg_height_cm        || '',
           pkg_length_cm:         result.data.pkg_length_cm        || '',
           pkg_width_cm:          result.data.pkg_width_cm         || '',
@@ -430,6 +434,7 @@ export const NewSkuDetail: React.FC<{
             min_margin_pct:   Number(d.min_margin_pct)    || 20,
             cm1_brackets:     d.cm1_brackets,
             mrp_brackets:     d.mrp_brackets,
+            compare_brackets: d.compare_brackets,
           });
           setPricingConfigLoaded(true);
           setPricingConfigError(null);
@@ -583,10 +588,21 @@ export const NewSkuDetail: React.FC<{
   };
 
   // ─── Derived pricing calculations ───
+  // Bracket lookup — finds highest floor ≤ value, returns that bracket's
+  // value. A trailing sentinel floor (>=999999) represents an open-ended
+  // "greater than every real floor" bracket — it must only win when value
+  // exceeds the PREVIOUS real floor, not merely because the loop reached
+  // it. Applying it unconditionally (as an earlier version did) mis-
+  // bucketed any value that exactly equalled the last real floor (e.g.
+  // SP === 2000 for MRP brackets). Mirrors lookupBracket_ in NewSkuApi.js.
   const lookupBracket = (value: number, brackets: { floor: number; value: number }[]): number => {
     let result = brackets[0].value;
-    for (const b of brackets) {
-      if (b.floor >= 999999) { result = b.value; break; }
+    for (let i = 0; i < brackets.length; i++) {
+      const b = brackets[i];
+      if (b.floor >= 999999) {
+        if (i > 0 && value > brackets[i - 1].floor) result = b.value;
+        break;
+      }
       if (value >= b.floor) result = b.value;
       else break;
     }
@@ -622,6 +638,15 @@ export const NewSkuDetail: React.FC<{
     const mrpDivisor = lookupBracket(suggestedSP, config.mrp_brackets);
     const mrp        = Math.round((suggestedSP / mrpDivisor) / 50) * 50 - 1;
 
+    // Step 6: Compare At Price — lookup by SP, markup % as whole number,
+    // capped at MRP
+    let compareAtPrice: number | null = null;
+    if (config.compare_brackets) {
+      const compareMarkup = lookupBracket(suggestedSP, config.compare_brackets) / 100;
+      const rawCompare     = Math.min(suggestedSP * (1 + compareMarkup), mrp);
+      compareAtPrice       = Math.round(rawCompare / 50) * 50 - 1;
+    }
+
     // Step 7: CM1 actual
     const netSales  = suggestedSP / 1.05;
     const cm1Profit = netSales - landing;
@@ -638,6 +663,7 @@ export const NewSkuDetail: React.FC<{
       cm1_target:       Math.round(cm1Pct * 100),
       suggested_sp:     suggestedSP,
       mrp,
+      compare_at_price: compareAtPrice,
       actual_cm1:       Math.round(actualCM1 * 100) / 100,
       cm3:              Math.round(cm3Profit),
       actual_cm3:       Math.round(actualCM3 * 100) / 100,
@@ -651,12 +677,14 @@ export const NewSkuDetail: React.FC<{
     [unitPrice, weightGm, pricingConfig]
   );
 
-  // Tracks the last value we auto-wrote into mrp / shopify_selling_price, so
-  // this effect can tell "still showing what we last computed" (safe to
-  // recompute on the next price/weight change) apart from "the user has
-  // since typed something else" (must not clobber it).
-  const lastAutoMrp = React.useRef<number | null>(null);
-  const lastAutoSp  = React.useRef<number | null>(null);
+  // Tracks the last value we auto-wrote into mrp / shopify_selling_price /
+  // shopify_compare_price, so this effect can tell "still showing what we
+  // last computed" (safe to recompute on the next price/weight change)
+  // apart from "the user has since typed something else" (must not clobber
+  // it).
+  const lastAutoMrp     = React.useRef<number | null>(null);
+  const lastAutoSp      = React.useRef<number | null>(null);
+  const lastAutoCompare = React.useRef<number | null>(null);
 
   useEffect(() => {
     if (!pricing || pricing.needsWeight) return;
@@ -667,10 +695,15 @@ export const NewSkuDetail: React.FC<{
       if (f.shopify_selling_price === '' || f.shopify_selling_price === lastAutoSp.current) {
         next.shopify_selling_price = pricing.suggested_sp;
       }
+      if (pricing.compare_at_price != null &&
+          (f.shopify_compare_price === '' || f.shopify_compare_price === lastAutoCompare.current)) {
+        next.shopify_compare_price = pricing.compare_at_price;
+      }
       return next;
     });
-    lastAutoMrp.current = pricing.mrp;
-    lastAutoSp.current  = pricing.suggested_sp;
+    lastAutoMrp.current     = pricing.mrp;
+    lastAutoSp.current      = pricing.suggested_sp;
+    lastAutoCompare.current = pricing.compare_at_price;
   }, [pricing, pricingConfigLoaded]);
 
   const currentSP    = Number(form.shopify_selling_price) || 0;
@@ -1847,7 +1880,7 @@ export const NewSkuDetail: React.FC<{
           {/* ─── SECTION C: Pricing ─── */}
           <Card>
             <SectionHeader emoji="💰" title="Pricing" />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div>
                 <FieldLabel>MRP (₹)</FieldLabel>
                 <input
@@ -1869,6 +1902,22 @@ export const NewSkuDetail: React.FC<{
                   onBlur={handleBlurSave}
                   placeholder="0.00"
                 />
+              </div>
+              <div>
+                <FieldLabel>Compare At Price (₹)</FieldLabel>
+                <input
+                  type="number"
+                  className={inputClasses}
+                  value={form.shopify_compare_price}
+                  onChange={e => updateField('shopify_compare_price', e.target.value ? Number(e.target.value) : '')}
+                  onBlur={handleBlurSave}
+                  placeholder="0.00"
+                />
+                {pricing && !pricing.needsWeight && pricing.compare_at_price != null && (
+                  <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">
+                    Suggested: ₹{pricing.compare_at_price}
+                  </p>
+                )}
               </div>
             </div>
             {pricing && !pricing.needsWeight && (
@@ -2222,6 +2271,27 @@ export const NewSkuDetail: React.FC<{
                         ₹ {currentMRP || pricing?.mrp || '—'}
                       </span>
                     </div>
+
+                    {/* Compare At Price — shows user's actual value vs suggested */}
+                    {pricing.compare_at_price != null && (
+                      <div className="flex justify-between items-center py-2
+                                      border-b border-gray-100 dark:border-gray-700">
+                        <div>
+                          <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
+                            Compare At Price
+                          </p>
+                          {Number(form.shopify_compare_price) !== pricing.compare_at_price && (
+                            <p className="text-[10px] text-gray-400">
+                              Suggested: ₹{pricing.compare_at_price}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-sm font-bold font-mono
+                                         text-gray-900 dark:text-white">
+                          ₹ {Number(form.shopify_compare_price) || pricing.compare_at_price || '—'}
+                        </span>
+                      </div>
+                    )}
 
                     {/* Discount simulation input */}
                     <div className="flex justify-between items-center py-2
