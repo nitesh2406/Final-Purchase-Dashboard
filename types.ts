@@ -704,7 +704,8 @@ export interface InventoryValuationRow {
   channel: string;
   in_stock: number;
   inbound: number;
-  mrp: number | null;
+  cost_inr: number | null;
+  cost_rmb: number | null;
 }
 
 export type ViewType =

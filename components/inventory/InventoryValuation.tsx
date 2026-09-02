@@ -18,7 +18,7 @@ import {
 // refetching every time the user navigates back to this tab.
 let inventoryCache: { rows: InventoryValuationRow[]; timestamp: number } | null = null;
 
-type SortColumn = 'sku' | 'name' | 'brand' | 'category' | 'in_stock' | 'inbound' | 'total_qty' | 'mrp' | 'valuation';
+type SortColumn = 'sku' | 'name' | 'brand' | 'category' | 'in_stock' | 'inbound' | 'total_qty' | 'cost_inr' | 'cost_rmb' | 'valuation';
 type SortDirection = 'asc' | 'desc';
 
 interface AggregatedRow {
@@ -29,7 +29,8 @@ interface AggregatedRow {
     in_stock: number;
     inbound: number;
     total_qty: number;
-    mrp: number | null;
+    cost_inr: number | null;
+    cost_rmb: number | null;
     valuation: number | null;
 }
 
@@ -42,7 +43,8 @@ function getSortValue(row: AggregatedRow, column: SortColumn): string | number {
         case 'in_stock': return row.in_stock;
         case 'inbound': return row.inbound;
         case 'total_qty': return row.total_qty;
-        case 'mrp': return row.mrp ?? -1;
+        case 'cost_inr': return row.cost_inr ?? -1;
+        case 'cost_rmb': return row.cost_rmb ?? -1;
         case 'valuation': return row.valuation ?? -1;
         default: return '';
     }
@@ -50,6 +52,7 @@ function getSortValue(row: AggregatedRow, column: SortColumn): string | number {
 
 const formatNumber = (n: number) => n.toLocaleString('en-IN');
 const formatCurrency = (n: number | null) => n == null ? '—' : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+const formatRmb = (n: number | null) => n == null ? '—' : `¥${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
 const SortableHeader: React.FC<{
     column: SortColumn;
@@ -170,7 +173,8 @@ export const InventoryValuation: React.FC = () => {
                     in_stock: row.in_stock,
                     inbound: row.inbound,
                     total_qty: 0,
-                    mrp: row.mrp,
+                    cost_inr: row.cost_inr,
+                    cost_rmb: row.cost_rmb,
                     valuation: null,
                 });
             }
@@ -181,7 +185,7 @@ export const InventoryValuation: React.FC = () => {
             return {
                 ...r,
                 total_qty,
-                valuation: r.mrp == null ? null : total_qty * r.mrp,
+                valuation: r.cost_inr == null ? null : total_qty * r.cost_inr,
             };
         });
 
@@ -359,7 +363,8 @@ export const InventoryValuation: React.FC = () => {
                                     <SortableHeader column="in_stock" label="In Stock" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
                                     <SortableHeader column="inbound" label="Inbound" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
                                     <SortableHeader column="total_qty" label="Total Qty" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
-                                    <SortableHeader column="mrp" label="MRP" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
+                                    <SortableHeader column="cost_inr" label="Cost (INR)" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
+                                    <SortableHeader column="cost_rmb" label="Cost (RMB)" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
                                     <SortableHeader column="valuation" label="Valuation" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
                                 </tr>
                             </thead>
@@ -373,7 +378,8 @@ export const InventoryValuation: React.FC = () => {
                                         <td className="px-4 py-3 text-right text-sm text-slate-900 dark:text-slate-100">{formatNumber(row.in_stock)}</td>
                                         <td className="px-4 py-3 text-right text-sm text-slate-900 dark:text-slate-100">{formatNumber(row.inbound)}</td>
                                         <td className="px-4 py-3 text-right text-sm font-semibold text-slate-900 dark:text-slate-100">{formatNumber(row.total_qty)}</td>
-                                        <td className="px-4 py-3 text-right text-sm text-slate-700 dark:text-slate-300">{formatCurrency(row.mrp)}</td>
+                                        <td className="px-4 py-3 text-right text-sm text-slate-700 dark:text-slate-300">{formatCurrency(row.cost_inr)}</td>
+                                        <td className="px-4 py-3 text-right text-sm text-slate-700 dark:text-slate-300">{formatRmb(row.cost_rmb)}</td>
                                         <td className="px-4 py-3 text-right text-sm font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(row.valuation)}</td>
                                     </tr>
                                 ))}
