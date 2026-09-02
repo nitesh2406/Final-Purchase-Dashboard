@@ -8,12 +8,14 @@ import {
     MagnifyingGlassIcon,
     ShipIcon,
     AirplaneIcon,
-    ArrowPathIcon
+    ArrowPathIcon,
+    PencilIcon
 } from '../icons/Icons';
 import { Batch, BatchFilters, BatchMetrics, SkuCategory } from '../../types';
 import { callGasAuthed } from '../../services/gasApi';
 import { Button } from '../ui/Button';
 import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
+import { EditBatchTrackingModal } from './EditBatchTrackingModal';
 
 // Module-level cache — one shared cache now that Tracker and Finance are a
 // single screen (previously each had its own, which is what made an edit on
@@ -294,6 +296,7 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
     const [showDebug, setShowDebug] = useState(false);
     const [lastRequest, setLastRequest] = useState<any>(null);
     const [lastResponse, setLastResponse] = useState<any>(null);
+    const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
 
     const fetchData = useCallback(async (forceRefresh = false) => {
         if (!forceRefresh && batchListCache) {
@@ -486,6 +489,7 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                                     {isAdmin && <th className="px-4 py-3">Payment Status</th>}
                                     {isAdmin && <th className="px-4 py-3 text-right">Total Amount (RMB)</th>}
                                     {isAdmin && <th className="px-4 py-3 text-right">INR Equivalent</th>}
+                                    {isAdmin && <th className="px-4 py-3 text-center">Edit</th>}
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
@@ -537,6 +541,17 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                                                         : <span className="text-amber-600 dark:text-amber-500 text-xs">Rate N/A</span>}
                                                 </td>
                                             )}
+                                            {isAdmin && (
+                                                <td className="px-4 py-3 text-center">
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); setEditingBatchId(batch.batch_id); }}
+                                                        className="p-1.5 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-colors"
+                                                        title="Edit tracking details"
+                                                    >
+                                                        <PencilIcon className="w-4 h-4" />
+                                                    </button>
+                                                </td>
+                                            )}
                                         </tr>
                                     );
                                 })}
@@ -544,6 +559,14 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                         </table>
                     </div>
                 </div>
+            )}
+
+            {editingBatchId && (
+                <EditBatchTrackingModal
+                    batchId={editingBatchId}
+                    onClose={() => setEditingBatchId(null)}
+                    onSaved={() => fetchData(true)}
+                />
             )}
 
             <div className="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800">
