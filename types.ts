@@ -555,6 +555,8 @@ export interface BatchVendorShipment {
   carton_count: number;
   remarks: string;
   line_items: BatchLineItem[];
+  drive_folder_id?: string;
+  drive_folder_url?: string;
 
   // ── Finance fields — Admin-only, see Batch above for the same contract.
   total_amount?: number;

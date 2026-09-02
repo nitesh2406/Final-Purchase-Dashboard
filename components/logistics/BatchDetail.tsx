@@ -14,11 +14,14 @@ import {
   ArchiveBoxIcon,
   ArrowPathIcon,
   ExclamationTriangleIcon,
-  BanknotesIcon
+  BanknotesIcon,
+  LinkIcon,
+  CloudArrowUpIcon
 } from '../icons/Icons';
 import { Batch, BatchVendorShipment } from '../../types';
 import { callGasAuthed } from '../../services/gasApi';
 import { Button } from '../ui/Button';
+import { UploadShipmentDocsModal } from './UploadShipmentDocsModal';
 
 // Status Badge Component
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
@@ -66,15 +69,18 @@ const CheckCell: React.FC<{ value: boolean | null }> = ({ value }) => {
 // Vendor Shipment Row (Expandable)
 const VendorShipmentRow: React.FC<{
   vendor: BatchVendorShipment;
+  batchId: string;
   isExpanded: boolean;
   onToggle: () => void;
   isSearching: boolean;
   isAdmin: boolean;
   onSaveShipmentFinance: (shipmentId: string, data: { invoice_no: string; total_amount: number; currency: string; remarks: string }) => Promise<void>;
-}> = ({ vendor, isExpanded, onToggle, isSearching, isAdmin, onSaveShipmentFinance }) => {
+  onDocumentsUploaded: () => void;
+}> = ({ vendor, batchId, isExpanded, onToggle, isSearching, isAdmin, onSaveShipmentFinance, onDocumentsUploaded }) => {
   const ChevronIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
   const totalUnits = vendor.line_items.reduce((sum, item) => sum + (item.incoming_qty || 0), 0);
   const [isEditingFinance, setIsEditingFinance] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [form, setForm] = useState({
     invoice_no: vendor.invoiceId || '',
@@ -127,12 +133,33 @@ const VendorShipmentRow: React.FC<{
           </div>
         </div>
         {isAdmin && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setIsEditingFinance(!isEditingFinance); }}
-            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline shrink-0"
-          >
-            {isEditingFinance ? 'Cancel' : 'Edit Finance'}
-          </button>
+          <div className="flex items-center gap-3 shrink-0">
+            {vendor.drive_folder_url ? (
+              <a
+                href={vendor.drive_folder_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+              >
+                <LinkIcon className="w-3.5 h-3.5" /> View Documents
+              </a>
+            ) : (
+              <span className="text-xs text-slate-400 dark:text-slate-600 italic">No documents yet</span>
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); setIsUploadModalOpen(true); }}
+              className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+            >
+              <CloudArrowUpIcon className="w-3.5 h-3.5" /> {vendor.drive_folder_url ? 'Add More' : 'Upload Documents'}
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setIsEditingFinance(!isEditingFinance); }}
+              className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              {isEditingFinance ? 'Cancel' : 'Edit Finance'}
+            </button>
+          </div>
         )}
       </button>
 
@@ -205,6 +232,16 @@ const VendorShipmentRow: React.FC<{
             </table>
           </div>
         </div>
+      )}
+
+      {isAdmin && isUploadModalOpen && (
+        <UploadShipmentDocsModal
+          batchId={batchId}
+          shipmentId={vendor.shipment_id}
+          vendorCode={vendor.vendor_code}
+          onClose={() => setIsUploadModalOpen(false)}
+          onUploaded={onDocumentsUploaded}
+        />
       )}
     </div>
   );
@@ -589,11 +626,13 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack, isAdm
                   <VendorShipmentRow
                     key={vendor.shipment_id}
                     vendor={vendor}
+                    batchId={batchId}
                     isExpanded={expandedVendors.has(vendor.shipment_id)}
                     onToggle={() => toggleVendor(vendor.shipment_id)}
                     isSearching={searchTerm.trim().length > 0}
                     isAdmin={isAdmin}
                     onSaveShipmentFinance={handleSaveShipmentFinance}
+                    onDocumentsUploaded={loadBatch}
                   />
                 ))}
               </div>
