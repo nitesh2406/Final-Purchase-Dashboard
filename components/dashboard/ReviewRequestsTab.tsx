@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -74,33 +74,36 @@ const FieldDiff: React.FC<{ label: string; current: string | number; proposed: s
 // Module-level, not React state — same rationale as auditLogCache in
 // AuditLogScreen.tsx. This tab used to lose its status filter and reset
 // rows to empty every time it unmounted (e.g. navigating away from Update
-// SKU and back).
-let reviewRequestsCache: { status: ReqStatus; rows: SkuUpdateRequest[] } | null = null;
+// SKU and back). Now holds ALL statuses in one fetch — the four status
+// pills just filter this client-side instead of each triggering its own
+// round trip (previously every tab switch re-fetched from scratch).
+let reviewRequestsCache: { allRows: SkuUpdateRequest[] } | null = null;
 
 export const ReviewRequestsTab: React.FC = () => {
-  const [status, setStatus] = useState<ReqStatus>(reviewRequestsCache?.status || 'PENDING');
-  const [rows, setRows] = useState<SkuUpdateRequest[]>(reviewRequestsCache?.rows || []);
+  const [status, setStatus] = useState<ReqStatus>('PENDING');
+  const [allRows, setAllRows] = useState<SkuUpdateRequest[]>(reviewRequestsCache?.allRows || []);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [resultNote, setResultNote] = useState<{ request_id: string; status: string; sync_notes: string } | null>(null);
 
   useEffect(() => {
-    reviewRequestsCache = { status, rows };
-  }, [status, rows]);
+    reviewRequestsCache = { allRows };
+  }, [allRows]);
 
-  const fetchRequests = useCallback(async () => {
+  const fetchRequests = useCallback(async (forceRefresh = false) => {
+    if (!forceRefresh && reviewRequestsCache) return;
     setIsLoading(true);
     setFetchError(null);
     try {
       const response = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: API_ACTIONS.GET_PENDING_SKU_UPDATE_REQUESTS, status })
+        body: JSON.stringify({ action: API_ACTIONS.GET_PENDING_SKU_UPDATE_REQUESTS, status: 'ALL' })
       });
       const result = await response.json();
       if (result.success) {
-        setRows(result.data || []);
+        setAllRows(result.data || []);
       } else {
         setFetchError(result.error || 'Failed to load requests');
       }
@@ -110,9 +113,11 @@ export const ReviewRequestsTab: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [status]);
+  }, []);
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
+
+  const rows = useMemo(() => allRows.filter(r => r.status === status), [allRows, status]);
 
   const resolve = async (requestId: string, decision: 'APPROVE' | 'REJECT') => {
     if (decision === 'APPROVE' && !window.confirm('Approving pushes this change live to EasyEcom. Continue?')) return;
@@ -131,7 +136,13 @@ export const ReviewRequestsTab: React.FC = () => {
       const result = await response.json();
       if (result.success) {
         setResultNote(result.data);
-        setRows(prev => prev.filter(r => r.request_id !== requestId));
+        // Reflect the resolution locally rather than refetching — the row
+        // just moves from PENDING to whatever status the backend settled
+        // on (SYNCED/FAILED/REJECTED), so the cache stays correct without
+        // a round trip.
+        setAllRows(prev => prev.map(r =>
+          r.request_id === requestId ? { ...r, status: result.data.status, sync_notes: result.data.sync_notes || r.sync_notes } : r
+        ));
       } else {
         alert('Failed to resolve request: ' + result.error);
       }

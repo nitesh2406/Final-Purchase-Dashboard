@@ -313,6 +313,7 @@ export const UpdateSkuScreen: React.FC<{
           action:     API_ACTIONS.UPDATE_SKU_FIELDS,
           request_id: form.request_id,
           fields:     changed,
+          updated_by: 'user',
         })
       });
       const result = await response.json();
