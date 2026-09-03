@@ -22,9 +22,12 @@ interface PricingConfigData {
     SHOPIFY_COST_PCT: number;
     // CM1 Brackets
     CM1_BRACKET_0: number;
+    CM1_BRACKET_250: number;
     CM1_BRACKET_500: number;
-    CM1_BRACKET_1250: number;
+    CM1_BRACKET_1000: number;
+    CM1_BRACKET_1500: number;
     CM1_BRACKET_2000: number;
+    CM1_BRACKET_3000: number;
     CM1_BRACKET_4000: number;
     CM1_BRACKET_6000: number;
     // MRP Brackets
@@ -48,12 +51,15 @@ const DEFAULTS: PricingConfigData = {
     THRESHOLD: 40,
     PICK_PACK: 85,
     SHOPIFY_COST_PCT: 0.18,
-    CM1_BRACKET_0: 47,
-    CM1_BRACKET_500: 45,
-    CM1_BRACKET_1250: 41,
-    CM1_BRACKET_2000: 39,
-    CM1_BRACKET_4000: 41,
-    CM1_BRACKET_6000: 35,
+    CM1_BRACKET_0: 65,
+    CM1_BRACKET_250: 55,
+    CM1_BRACKET_500: 47,
+    CM1_BRACKET_1000: 42,
+    CM1_BRACKET_1500: 40,
+    CM1_BRACKET_2000: 38,
+    CM1_BRACKET_3000: 38,
+    CM1_BRACKET_4000: 39,
+    CM1_BRACKET_6000: 39,
     MRP_BRACKET_0: 0.6,
     MRP_BRACKET_1000: 0.65,
     MRP_BRACKET_1500: 0.7,
@@ -82,9 +88,12 @@ function mapPricingResponse(d: any): PricingConfigData {
         SHOPIFY_COST_PCT:   Number(d.shopify_cost_pct)  || DEFAULTS.SHOPIFY_COST_PCT,
         // CM1 brackets — unpack array back to flat keys
         CM1_BRACKET_0:    d.cm1_brackets?.find((b: any) => b.floor === 0)?.value    ?? DEFAULTS.CM1_BRACKET_0,
+        CM1_BRACKET_250:  d.cm1_brackets?.find((b: any) => b.floor === 250)?.value  ?? DEFAULTS.CM1_BRACKET_250,
         CM1_BRACKET_500:  d.cm1_brackets?.find((b: any) => b.floor === 500)?.value  ?? DEFAULTS.CM1_BRACKET_500,
-        CM1_BRACKET_1250: d.cm1_brackets?.find((b: any) => b.floor === 1250)?.value ?? DEFAULTS.CM1_BRACKET_1250,
+        CM1_BRACKET_1000: d.cm1_brackets?.find((b: any) => b.floor === 1000)?.value ?? DEFAULTS.CM1_BRACKET_1000,
+        CM1_BRACKET_1500: d.cm1_brackets?.find((b: any) => b.floor === 1500)?.value ?? DEFAULTS.CM1_BRACKET_1500,
         CM1_BRACKET_2000: d.cm1_brackets?.find((b: any) => b.floor === 2000)?.value ?? DEFAULTS.CM1_BRACKET_2000,
+        CM1_BRACKET_3000: d.cm1_brackets?.find((b: any) => b.floor === 3000)?.value ?? DEFAULTS.CM1_BRACKET_3000,
         CM1_BRACKET_4000: d.cm1_brackets?.find((b: any) => b.floor === 4000)?.value ?? DEFAULTS.CM1_BRACKET_4000,
         CM1_BRACKET_6000: d.cm1_brackets?.find((b: any) => b.floor === 6000)?.value ?? DEFAULTS.CM1_BRACKET_6000,
         // MRP brackets
@@ -329,9 +338,12 @@ export const PricingConfig: React.FC<{
                         <tbody>
                             {([
                                 { floor: '0', key: 'CM1_BRACKET_0' as ConfigKey },
+                                { floor: '250', key: 'CM1_BRACKET_250' as ConfigKey },
                                 { floor: '500', key: 'CM1_BRACKET_500' as ConfigKey },
-                                { floor: '1,250', key: 'CM1_BRACKET_1250' as ConfigKey },
+                                { floor: '1,000', key: 'CM1_BRACKET_1000' as ConfigKey },
+                                { floor: '1,500', key: 'CM1_BRACKET_1500' as ConfigKey },
                                 { floor: '2,000', key: 'CM1_BRACKET_2000' as ConfigKey },
+                                { floor: '3,000', key: 'CM1_BRACKET_3000' as ConfigKey },
                                 { floor: '4,000', key: 'CM1_BRACKET_4000' as ConfigKey },
                                 { floor: '6,000', key: 'CM1_BRACKET_6000' as ConfigKey },
                             ]).map(row => (
