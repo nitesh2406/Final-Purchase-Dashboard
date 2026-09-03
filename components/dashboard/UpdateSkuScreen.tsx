@@ -118,6 +118,55 @@ export const UpdateSkuScreen: React.FC<{
     platforms: { easyecom: string; zoho: string; shopify: string };
   } | null>(null);
 
+  // ─── EAN/Factory Code/Article Number duplicate check (warn, don't block) ───
+  // Checked against live EE Product Master (not pending drafts, unlike the
+  // Create SKU screen) since this screen edits already-created SKUs — the
+  // realistic collision risk here is against another SKU that's already
+  // live, not a draft still in progress.
+  const [productIdentifiers, setProductIdentifiers] = useState<
+    { sku: string; ean: string; articleNumber: string; otherFactoryCode: string }[]
+  >([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const response = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: API_ACTIONS.GET_PRODUCT_IDENTIFIERS })
+        });
+        const result = await response.json();
+        if (result.success) setProductIdentifiers(result.data || []);
+      } catch (err) {
+        console.error('getProductIdentifiers error:', err);
+      }
+    })();
+  }, []);
+
+  const [eanDupWarning, setEanDupWarning] = useState<string | null>(null);
+  const [factoryDupWarning, setFactoryDupWarning] = useState<string | null>(null);
+
+  const checkIdentifierDuplicates = () => {
+    if (!form) return;
+    const others = productIdentifiers.filter(p => p.sku !== form.suggested_sku);
+
+    const ean = form.ean.trim();
+    const eanMatch = ean && others.find(p => String(p.ean || '').trim() === ean);
+    setEanDupWarning(eanMatch ? `Matches existing SKU ${eanMatch.sku}` : null);
+
+    const raw     = String(form.factory_code || '').trim();
+    const hasPipe = raw.includes('|');
+    const fc      = hasPipe ? raw.split('|')[0].trim() : '';
+    const an      = hasPipe ? raw.split('|')[1].trim() : raw;
+
+    const fcMatch = fc && others.find(p => String(p.otherFactoryCode || '').trim() === fc);
+    const anMatch = an && others.find(p => String(p.articleNumber || '').trim() === an);
+
+    const messages: string[] = [];
+    if (fcMatch) messages.push(`Factory Code matches existing SKU ${fcMatch.sku}`);
+    if (anMatch) messages.push(`Article Number matches existing SKU ${anMatch.sku}`);
+    setFactoryDupWarning(messages.length > 0 ? messages.join('; ') : null);
+  };
+
   const runSearch = async (q: string, sampleOnlyOverride?: boolean) => {
     if (!q.trim()) return;
     setSearching(true);
@@ -200,6 +249,8 @@ export const UpdateSkuScreen: React.FC<{
         setOriginal(rec);
         setForm(rec);
         setSaveSummary(null);
+        setEanDupWarning(null);
+        setFactoryDupWarning(null);
       } else {
         setSearchError(result.error || 'Failed to load SKU');
       }
@@ -279,7 +330,12 @@ export const UpdateSkuScreen: React.FC<{
     }
   };
 
-  const renderTextField = (field: keyof SkuRecord, label: string, placeholder = '') => (
+  const renderTextField = (
+    field: keyof SkuRecord,
+    label: string,
+    placeholder = '',
+    options?: { onBlurExtra?: () => void; warning?: string | null }
+  ) => (
     <div>
       <FieldLabel>{label}</FieldLabel>
       <input
@@ -290,8 +346,12 @@ export const UpdateSkuScreen: React.FC<{
           field,
           NUMERIC_FIELDS.has(field) ? (e.target.value ? Number(e.target.value) : 0) : e.target.value
         )}
+        onBlur={options?.onBlurExtra}
         placeholder={placeholder}
       />
+      {options?.warning && (
+        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">⚠ {options.warning}</p>
+      )}
     </div>
   );
 
@@ -498,7 +558,7 @@ export const UpdateSkuScreen: React.FC<{
           <Card>
             <SectionHeader emoji="📦" title="Physical Specs" />
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {renderTextField('ean', 'EAN / ID')}
+              {renderTextField('ean', 'EAN / ID', '', { onBlurExtra: checkIdentifierDuplicates, warning: eanDupWarning })}
               {renderTextField('pack_size', 'Size (Pack Size)')}
               {renderTextField('pkg_weight_gm', 'Pkg Weight (gm)')}
               {renderTextField('pkg_height_cm', 'Pkg Height (cm)')}
@@ -514,7 +574,7 @@ export const UpdateSkuScreen: React.FC<{
             <SectionHeader emoji="⚙️" title="EasyEcom Additional Fields" />
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {renderTextField('fnsku', 'FNSKU')}
-              {renderTextField('factory_code', 'Factory Code (AccountingSKU|ArticleNumber)')}
+              {renderTextField('factory_code', 'Factory Code (AccountingSKU|ArticleNumber)', '', { onBlurExtra: checkIdentifierDuplicates, warning: factoryDupWarning })}
               {renderTextField('lead_time', 'Lead Time (days)')}
               {renderTextField('moq', 'MOQ')}
               {renderTextField('threshold_qty', 'Threshold Qty')}

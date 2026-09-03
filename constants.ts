@@ -67,6 +67,7 @@ export const API_ACTIONS = {
     ADD_BRAND:                 'addBrand',
     GET_VARIANTS:              'getVariants',
     SEARCH_SKU_FOR_UPDATE:     'searchSkuForUpdate',
+    GET_PRODUCT_IDENTIFIERS:   'getProductIdentifiers',
     PROVISION_SKU_FOR_UPDATE:  'provisionSkuForUpdate',
     UPDATE_SKU_FIELDS:         'updateSkuFields',
     GET_AUDIT_LOG:             'getAuditLog',

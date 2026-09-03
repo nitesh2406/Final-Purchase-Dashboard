@@ -247,7 +247,7 @@ export const NewSkuDetail: React.FC<{
   requestId: string;
   onBack: () => void;
   // Already-fetched New SKU Requests list (from the dashboard's cache), used
-  // for a client-side FC/AN duplicate check without a dedicated backend call.
+  // for a client-side EAN/FC/AN duplicate check without a dedicated backend call.
   // May be empty/stale if this page was opened without visiting the
   // dashboard first — a fallback fetch below covers that case.
   cachedRequests?: any[];
@@ -534,7 +534,7 @@ export const NewSkuDetail: React.FC<{
     setIsDirty(true);
   };
 
-  // ─── FC/AN duplicate check (warn, don't block) ───
+  // ─── EAN/FC/AN duplicate check (warn, don't block) ───
   // Falls back to a one-time fetch of the same list the dashboard uses, in
   // case this page was opened directly (e.g. a bookmarked/typed link)
   // without the dashboard's cache ever being populated.
@@ -561,13 +561,15 @@ export const NewSkuDetail: React.FC<{
 
   const [factoryDupWarning, setFactoryDupWarning] = useState<string | null>(null);
   const [articleDupWarning, setArticleDupWarning] = useState<string | null>(null);
+  const [eanDupWarning, setEanDupWarning]         = useState<string | null>(null);
 
-  const checkFactoryDuplicate = () => {
+  const checkIdentifierDuplicates = () => {
     const source = (cachedRequests && cachedRequests.length > 0) ? cachedRequests : fallbackRequests;
     const others = source.filter(x => x.request_id !== requestId);
 
-    const fc = form.factory_code_other.trim();
-    const an = form.article_number.trim();
+    const fc  = form.factory_code_other.trim();
+    const an  = form.article_number.trim();
+    const ean = form.ean.trim();
 
     const fcMatch = fc && others.find(x => {
       const [otherFc] = String(x.factory_code || '').split('|').map((s: string) => s.trim());
@@ -584,6 +586,11 @@ export const NewSkuDetail: React.FC<{
     });
     setArticleDupWarning(anMatch
       ? `Matches existing SKU request ${anMatch.request_id}${anMatch.listing_name ? ` (${anMatch.listing_name})` : ''}`
+      : null);
+
+    const eanMatch = ean && others.find(x => String(x.ean || '').trim() === ean);
+    setEanDupWarning(eanMatch
+      ? `Matches existing SKU request ${eanMatch.request_id}${eanMatch.listing_name ? ` (${eanMatch.listing_name})` : ''}`
       : null);
   };
 
@@ -1565,7 +1572,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.factory_code_other}
                     onChange={e => updateField('factory_code_other', e.target.value)}
-                    onBlur={() => { checkFactoryDuplicate(); handleBlurSave(); }}
+                    onBlur={() => { checkIdentifierDuplicates(); handleBlurSave(); }}
                     placeholder="e.g. DSYH009"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
@@ -1582,7 +1589,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.article_number}
                     onChange={e => updateField('article_number', e.target.value)}
-                    onBlur={() => { checkFactoryDuplicate(); handleBlurSave(); }}
+                    onBlur={() => { checkIdentifierDuplicates(); handleBlurSave(); }}
                     placeholder="e.g. T220031MS"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
@@ -1610,9 +1617,12 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.ean}
                     onChange={e => updateField('ean', e.target.value)}
-                    onBlur={handleBlurSave}
+                    onBlur={() => { checkIdentifierDuplicates(); handleBlurSave(); }}
                     placeholder="e.g. 6954256109533"
                   />
+                  {eanDupWarning && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">⚠ {eanDupWarning}</p>
+                  )}
                 </div>
                 <div>
                   <FieldLabel>Cost (RMB ¥)</FieldLabel>
@@ -1664,7 +1674,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.factory_code_other}
                     onChange={e => updateField('factory_code_other', e.target.value)}
-                    onBlur={() => { checkFactoryDuplicate(); handleBlurSave(); }}
+                    onBlur={() => { checkIdentifierDuplicates(); handleBlurSave(); }}
                     placeholder="e.g. DSYH009"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
@@ -1681,7 +1691,7 @@ export const NewSkuDetail: React.FC<{
                     className={inputClasses}
                     value={form.article_number}
                     onChange={e => updateField('article_number', e.target.value)}
-                    onBlur={() => { checkFactoryDuplicate(); handleBlurSave(); }}
+                    onBlur={() => { checkIdentifierDuplicates(); handleBlurSave(); }}
                     placeholder="e.g. T220031MS"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
