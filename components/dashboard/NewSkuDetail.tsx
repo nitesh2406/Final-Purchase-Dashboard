@@ -87,7 +87,9 @@ interface PricingConfig {
   pick_pack:        number;
   shopify_cost_pct: number;
   min_margin_pct:   number;
+  gst_rate:         number;
   cm1_brackets:     { floor: number; value: number }[];
+  // value = "Discount off MRP %" (e.g. 40 = 40% off), not a divisor
   mrp_brackets:     { floor: number; value: number }[];
   compare_brackets: { floor: number; value: number }[];
 }
@@ -432,6 +434,7 @@ export const NewSkuDetail: React.FC<{
             pick_pack:        Number(d.pick_pack)         || 85,
             shopify_cost_pct: Number(d.shopify_cost_pct)  || 0.18,
             min_margin_pct:   Number(d.min_margin_pct)    || 20,
+            gst_rate:         d.gst_rate !== undefined && d.gst_rate !== null ? Number(d.gst_rate) : 0.05,
             cm1_brackets:     d.cm1_brackets,
             mrp_brackets:     d.mrp_brackets,
             compare_brackets: d.compare_brackets,
@@ -620,9 +623,9 @@ export const NewSkuDetail: React.FC<{
     if (!rmbPrice || !config) return null;
     if (!config.sea_multiplier || !config.air_rate || !config.cny_conv_rate) return null;
 
-    // Step 1: Landing
+    // Step 1: Landing — RMB price ABOVE threshold ships SEA; at/below ships AIR
     let landing: number, mode: string;
-    if (rmbPrice < config.threshold) {
+    if (rmbPrice > config.threshold) {
       mode    = 'SEA';
       landing = rmbPrice * config.cny_conv_rate * config.sea_multiplier;
     } else {
@@ -635,15 +638,17 @@ export const NewSkuDetail: React.FC<{
     // Step 2: CM1 target by landing bracket
     const cm1Pct = lookupBracket(landing, config.cm1_brackets) / 100;
 
+    const gstRate = config.gst_rate != null ? config.gst_rate : 0.05;
+
     // Step 3: Raw SP
-    const rawSP = (landing / (1 - cm1Pct) + config.pick_pack) * 1.05;
+    const rawSP = (landing / (1 - cm1Pct) + config.pick_pack) * (1 + gstRate);
 
     // Step 4: Bucket SP — nearest ₹50 ending in 49 or 99
     const suggestedSP = Math.round(rawSP / 50) * 50 - 1;
 
-    // Step 5: MRP
-    const mrpDivisor = lookupBracket(suggestedSP, config.mrp_brackets);
-    const mrp        = Math.round((suggestedSP / mrpDivisor) / 50) * 50 - 1;
+    // Step 5: MRP — mrp_brackets value is "Discount off MRP %"
+    const mrpDiscount = lookupBracket(suggestedSP, config.mrp_brackets) / 100;
+    const mrp          = Math.round((suggestedSP / (1 - mrpDiscount)) / 50) * 50 - 1;
 
     // Step 6: Compare At Price — lookup by SP, markup % as whole number,
     // capped at MRP
@@ -655,7 +660,7 @@ export const NewSkuDetail: React.FC<{
     }
 
     // Step 7: CM1 actual
-    const netSales  = suggestedSP / 1.05;
+    const netSales  = suggestedSP / (1 + gstRate);
     const cm1Profit = netSales - landing;
     const actualCM1 = (cm1Profit / netSales) * 100;
 
@@ -722,11 +727,12 @@ export const NewSkuDetail: React.FC<{
   const [discount, setDiscount] = useState(0);
 
   // CM1 & CM3 live — recalculated with discount
-  const cm1Live     = (currentSP * (1 - discount/100) / 1.05) - landedCost;
+  const liveGstRate = pricingConfig?.gst_rate != null ? pricingConfig.gst_rate : 0.05;
+  const cm1Live     = (currentSP * (1 - discount/100) / (1 + liveGstRate)) - landedCost;
   const cm3Live     = cm1Live - ((pricingConfig?.shopify_cost_pct || 0.18) * currentSP) - (pricingConfig?.pick_pack || 85);
   const cm3PctLive  = currentSP > 0 ? (cm3Live / currentSP) * 100 : 0;
   const actualCM1Live = currentSP > 0
-    ? (cm1Live / (currentSP * (1 - discount/100) / 1.05)) * 100
+    ? (cm1Live / (currentSP * (1 - discount/100) / (1 + liveGstRate))) * 100
     : (pricing?.actual_cm1 || 0);
 
   const marginWarning = actualCM1Live > 0 &&
@@ -2417,6 +2423,7 @@ export const NewSkuDetail: React.FC<{
                         { label: 'Threshold (¥)',  value: pricingConfig.threshold },
                         { label: 'Pick & Pack',    value: `₹${pricingConfig.pick_pack}` },
                         { label: 'Shopify Cost',   value: `${(pricingConfig.shopify_cost_pct * 100).toFixed(0)}%` },
+                        { label: 'GST Rate',       value: `${(pricingConfig.gst_rate * 100).toFixed(0)}%` },
                       ].map(({ label, value }) => (
                         <div key={label} className="flex justify-between text-[10px]">
                           <span className="text-gray-500">{label}</span>
