@@ -962,7 +962,7 @@ const App: React.FC = () => {
                 setIsCollapsed={setIsSidebarCollapsed}
                 user={user}
             />
-            <div className={`flex-1 flex flex-col transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+            <div className={`flex-1 flex flex-col min-h-0 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
                 <Header
                     currentView={currentView}
                     notifications={notifications}
@@ -970,7 +970,12 @@ const App: React.FC = () => {
                     user={user}
                     onLogout={handleLogout}
                 />
-                <main className="flex-1 p-0 overflow-y-auto">
+                {/* min-h-0 is required here — flex children default to
+                    min-height:auto, which lets tall page content (e.g. a
+                    32-row Shipment Tracker table) grow this panel past the
+                    viewport and force the whole document to scroll instead
+                    of just this panel. */}
+                <main className="flex-1 min-h-0 p-0 overflow-y-auto">
                     {renderContent()}
                 </main>
             </div>

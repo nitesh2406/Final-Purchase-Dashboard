@@ -134,8 +134,8 @@ const FilterBar: React.FC<{
 }> = ({ filters, setFilters, vendorOptions, carrierOptions, itemTypeOptions, isAdmin }) => {
     return (
         <div className="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 mb-6 shadow-sm space-y-3">
-            <div className="flex flex-col lg:flex-row gap-3">
-                <div className="flex-1">
+            <div className="flex flex-col lg:flex-row lg:flex-wrap gap-3">
+                <div className="flex-1 min-w-[220px]">
                     <div className="relative">
                         <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
                         <input
@@ -173,11 +173,11 @@ const FilterBar: React.FC<{
                 </div>
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-3">
+            <div className="flex flex-col lg:flex-row lg:flex-wrap gap-3">
                 <select
                     value={filters.vendor}
                     onChange={(e) => setFilters({ ...filters, vendor: e.target.value })}
-                    className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 min-w-[140px] px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                     <option value="All">All Vendors</option>
                     {vendorOptions.map(v => <option key={v} value={v}>{v}</option>)}
@@ -186,7 +186,7 @@ const FilterBar: React.FC<{
                 <select
                     value={filters.carrier}
                     onChange={(e) => setFilters({ ...filters, carrier: e.target.value })}
-                    className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 min-w-[140px] px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                     <option value="All">All Carriers</option>
                     {carrierOptions.map(c => <option key={c} value={c}>{c}</option>)}
@@ -195,13 +195,13 @@ const FilterBar: React.FC<{
                 <select
                     value={filters.itemTypePrefix}
                     onChange={(e) => setFilters({ ...filters, itemTypePrefix: e.target.value })}
-                    className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 min-w-[140px] px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                     <option value="All">All Item Types</option>
                     {itemTypeOptions.map(o => <option key={o.prefix} value={o.prefix}>{o.label}</option>)}
                 </select>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                     <input
                         type="date"
                         value={filters.dateFrom}
