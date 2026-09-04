@@ -265,6 +265,7 @@ export const PricingConfig: React.FC<{
 
     // ─── Save to GAS ───
     const handleSave = async () => {
+        if (!hasChanges || isSaving) return;
         setIsSaving(true);
         try {
             const response = await fetch(APPS_SCRIPT_URL, {
@@ -349,12 +350,22 @@ export const PricingConfig: React.FC<{
                     )}
                     <Button
                         onClick={handleSave}
-                        disabled={!hasChanges || isSaving}
+                        // Only the native `disabled` attribute while actually
+                        // saving — Button's shared disabled:opacity-50 would
+                        // otherwise halve the already-muted "no changes" gray,
+                        // making it unreadable against the page background.
+                        // The "no changes" case is inert via handleSave's own
+                        // guard instead.
+                        disabled={isSaving}
                         className={`h-8 px-4 text-[10px] font-bold uppercase tracking-widest transition-all ${
                             isSaved
                                 ? 'bg-green-100 dark:bg-green-600/25 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-600/30 hover:bg-green-100 dark:hover:bg-green-600/20 cursor-default'
                                 : !hasChanges
-                                    ? 'bg-slate-100 dark:bg-slate-700/50 text-slate-400 dark:text-slate-500 cursor-not-allowed border-transparent'
+                                    // Unlike ForecastingConfig's per-section Save button (sits on a
+                                    // white Card), this one sits directly on the page's bg-gray-100
+                                    // shell — the same near-white fill would have no visible edge
+                                    // there, so it gets an explicit border for definition.
+                                    ? 'bg-slate-100 dark:bg-slate-700/50 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-300 dark:border-slate-600'
                                     : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20'
                         }`}
                     >
