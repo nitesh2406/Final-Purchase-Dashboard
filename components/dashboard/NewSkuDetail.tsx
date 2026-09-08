@@ -671,15 +671,16 @@ export const NewSkuDetail: React.FC<{
       compareAtPrice       = Math.round(rawCompare / 50) * 50 - 1;
     }
 
-    // Step 7: CM1 actual — Gross Margin = SP - COGS (landing + pick&pack).
-    // CM1% is expressed as a % of SP (not net-of-GST sales).
+    // Step 7: CM1 actual — Gross Margin = Net Sales (ex-GST) - COGS
+    // (landing + pick&pack). CM1%/CM3% and the Shopify deduction are all
+    // expressed against Net Sales, not gross (GST-inclusive) SP.
     const netSales  = suggestedSP / (1 + gstRate);
     const cm1Profit = netSales - landing - config.pick_pack;
-    const actualCM1 = (cm1Profit / suggestedSP) * 100;
+    const actualCM1 = (cm1Profit / netSales) * 100;
 
     // Step 8: CM3 actual — Net Margin = Gross Margin - indirect cost (Shopify).
-    const cm3Profit = cm1Profit - (config.shopify_cost_pct * suggestedSP);
-    const actualCM3 = (cm3Profit / suggestedSP) * 100;
+    const cm3Profit = cm1Profit - (config.shopify_cost_pct * netSales);
+    const actualCM3 = (cm3Profit / netSales) * 100;
 
     return {
       mode,
@@ -743,15 +744,18 @@ export const NewSkuDetail: React.FC<{
   // Discount simulation state
   const [discount, setDiscount] = useState(0);
 
-  // CM1 & CM3 live — recalculated with discount
-  // CM1 (Gross Margin) = SP - COGS (landing + pick&pack)
-  // CM3 (Net Margin)   = CM1 - indirect cost (Shopify)
+  // CM1 & CM3 live — recalculated with discount. Net Sales (ex-GST,
+  // post-discount) is the base for CM1/CM3 profit, both percentages, and
+  // the Shopify deduction — not gross (GST-inclusive) SP.
+  // CM1 (Gross Margin) = Net Sales - COGS (landing + pick&pack)
+  // CM3 (Net Margin)   = CM1 - indirect cost (Shopify % of Net Sales)
   const liveGstRate = pricingConfig?.gst_rate != null ? pricingConfig.gst_rate : 0.05;
-  const cm1Live     = (currentSP * (1 - discount/100) / (1 + liveGstRate)) - landedCost - pickPack;
-  const cm3Live     = cm1Live - ((pricingConfig?.shopify_cost_pct || 0.18) * currentSP);
-  const cm3PctLive  = currentSP > 0 ? (cm3Live / currentSP) * 100 : 0;
-  const actualCM1Live = currentSP > 0
-    ? (cm1Live / currentSP) * 100
+  const netSalesLive = currentSP * (1 - discount/100) / (1 + liveGstRate);
+  const cm1Live     = netSalesLive - landedCost - pickPack;
+  const cm3Live     = cm1Live - ((pricingConfig?.shopify_cost_pct || 0.18) * netSalesLive);
+  const cm3PctLive  = netSalesLive > 0 ? (cm3Live / netSalesLive) * 100 : 0;
+  const actualCM1Live = netSalesLive > 0
+    ? (cm1Live / netSalesLive) * 100
     : (pricing?.actual_cm1 || 0);
 
   const marginWarning = actualCM1Live > 0 &&
