@@ -88,7 +88,8 @@ interface PricingConfig {
   shopify_cost_pct: number;
   min_margin_pct:   number;
   gst_rate:         number;
-  cm1_brackets:     { floor: number; value: number }[];
+  cm1_brackets:        { floor: number; value: number }[];
+  cm3_target_brackets: { floor: number; value: number }[];
   // value = "Discount off MRP %" (e.g. 40 = 40% off), not a divisor
   mrp_brackets:     { floor: number; value: number }[];
   compare_brackets: { floor: number; value: number }[];
@@ -435,7 +436,8 @@ export const NewSkuDetail: React.FC<{
             shopify_cost_pct: Number(d.shopify_cost_pct)  || 0.18,
             min_margin_pct:   Number(d.min_margin_pct)    || 20,
             gst_rate:         d.gst_rate !== undefined && d.gst_rate !== null ? Number(d.gst_rate) : 0.05,
-            cm1_brackets:     d.cm1_brackets,
+            cm1_brackets:        d.cm1_brackets,
+            cm3_target_brackets: d.cm3_target_brackets,
             mrp_brackets:     d.mrp_brackets,
             compare_brackets: d.compare_brackets,
           });
@@ -635,37 +637,48 @@ export const NewSkuDetail: React.FC<{
     }
     landing = Math.round(landing);
 
-    // Step 2: CM1 target by landing bracket
+    // Step 2 (reference only): CM1 target by landing bracket — no longer
+    // feeds the Raw SP formula, shown for analysis/simulation only.
     const cm1Pct = lookupBracket(landing, config.cm1_brackets) / 100;
+
+    // Step 2: CM3 target by landing bracket — drives the Raw SP formula as
+    // of the 2026-09 pricing-logic revision (replaces CM1 target).
+    const cm3TargetPct = lookupBracket(landing, config.cm3_target_brackets) / 100;
 
     const gstRate = config.gst_rate != null ? config.gst_rate : 0.05;
 
-    // Step 3: Raw SP
-    const rawSP = (landing / (1 - cm1Pct) + config.pick_pack) * (1 + gstRate);
+    // Step 2: Raw SP — landing + pick&pack marked up to cover CM3 target
+    // and Shopify's cut, then grossed up for GST.
+    const rawSP = (landing + config.pick_pack) / (1 - cm3TargetPct - config.shopify_cost_pct) * (1 + gstRate);
 
-    // Step 4: Bucket SP — nearest ₹50 ending in 49 or 99
+    // Step 3: Bucket SP — nearest ₹50 ending in 49 or 99
     const suggestedSP = Math.round(rawSP / 50) * 50 - 1;
 
-    // Step 5: MRP — mrp_brackets value is "Discount off MRP %"
+    // Step 4: Raw MRP — mrp_brackets value is "Discount off MRP %"
     const mrpDiscount = lookupBracket(suggestedSP, config.mrp_brackets) / 100;
-    const mrp          = Math.round((suggestedSP / (1 - mrpDiscount)) / 50) * 50 - 1;
+    const rawMRP       = suggestedSP / (1 - mrpDiscount);
+
+    // Step 5: Bucket MRP
+    const mrp = Math.round(rawMRP / 50) * 50 - 1;
 
     // Step 6: Compare At Price — lookup by SP, markup % as whole number,
     // capped at MRP
     let compareAtPrice: number | null = null;
+    let rawCompare: number | null = null;
     if (config.compare_brackets) {
       const compareMarkup = lookupBracket(suggestedSP, config.compare_brackets) / 100;
-      const rawCompare     = Math.min(suggestedSP * (1 + compareMarkup), mrp);
+      rawCompare           = Math.min(suggestedSP * (1 + compareMarkup), mrp);
       compareAtPrice       = Math.round(rawCompare / 50) * 50 - 1;
     }
 
-    // Step 7: CM1 actual
+    // Step 7: CM1 actual — Gross Margin = SP - COGS (landing + pick&pack).
+    // CM1% is expressed as a % of SP (not net-of-GST sales).
     const netSales  = suggestedSP / (1 + gstRate);
-    const cm1Profit = netSales - landing;
-    const actualCM1 = (cm1Profit / netSales) * 100;
+    const cm1Profit = netSales - landing - config.pick_pack;
+    const actualCM1 = (cm1Profit / suggestedSP) * 100;
 
-    // Step 8: CM3
-    const cm3Profit = cm1Profit - (config.shopify_cost_pct * suggestedSP) - config.pick_pack;
+    // Step 8: CM3 actual — Net Margin = Gross Margin - indirect cost (Shopify).
+    const cm3Profit = cm1Profit - (config.shopify_cost_pct * suggestedSP);
     const actualCM3 = (cm3Profit / suggestedSP) * 100;
 
     return {
@@ -673,8 +686,12 @@ export const NewSkuDetail: React.FC<{
       needsWeight:      false,
       landing,
       cm1_target:       Math.round(cm1Pct * 100),
+      cm3_target:       Math.round(cm3TargetPct * 100),
+      raw_sp:           Math.round(rawSP),
       suggested_sp:     suggestedSP,
+      raw_mrp:          Math.round(rawMRP),
       mrp,
+      raw_compare_at_price: rawCompare != null ? Math.round(rawCompare) : null,
       compare_at_price: compareAtPrice,
       actual_cm1:       Math.round(actualCM1 * 100) / 100,
       cm3:              Math.round(cm3Profit),
@@ -727,12 +744,14 @@ export const NewSkuDetail: React.FC<{
   const [discount, setDiscount] = useState(0);
 
   // CM1 & CM3 live — recalculated with discount
+  // CM1 (Gross Margin) = SP - COGS (landing + pick&pack)
+  // CM3 (Net Margin)   = CM1 - indirect cost (Shopify)
   const liveGstRate = pricingConfig?.gst_rate != null ? pricingConfig.gst_rate : 0.05;
-  const cm1Live     = (currentSP * (1 - discount/100) / (1 + liveGstRate)) - landedCost;
-  const cm3Live     = cm1Live - ((pricingConfig?.shopify_cost_pct || 0.18) * currentSP) - (pricingConfig?.pick_pack || 85);
+  const cm1Live     = (currentSP * (1 - discount/100) / (1 + liveGstRate)) - landedCost - pickPack;
+  const cm3Live     = cm1Live - ((pricingConfig?.shopify_cost_pct || 0.18) * currentSP);
   const cm3PctLive  = currentSP > 0 ? (cm3Live / currentSP) * 100 : 0;
   const actualCM1Live = currentSP > 0
-    ? (cm1Live / (currentSP * (1 - discount/100) / (1 + liveGstRate))) * 100
+    ? (cm1Live / currentSP) * 100
     : (pricing?.actual_cm1 || 0);
 
   const marginWarning = actualCM1Live > 0 &&
@@ -2236,6 +2255,7 @@ export const NewSkuDetail: React.FC<{
                     {[
                       { label: 'RMB Price',    value: `¥ ${unitPrice}`,             muted: true },
                       { label: 'Landing Cost', value: `₹ ${pricing.landing}`,       muted: false },
+                      { label: 'CM3 Target',   value: `${pricing.cm3_target}%`,     muted: true },
                       { label: 'CM1 Target',   value: `${pricing.cm1_target}%`,     muted: true },
                     ].map(({ label, value, muted }) => (
                       <div key={label}
@@ -2250,16 +2270,17 @@ export const NewSkuDetail: React.FC<{
                       </div>
                     ))}
 
-                    {/* Selling Price — shows user's actual value vs suggested */}
+                    {/* Selling Price — shows user's actual value + the raw
+                        pre-rounding figure it was bucketed from */}
                     <div className="flex justify-between items-center py-2
                                     border-b border-gray-100 dark:border-gray-700">
                       <div>
                         <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
                           Selling Price
                         </p>
-                        {pricing && currentSP !== pricing.suggested_sp && (
+                        {pricing && (
                           <p className="text-[10px] text-gray-400">
-                            Suggested: ₹{pricing.suggested_sp}
+                            Raw: ₹{pricing.raw_sp}
                           </p>
                         )}
                       </div>
@@ -2269,16 +2290,17 @@ export const NewSkuDetail: React.FC<{
                       </span>
                     </div>
 
-                    {/* MRP — shows user's actual value vs suggested */}
+                    {/* MRP — shows user's actual value + the raw pre-rounding
+                        figure it was bucketed from */}
                     <div className="flex justify-between items-center py-2
                                     border-b border-gray-100 dark:border-gray-700">
                       <div>
                         <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
                           MRP
                         </p>
-                        {pricing && currentMRP !== pricing.mrp && (
+                        {pricing && (
                           <p className="text-[10px] text-gray-400">
-                            Suggested: ₹{pricing.mrp}
+                            Raw: ₹{pricing.raw_mrp}
                           </p>
                         )}
                       </div>
@@ -2288,7 +2310,8 @@ export const NewSkuDetail: React.FC<{
                       </span>
                     </div>
 
-                    {/* Compare At Price — shows user's actual value vs suggested */}
+                    {/* Compare At Price — shows user's actual value + the raw
+                        pre-rounding figure it was bucketed from */}
                     {pricing.compare_at_price != null && (
                       <div className="flex justify-between items-center py-2
                                       border-b border-gray-100 dark:border-gray-700">
@@ -2296,9 +2319,9 @@ export const NewSkuDetail: React.FC<{
                           <p className="text-sm font-bold text-gray-700 dark:text-gray-200">
                             Compare At Price
                           </p>
-                          {Number(form.shopify_compare_price) !== pricing.compare_at_price && (
+                          {pricing.raw_compare_at_price != null && (
                             <p className="text-[10px] text-gray-400">
-                              Suggested: ₹{pricing.compare_at_price}
+                              Raw: ₹{pricing.raw_compare_at_price}
                             </p>
                           )}
                         </div>
@@ -2332,7 +2355,7 @@ export const NewSkuDetail: React.FC<{
                     {[
                       {
                         label:    'CM1 (Gross)',
-                        sublabel: 'Net Sales − Landing',
+                        sublabel: `Net Sales − Landing − ₹${pickPack} P&P`,
                         value:    cm1Live,
                         pct:      actualCM1Live,
                         color:    actualCM1Live >= (pricingConfig?.min_margin_pct || 20)
@@ -2341,7 +2364,7 @@ export const NewSkuDetail: React.FC<{
                       },
                       {
                         label:    'CM3 (Net)',
-                        sublabel: `−₹${pickPack} P&P − ${((pricingConfig?.shopify_cost_pct || 0.18) * 100).toFixed(0)}% Shopify`,
+                        sublabel: `−${((pricingConfig?.shopify_cost_pct || 0.18) * 100).toFixed(0)}% Shopify`,
                         value:    cm3Live,
                         pct:      cm3PctLive,
                         color:    cm3Live > 0

@@ -22,7 +22,7 @@ interface PricingConfigData {
     SHOPIFY_COST_PCT: number;
     MIN_MARGIN_PCT: number;
     GST_RATE: number;
-    // CM1 Target Brackets — used in the Raw SP formula
+    // CM1 Target Brackets — reference-only, rate-change monitoring
     CM1_BRACKET_0: number;
     CM1_BRACKET_250: number;
     CM1_BRACKET_500: number;
@@ -42,7 +42,7 @@ interface PricingConfigData {
     CM1_FLOOR_BRACKET_3000: number;
     CM1_FLOOR_BRACKET_4000: number;
     CM1_FLOOR_BRACKET_6000: number;
-    // CM3 Target Brackets — reference-only, rate-change monitoring
+    // CM3 Target Brackets — used in the Raw SP formula
     CM3_TARGET_BRACKET_0: number;
     CM3_TARGET_BRACKET_250: number;
     CM3_TARGET_BRACKET_500: number;
@@ -431,7 +431,7 @@ export const PricingConfig: React.FC<{
                     <div>
                         <h3 className="text-sm font-bold text-slate-800 dark:text-white">Margin Brackets</h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                            Target &amp; Floor gross margin % by landing price range. Only <span className="font-semibold">CM1 Target</span> feeds the Raw SP formula — Floor columns and CM3 Target are reference thresholds for the rate-change monitoring workflow.
+                            Target &amp; Floor gross margin % by landing price range. Only <span className="font-semibold">CM3 Target</span> feeds the Raw SP formula — Floor columns and CM1 Target are reference thresholds for analysis and the rate-change monitoring workflow.
                         </p>
                     </div>
                 </div>
