@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
+import { MarginGauge } from './MarginGauge';
 import {
   ChevronRightIcon,
   ExclamationTriangleIcon,
@@ -89,7 +90,9 @@ interface PricingConfig {
   min_margin_pct:   number;
   gst_rate:         number;
   cm1_brackets:        { floor: number; value: number }[];
+  cm1_floor_brackets:  { floor: number; value: number }[];
   cm3_target_brackets: { floor: number; value: number }[];
+  cm3_floor_brackets:  { floor: number; value: number }[];
   // value = "Discount off MRP %" (e.g. 40 = 40% off), not a divisor
   mrp_brackets:     { floor: number; value: number }[];
   compare_brackets: { floor: number; value: number }[];
@@ -437,7 +440,9 @@ export const NewSkuDetail: React.FC<{
             min_margin_pct:   Number(d.min_margin_pct)    || 20,
             gst_rate:         d.gst_rate !== undefined && d.gst_rate !== null ? Number(d.gst_rate) : 0.05,
             cm1_brackets:        d.cm1_brackets,
+            cm1_floor_brackets:  d.cm1_floor_brackets,
             cm3_target_brackets: d.cm3_target_brackets,
+            cm3_floor_brackets:  d.cm3_floor_brackets,
             mrp_brackets:     d.mrp_brackets,
             compare_brackets: d.compare_brackets,
           });
@@ -640,10 +645,12 @@ export const NewSkuDetail: React.FC<{
     // Step 2 (reference only): CM1 target by landing bracket — no longer
     // feeds the Raw SP formula, shown for analysis/simulation only.
     const cm1Pct = lookupBracket(landing, config.cm1_brackets) / 100;
+    const cm1FloorPct = lookupBracket(landing, config.cm1_floor_brackets);
 
     // Step 2: CM3 target by landing bracket — drives the Raw SP formula as
     // of the 2026-09 pricing-logic revision (replaces CM1 target).
     const cm3TargetPct = lookupBracket(landing, config.cm3_target_brackets) / 100;
+    const cm3FloorPct = lookupBracket(landing, config.cm3_floor_brackets);
 
     const gstRate = config.gst_rate != null ? config.gst_rate : 0.05;
 
@@ -687,7 +694,9 @@ export const NewSkuDetail: React.FC<{
       needsWeight:      false,
       landing,
       cm1_target:       Math.round(cm1Pct * 100),
+      cm1_floor:        cm1FloorPct,
       cm3_target:       Math.round(cm3TargetPct * 100),
+      cm3_floor:        cm3FloorPct,
       raw_sp:           Math.round(rawSP),
       suggested_sp:     suggestedSP,
       raw_mrp:          Math.round(rawMRP),
@@ -2275,7 +2284,9 @@ export const NewSkuDetail: React.FC<{
                     ))}
 
                     {/* Selling Price — shows user's actual value + the raw
-                        pre-rounding figure it was bucketed from */}
+                        pre-rounding figure it was bucketed from. A stored
+                        value that predates a formula/config change won't
+                        match the fresh suggestion — Recalculate pulls it in. */}
                     <div className="flex justify-between items-center py-2
                                     border-b border-gray-100 dark:border-gray-700">
                       <div>
@@ -2283,8 +2294,19 @@ export const NewSkuDetail: React.FC<{
                           Selling Price
                         </p>
                         {pricing && (
-                          <p className="text-[10px] text-gray-400">
+                          <p className="text-[10px] text-gray-400 flex items-center gap-1">
                             Raw: ₹{pricing.raw_sp}
+                            {currentSP !== pricing.suggested_sp && (
+                              <button
+                                type="button"
+                                title={`Reset to the current suggestion (₹${pricing.suggested_sp})`}
+                                onClick={() => updateField('shopify_selling_price', pricing.suggested_sp)}
+                                className="flex items-center gap-0.5 text-blue-500 hover:text-blue-600
+                                           dark:text-blue-400 dark:hover:text-blue-300 font-semibold"
+                              >
+                                <ArrowPathIcon className="w-2.5 h-2.5" /> Recalculate
+                              </button>
+                            )}
                           </p>
                         )}
                       </div>
@@ -2303,8 +2325,19 @@ export const NewSkuDetail: React.FC<{
                           MRP
                         </p>
                         {pricing && (
-                          <p className="text-[10px] text-gray-400">
+                          <p className="text-[10px] text-gray-400 flex items-center gap-1">
                             Raw: ₹{pricing.raw_mrp}
+                            {currentMRP !== pricing.mrp && (
+                              <button
+                                type="button"
+                                title={`Reset to the current suggestion (₹${pricing.mrp})`}
+                                onClick={() => updateField('mrp', pricing.mrp)}
+                                className="flex items-center gap-0.5 text-blue-500 hover:text-blue-600
+                                           dark:text-blue-400 dark:hover:text-blue-300 font-semibold"
+                              >
+                                <ArrowPathIcon className="w-2.5 h-2.5" /> Recalculate
+                              </button>
+                            )}
                           </p>
                         )}
                       </div>
@@ -2324,8 +2357,19 @@ export const NewSkuDetail: React.FC<{
                             Compare At Price
                           </p>
                           {pricing.raw_compare_at_price != null && (
-                            <p className="text-[10px] text-gray-400">
+                            <p className="text-[10px] text-gray-400 flex items-center gap-1">
                               Raw: ₹{pricing.raw_compare_at_price}
+                              {Number(form.shopify_compare_price) !== pricing.compare_at_price && (
+                                <button
+                                  type="button"
+                                  title={`Reset to the current suggestion (₹${pricing.compare_at_price})`}
+                                  onClick={() => updateField('shopify_compare_price', pricing.compare_at_price)}
+                                  className="flex items-center gap-0.5 text-blue-500 hover:text-blue-600
+                                             dark:text-blue-400 dark:hover:text-blue-300 font-semibold"
+                                >
+                                  <ArrowPathIcon className="w-2.5 h-2.5" /> Recalculate
+                                </button>
+                              )}
                             </p>
                           )}
                         </div>
@@ -2355,72 +2399,30 @@ export const NewSkuDetail: React.FC<{
                       />
                     </div>
 
-                    {/* CM Breakdown — CM1 + CM3 (no CM2) */}
-                    {[
-                      {
-                        label:    'CM1 (Gross)',
-                        sublabel: `Net Sales − Landing − ₹${pickPack} P&P`,
-                        value:    cm1Live,
-                        pct:      actualCM1Live,
-                        color:    actualCM1Live >= (pricingConfig?.min_margin_pct || 20)
-                                    ? 'text-green-600 dark:text-green-400'
-                                    : 'text-red-500',
-                      },
-                      {
-                        label:    'CM3 (Net)',
-                        sublabel: `−${((pricingConfig?.shopify_cost_pct || 0.18) * 100).toFixed(0)}% Shopify`,
-                        value:    cm3Live,
-                        pct:      cm3PctLive,
-                        color:    cm3Live > 0
-                                    ? 'text-purple-600 dark:text-purple-400'
-                                    : 'text-red-500',
-                      },
-                    ].map(({ label, sublabel, value, pct, color }) => (
-                      <div key={label}
-                           className="flex justify-between items-center py-2
-                                      border-b border-gray-100 dark:border-gray-700/50
-                                      last:border-0">
-                        <div>
-                          <p className="text-xs font-semibold text-gray-700
-                                        dark:text-gray-300">{label}</p>
-                          <p className="text-[10px] text-gray-400 mt-0.5">{sublabel}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className={`text-sm font-bold font-mono ${color}`}>
-                            ₹{Math.round(value)}
-                          </p>
-                          <p className={`text-[10px] font-mono ${color}`}>
-                            {pct.toFixed(1)}%
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-
-                    {/* Large CM3 display — final profit */}
-                    <div className={`mt-3 p-3 rounded-xl text-center ${
-                      cm3Live > 0
-                        ? 'bg-purple-50 dark:bg-purple-900/20'
-                        : 'bg-red-50 dark:bg-red-900/20'
-                    }`}>
-                      <p className={`text-3xl font-bold ${
-                        cm3Live > 0
-                          ? 'text-purple-600 dark:text-purple-400'
-                          : 'text-red-500'
-                      }`}>
-                        {cm3PctLive.toFixed(1)}%
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        CM3 — Actual Margin
-                      </p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">
-                        CM1: {actualCM1Live.toFixed(1)}%
-                      </p>
-                      {marginWarning && (
-                        <p className="text-xs text-red-500 font-semibold mt-2">
-                          ⚠️ CM1 below {pricingConfig?.min_margin_pct || 20}% minimum
-                        </p>
-                      )}
+                    {/* CM1/CM3 gauges — actual vs floor/target brackets */}
+                    <div className="grid grid-cols-2 gap-2 py-3">
+                      <MarginGauge
+                        label="CM1"
+                        sublabel="Gross Margin"
+                        value={actualCM1Live}
+                        floor={pricing.cm1_floor}
+                        target={pricing.cm1_target}
+                        rupee={cm1Live}
+                      />
+                      <MarginGauge
+                        label="CM3"
+                        sublabel="Net Margin"
+                        value={cm3PctLive}
+                        floor={pricing.cm3_floor}
+                        target={pricing.cm3_target}
+                        rupee={cm3Live}
+                      />
                     </div>
+                    {marginWarning && (
+                      <p className="text-xs text-red-500 font-semibold text-center -mt-1 mb-1">
+                        ⚠️ CM1 below {pricingConfig?.min_margin_pct || 20}% minimum
+                      </p>
+                    )}
                   </>
                 )}
               </>
