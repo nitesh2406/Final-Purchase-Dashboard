@@ -2,11 +2,10 @@ import React, { useEffect, useState, useId } from 'react';
 
 interface MarginGaugeProps {
   label: string;
-  sublabel: string;
   value: number;  // actual %, e.g. 36.2
   floor: number;  // %
   target: number; // %
-  rupee: number;  // ₹ amount shown under the gauge
+  rupee: number;  // ₹ amount shown in the caption
 }
 
 // Finalized in the mockup review — 20% lighter than the base palette below.
@@ -68,7 +67,7 @@ function arcPath(cx: number, cy: number, r: number, vFrom: number, vTo: number, 
 // Arc gauge for CM1/CM3 vs their floor/target brackets — zones: a severity
 // gradient (amber → dark red) below floor, bright green floor→target, a
 // calmer dark green above target. See mockup review for the palette pass.
-export const MarginGauge: React.FC<MarginGaugeProps> = ({ label, sublabel, value, floor, target, rupee }) => {
+export const MarginGauge: React.FC<MarginGaugeProps> = ({ label, value, floor, target, rupee }) => {
   const isDark = useIsDarkMode();
   const pick = (name: keyof typeof PALETTE) => PALETTE[name][isDark ? 'dark' : 'light'];
   const rawGradId = useId().replace(/[^a-zA-Z0-9]/g, '');
@@ -120,11 +119,11 @@ export const MarginGauge: React.FC<MarginGaugeProps> = ({ label, sublabel, value
       <p className="font-mono text-2xl font-bold -mt-2" style={{ color: readoutColor }}>
         {value.toFixed(1)}%
       </p>
-      <p className="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">
-        {label} <span className="font-normal text-gray-400">— {sublabel}</span>
+      <p className="text-xs font-bold text-gray-900 dark:text-white mt-0.5">
+        {label} - ₹{Math.round(rupee).toLocaleString('en-IN')}
       </p>
-      <p className="text-[10px] font-mono text-gray-400 mt-1">
-        ₹{Math.round(rupee).toLocaleString('en-IN')} · floor {floor.toFixed(0)}% · target {target.toFixed(0)}%
+      <p className="text-[10px] font-mono text-gray-400 mt-1 text-center">
+        Floor {floor.toFixed(0)}% ↔ {target.toFixed(0)}% Target
       </p>
     </div>
   );

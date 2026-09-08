@@ -2268,8 +2268,6 @@ export const NewSkuDetail: React.FC<{
                     {[
                       { label: 'RMB Price',    value: `¥ ${unitPrice}`,             muted: true },
                       { label: 'Landing Cost', value: `₹ ${pricing.landing}`,       muted: false },
-                      { label: 'CM3 Target',   value: `${pricing.cm3_target}%`,     muted: true },
-                      { label: 'CM1 Target',   value: `${pricing.cm1_target}%`,     muted: true },
                     ].map(({ label, value, muted }) => (
                       <div key={label}
                            className="flex justify-between items-center py-1.5
@@ -2403,7 +2401,6 @@ export const NewSkuDetail: React.FC<{
                     <div className="grid grid-cols-2 gap-2 py-3">
                       <MarginGauge
                         label="CM1"
-                        sublabel="Gross Margin"
                         value={actualCM1Live}
                         floor={pricing.cm1_floor}
                         target={pricing.cm1_target}
@@ -2411,7 +2408,6 @@ export const NewSkuDetail: React.FC<{
                       />
                       <MarginGauge
                         label="CM3"
-                        sublabel="Net Margin"
                         value={cm3PctLive}
                         floor={pricing.cm3_floor}
                         target={pricing.cm3_target}
