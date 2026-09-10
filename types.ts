@@ -487,6 +487,10 @@ export interface Batch {
   notes: string;
   is_delayed: boolean;
   delay_days: number;
+  // Rollup across this batch's shipments: FAILED if any EasyEcom PO push
+  // failed, PUSHED if all that have a status succeeded, '' if none pushed yet.
+  ee_status?: 'PUSHED' | 'FAILED' | '';
+  ee_push_error?: string;
   vendor_shipments?: BatchVendorShipment[];
   vendor_summary?: BatchVendorSummary[];
 

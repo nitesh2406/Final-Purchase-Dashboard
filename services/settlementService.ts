@@ -558,48 +558,83 @@ export async function fetchCnfEligibleBatches(): Promise<CnfEligibleBatch[]> {
 }
 
 /**
- * Returns true if every invoice linked to this batch's vendor_shipments is fully
- * settled — recomputed from raw SettlementRecords (txnType === 'Invoice Settlement'),
- * not from PurchaseInvoice.balance/.status, which don't reliably reflect real payment
- * state (see components/finance/SettlementLedger.tsx's getOutstandingBalance for the
- * same technique applied to a single invoice).
+ * Core of the batch-settlement computation, keyed only by a plain list of
+ * invoice numbers rather than a specific batch shape — so both the CNF
+ * Agent Accounting screen (CnfEligibleBatch.vendor_shipments[].invoiceId)
+ * and the Shipment Tracker (Batch.vendor_summary[].invoice_no) can share
+ * one implementation instead of each recomputing "is this paid" their own
+ * way, which is exactly the kind of drift that makes a Paid badge lie.
+ *
+ * Recomputed from raw SettlementRecords (txnType === 'Invoice Settlement'),
+ * not from PurchaseInvoice.balance/.status, which don't reliably reflect
+ * real payment state (see components/finance/SettlementLedger.tsx's
+ * getOutstandingBalance for the same technique applied to a single invoice).
  */
-export function isBatchFullySettled(
-  batch: CnfEligibleBatch,
+export function computeBatchSettlementStatus(
+  linkedInvoiceIds: string[],
   purchaseInvoices: PurchaseInvoice[],
   settlementRecords: SettlementRecord[]
-): boolean {
-  const linkedInvoiceIds = batch.vendor_shipments.map(vs => (vs.invoiceId || '').trim()).filter(Boolean);
-  if (linkedInvoiceIds.length === 0) return false;
+): { status: 'Paid' | 'Partial' | 'Unpaid' | 'Not Invoiced'; invoicedRmb: number; invoicedInr: number; outstandingRmb: number } {
+  const ids = Array.from(new Set(linkedInvoiceIds.map(id => (id || '').trim()).filter(Boolean)));
+  if (ids.length === 0) return { status: 'Not Invoiced', invoicedRmb: 0, invoicedInr: 0, outstandingRmb: 0 };
 
-  return linkedInvoiceIds.every(invoiceId => {
+  let invoicedRmb = 0;
+  let invoicedInr = 0;
+  let outstandingRmb = 0;
+  let anyMatched = false;
+
+  ids.forEach(invoiceId => {
     const invoice = purchaseInvoices.find(inv => (inv.invoiceId || '').trim() === invoiceId);
-    if (!invoice) return false;
+    if (!invoice) return; // not yet synced from Vendor_Shipments to PurchaseInvoices
+    anyMatched = true;
     // FIFO-settlement rows are stored as negative debits against the vendor's wallet;
     // cross-vendor Adjustment Transfer In rows are stored positive. Use magnitude, not
     // signed value, so both count as money applied against the invoice.
     const settledRmb = settlementRecords
       .filter(r => (r.invoiceId || '').trim() === invoiceId && r.txnType === 'Invoice Settlement')
       .reduce((sum, r) => sum + Math.abs(r.amountRmb), 0);
-    const outstanding = Math.max(0, (invoice.rmb || 0) - settledRmb);
-    return outstanding < 0.01; // same rounding tolerance as PaymentLedger.tsx's balanced-allocation check
+    invoicedRmb += invoice.rmb || 0;
+    // invoice.inr is accounting's own EOD-priced valuation (er1 × rmb) — used as-is
+    // rather than recomputed, so this agrees exactly with what Accounts already booked.
+    invoicedInr += invoice.inr || 0;
+    outstandingRmb += Math.max(0, (invoice.rmb || 0) - settledRmb);
   });
+
+  if (!anyMatched) return { status: 'Not Invoiced', invoicedRmb: 0, invoicedInr: 0, outstandingRmb: 0 };
+  // same rounding tolerance as PaymentLedger.tsx's balanced-allocation check
+  if (outstandingRmb < 0.01) return { status: 'Paid', invoicedRmb, invoicedInr, outstandingRmb: 0 };
+  if (outstandingRmb < invoicedRmb - 0.01) return { status: 'Partial', invoicedRmb, invoicedInr, outstandingRmb };
+  return { status: 'Unpaid', invoicedRmb, invoicedInr, outstandingRmb };
+}
+
+/**
+ * Returns true if every invoice linked to this batch's vendor_shipments is
+ * fully settled. Thin wrapper over computeBatchSettlementStatus — see there
+ * for the actual computation.
+ */
+export function isBatchFullySettled(
+  batch: CnfEligibleBatch,
+  purchaseInvoices: PurchaseInvoice[],
+  settlementRecords: SettlementRecord[]
+): boolean {
+  const linkedInvoiceIds = batch.vendor_shipments.map(vs => vs.invoiceId || '');
+  return computeBatchSettlementStatus(linkedInvoiceIds, purchaseInvoices, settlementRecords).status === 'Paid';
 }
 
 /**
  * RMB-weighted average of exchangeRateSettlement across every 'Invoice Settlement'
- * SettlementRecord tied to any invoice linked to this batch. This is the actual RMB
+ * SettlementRecord tied to a set of linked invoice numbers. This is the actual RMB
  * payment rate (exchangeRateSettlement, i.e. ER2), not the Conversion-Charge-adjusted
  * rate used elsewhere for forex gain/loss — see Settings > Charges & Taxes for that
- * distinction. No prior function in this codebase computes this.
+ * distinction.
  */
-export function computeCnfBatchRate(
-  batch: CnfEligibleBatch,
+export function computeWeightedSettlementRate(
+  linkedInvoiceIds: string[],
   settlementRecords: SettlementRecord[]
 ): number {
-  const linkedInvoiceIds = new Set(batch.vendor_shipments.map(vs => (vs.invoiceId || '').trim()).filter(Boolean));
+  const idSet = new Set(linkedInvoiceIds.map(id => (id || '').trim()).filter(Boolean));
   const relevant = settlementRecords.filter(
-    r => linkedInvoiceIds.has((r.invoiceId || '').trim()) && r.txnType === 'Invoice Settlement'
+    r => idSet.has((r.invoiceId || '').trim()) && r.txnType === 'Invoice Settlement'
   );
   // Weight by magnitude, not signed value — FIFO-settlement rows are stored as negative
   // debits while cross-vendor Adjustment Transfer In rows are positive, and a batch can
@@ -608,6 +643,18 @@ export function computeCnfBatchRate(
   if (totalRmb === 0) return 0;
   const weightedSum = relevant.reduce((sum, r) => sum + Math.abs(r.amountRmb) * r.exchangeRateSettlement, 0);
   return weightedSum / totalRmb;
+}
+
+/**
+ * RMB-weighted average settlement rate for a CnfEligibleBatch. Thin wrapper
+ * over computeWeightedSettlementRate — see there for the actual computation.
+ */
+export function computeCnfBatchRate(
+  batch: CnfEligibleBatch,
+  settlementRecords: SettlementRecord[]
+): number {
+  const linkedInvoiceIds = batch.vendor_shipments.map(vs => vs.invoiceId || '');
+  return computeWeightedSettlementRate(linkedInvoiceIds, settlementRecords);
 }
 
 /**

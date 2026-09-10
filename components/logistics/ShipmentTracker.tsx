@@ -16,6 +16,10 @@ import { callGasAuthed } from '../../services/gasApi';
 import { Button } from '../ui/Button';
 import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
 import { EditBatchTrackingModal } from './EditBatchTrackingModal';
+import {
+    fetchPurchaseInvoices, fetchSettlementRecords, computeBatchSettlementStatus, computeWeightedSettlementRate,
+    PurchaseInvoice, SettlementRecord
+} from '../../services/settlementService';
 
 // Module-level cache — one shared cache now that Tracker and Finance are a
 // single screen (previously each had its own, which is what made an edit on
@@ -27,6 +31,14 @@ let batchListCache: {
 } | null = null;
 
 let categoryCache: SkuCategory[] | null = null;
+
+// Real payment/settlement state (Admin-only) — computed from PurchaseInvoices +
+// SettlementLedger, the same way CNF Agent Accounting already determines
+// "is this batch paid" (see computeBatchSettlementStatus's doc comment for
+// why: PurchaseInvoice.balance alone isn't reliable). getBatches' own
+// payment_status/amount_inr use a coarser Payments-sheet-total ÷ monthly FX
+// heuristic instead — kept for other consumers, but not used here anymore.
+let settlementCache: { purchaseInvoices: PurchaseInvoice[]; settlementRecords: SettlementRecord[] } | null = null;
 
 const STATUS_CONFIG: Record<string, { label: string; badge: string }> = {
     'Shipped':           { label: 'Shipped',           badge: 'bg-purple-100 text-purple-700 dark:bg-purple-500/10 dark:text-purple-400' },
@@ -48,6 +60,9 @@ const PAYMENT_STATUS_BADGE: Record<string, string> = {
     'Paid': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
     'Partial': 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
     'Unpaid': 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400',
+    // Not yet invoiced (e.g. still OPEN, pre-shipment) — distinct from a genuinely
+    // outstanding Unpaid balance, so it doesn't read as a payment problem.
+    'Not Invoiced': 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400',
 };
 
 const formatDate = (dateString: string | null) => {
@@ -154,7 +169,7 @@ const FilterBar: React.FC<{
                     className="px-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                     <option value="All">All Statuses</option>
-                    {Object.keys(STATUS_CONFIG).filter(s => s !== 'OPEN').map(s => <option key={s} value={s}>{s}</option>)}
+                    {Object.keys(STATUS_CONFIG).map(s => <option key={s} value={s}>{getStatusConfig(s).label}</option>)}
                 </select>
 
                 <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700">
@@ -296,7 +311,9 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
     const [showDebug, setShowDebug] = useState(false);
     const [lastRequest, setLastRequest] = useState<any>(null);
     const [lastResponse, setLastResponse] = useState<any>(null);
-    const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
+    const [editingBatch, setEditingBatch] = useState<Batch | null>(null);
+    const [purchaseInvoices, setPurchaseInvoices] = useState<PurchaseInvoice[]>(settlementCache?.purchaseInvoices || []);
+    const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>(settlementCache?.settlementRecords || []);
 
     const fetchData = useCallback(async (forceRefresh = false) => {
         if (!forceRefresh && batchListCache) {
@@ -342,6 +359,38 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
             .catch(err => console.error('get_sku_categories failed:', err));
     }, []);
 
+    // Only admins see the Payment Status column, so only fetch the (larger)
+    // settlement data for them — non-admins skip these two requests entirely.
+    useEffect(() => {
+        if (!isAdmin) return;
+        if (settlementCache) {
+            setPurchaseInvoices(settlementCache.purchaseInvoices);
+            setSettlementRecords(settlementCache.settlementRecords);
+            return;
+        }
+        Promise.all([fetchPurchaseInvoices(), fetchSettlementRecords()])
+            .then(([invoices, records]) => {
+                settlementCache = { purchaseInvoices: invoices, settlementRecords: records };
+                setPurchaseInvoices(invoices);
+                setSettlementRecords(records);
+            })
+            .catch(err => console.error('Failed to load settlement data:', err));
+    }, [isAdmin]);
+
+    // batch_id -> real settlement status, derived the same way CNF Agent
+    // Accounting determines it (see computeBatchSettlementStatus).
+    const settlementByBatch = useMemo(() => {
+        const map = new Map<string, ReturnType<typeof computeBatchSettlementStatus> & { applicableEr: number }>();
+        if (!isAdmin || purchaseInvoices.length === 0) return map;
+        batches.forEach(b => {
+            const invoiceIds = (b.vendor_summary || []).map(v => v.invoice_no).filter(Boolean);
+            const settlement = computeBatchSettlementStatus(invoiceIds, purchaseInvoices, settlementRecords);
+            const applicableEr = computeWeightedSettlementRate(invoiceIds, settlementRecords);
+            map.set(b.batch_id, { ...settlement, applicableEr });
+        });
+        return map;
+    }, [batches, purchaseInvoices, settlementRecords, isAdmin]);
+
     const itemTypeOptions = useMemo(() => buildItemTypeOptions(categories), [categories]);
     const vendorOptions = useMemo(() => {
         const set = new Set<string>();
@@ -371,34 +420,80 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
         if (filters.dateFrom) filtered = filtered.filter(b => b.shipped_at && b.shipped_at.slice(0, 10) >= filters.dateFrom);
         if (filters.dateTo) filtered = filtered.filter(b => b.shipped_at && b.shipped_at.slice(0, 10) <= filters.dateTo);
         if (isAdmin && filters.paymentStatus && filters.paymentStatus !== 'All') {
-            filtered = filtered.filter(b => b.payment_status === filters.paymentStatus);
+            filtered = filtered.filter(b => settlementByBatch.get(b.batch_id)?.status === filters.paymentStatus);
         }
 
         const sorted = [...filtered];
+        // Primary comparator per the chosen sort field...
+        let cmp: (a: Batch, b: Batch) => number;
         switch (filters.sortBy) {
             case 'batch_id':
-                sorted.sort((a, b) => a.batch_id.localeCompare(b.batch_id));
+                cmp = (a, b) => a.batch_id.localeCompare(b.batch_id);
                 break;
             case 'shipped_at':
-                sorted.sort((a, b) => new Date(b.shipped_at || 0).getTime() - new Date(a.shipped_at || 0).getTime());
+                cmp = (a, b) => new Date(b.shipped_at || 0).getTime() - new Date(a.shipped_at || 0).getTime();
                 break;
             case 'total_value':
-                sorted.sort((a, b) => (b.total_value_rmb || 0) - (a.total_value_rmb || 0));
+                cmp = (a, b) => (b.total_value_rmb || 0) - (a.total_value_rmb || 0);
                 break;
             case 'expected_delivery':
             default:
-                sorted.sort((a, b) => {
+                cmp = (a, b) => {
                     if (!a.expected_delivery) return 1;
                     if (!b.expected_delivery) return -1;
                     return new Date(a.expected_delivery).getTime() - new Date(b.expected_delivery).getTime();
-                });
+                };
         }
+        // ...but a Delivered batch's expected_delivery is always in the past
+        // by definition, so sorting purely by date/value pushes it above
+        // still-active batches. Active batches always sort first; Delivered
+        // ones fall to the end, ordered by the same comparator among themselves.
+        sorted.sort((a, b) => {
+            const aDelivered = a.status === 'Delivered' ? 1 : 0;
+            const bDelivered = b.status === 'Delivered' ? 1 : 0;
+            if (aDelivered !== bDelivered) return aDelivered - bDelivered;
+            return cmp(a, b);
+        });
         return sorted;
-    }, [batches, filters, isAdmin]);
+    }, [batches, filters, isAdmin, settlementByBatch]);
 
     const handleViewDetails = (batchId: string) => {
         if (onNavigateToBatch) onNavigateToBatch(batchId);
     };
+
+    // Applies a saved tracking edit to the in-memory batch list directly,
+    // instead of re-running the full get_batches computation (every batch,
+    // every shipment, every line item, plus admin FX/payment math) just to
+    // reflect the handful of fields the modal just changed — that refetch is
+    // what made "Save" feel slow.
+    const handleTrackingSaved = useCallback((updates: Partial<Batch> & { batch_id: string }) => {
+        const today = new Date();
+        setBatches(prev => {
+            const next = prev.map(b => {
+                if (b.batch_id !== updates.batch_id) return b;
+                const merged = { ...b, ...updates };
+                if (merged.expected_delivery && !merged.actual_delivery) {
+                    const expectedDate = new Date(merged.expected_delivery);
+                    merged.is_delayed = today > expectedDate;
+                    merged.delay_days = merged.is_delayed ? Math.floor((today.getTime() - expectedDate.getTime()) / 86400000) : 0;
+                } else {
+                    merged.is_delayed = false;
+                    merged.delay_days = 0;
+                }
+                return merged;
+            });
+            if (batchListCache) batchListCache = { ...batchListCache, batches: next };
+            return next;
+        });
+        // total_amount/total_currency feed FX-derived fields (amount_inr,
+        // payment_status, blended_rate) computed server-side — those would
+        // go stale from a pure local patch, so reconcile them quietly in the
+        // background without blocking the modal close or re-showing a
+        // loading state for the whole table.
+        if (updates.total_amount !== undefined || updates.total_currency !== undefined) {
+            fetchData(true);
+        }
+    }, [fetchData]);
 
     const clearFilters = () => setFilters({
         search: '', status: 'All', mode: 'All', vendor: 'All', carrier: 'All',
@@ -479,6 +574,7 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                                     <th className="px-4 py-3">Batch ID</th>
                                     <th className="px-4 py-3">Mode</th>
                                     <th className="px-4 py-3">Status</th>
+                                    <th className="px-4 py-3">EE PO</th>
                                     <th className="px-4 py-3">Expected Delivery</th>
                                     <th className="px-4 py-3">Delay</th>
                                     <th className="px-4 py-3">Carrier</th>
@@ -496,6 +592,7 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                                 {filteredBatches.map(batch => {
                                     const sc = getStatusConfig(batch.status);
                                     const ModeIcon = batch.batch_type === 'sea' ? ShipIcon : AirplaneIcon;
+                                    const settlement = settlementByBatch.get(batch.batch_id);
                                     return (
                                         <tr
                                             key={batch.batch_id}
@@ -506,6 +603,22 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                                             <td className="px-4 py-3"><ModeIcon className="w-4 h-4 text-slate-400 dark:text-slate-500" /></td>
                                             <td className="px-4 py-3">
                                                 <span className={`inline-block px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${sc.badge}`}>{sc.label}</span>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                {batch.ee_status === 'FAILED' ? (
+                                                    <span
+                                                        title={batch.ee_push_error || 'EasyEcom PO push failed'}
+                                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-400/10"
+                                                    >
+                                                        <ExclamationTriangleIcon className="w-3 h-3" /> Failed
+                                                    </span>
+                                                ) : batch.ee_status === 'PUSHED' ? (
+                                                    <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap text-emerald-600 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-400/10">
+                                                        Pushed
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-slate-400 dark:text-slate-600 text-xs">—</span>
+                                                )}
                                             </td>
                                             <td className={`px-4 py-3 text-sm whitespace-nowrap ${batch.is_delayed ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-slate-700 dark:text-slate-300'}`}>
                                                 {formatDate(batch.expected_delivery)}
@@ -524,8 +637,13 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                                             <td className="px-4 py-3 text-right text-sm font-semibold text-slate-900 dark:text-slate-100">{batch.total_units}</td>
                                             {isAdmin && (
                                                 <td className="px-4 py-3">
-                                                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${PAYMENT_STATUS_BADGE[batch.payment_status || 'Unpaid']}`}>
-                                                        {batch.payment_status || 'Unpaid'}
+                                                    <span
+                                                        title={settlement && settlement.status !== 'Not Invoiced'
+                                                            ? `Invoiced RMB ${settlement.invoicedRmb.toLocaleString()} · Outstanding RMB ${settlement.outstandingRmb.toLocaleString()}`
+                                                            : undefined}
+                                                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${PAYMENT_STATUS_BADGE[settlement?.status || 'Not Invoiced']}`}
+                                                    >
+                                                        {settlement?.status || 'Not Invoiced'}
                                                     </span>
                                                 </td>
                                             )}
@@ -536,15 +654,15 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                                             )}
                                             {isAdmin && (
                                                 <td className="px-4 py-3 text-right text-sm font-semibold whitespace-nowrap">
-                                                    {batch.amount_inr != null
-                                                        ? <span className="text-blue-600 dark:text-blue-400">₹{batch.amount_inr.toLocaleString()}</span>
-                                                        : <span className="text-amber-600 dark:text-amber-500 text-xs">Rate N/A</span>}
+                                                    {settlement && settlement.invoicedInr > 0
+                                                        ? <span className="text-blue-600 dark:text-blue-400">₹{Math.round(settlement.invoicedInr).toLocaleString()}</span>
+                                                        : <span className="text-amber-600 dark:text-amber-500 text-xs">Not invoiced</span>}
                                                 </td>
                                             )}
                                             {isAdmin && (
                                                 <td className="px-4 py-3 text-center">
                                                     <button
-                                                        onClick={(e) => { e.stopPropagation(); setEditingBatchId(batch.batch_id); }}
+                                                        onClick={(e) => { e.stopPropagation(); setEditingBatch(batch); }}
                                                         className="p-1.5 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-colors"
                                                         title="Edit tracking details"
                                                     >
@@ -561,11 +679,11 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                 </div>
             )}
 
-            {editingBatchId && (
+            {editingBatch && (
                 <EditBatchTrackingModal
-                    batchId={editingBatchId}
-                    onClose={() => setEditingBatchId(null)}
-                    onSaved={() => fetchData(true)}
+                    batch={editingBatch}
+                    onClose={() => setEditingBatch(null)}
+                    onSaved={handleTrackingSaved}
                 />
             )}
 

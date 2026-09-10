@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   ArrowLeftIcon,
   MagnifyingGlassIcon,
@@ -22,6 +22,12 @@ import { Batch, BatchVendorShipment } from '../../types';
 import { callGasAuthed } from '../../services/gasApi';
 import { Button } from '../ui/Button';
 import { UploadShipmentDocsModal } from './UploadShipmentDocsModal';
+import {
+  fetchPurchaseInvoices, fetchSettlementRecords, computeBatchSettlementStatus,
+  PurchaseInvoice, SettlementRecord
+} from '../../services/settlementService';
+
+type Settlement = ReturnType<typeof computeBatchSettlementStatus>;
 
 // Status Badge Component
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
@@ -51,6 +57,7 @@ const PAYMENT_STATUS_BADGE: Record<string, string> = {
   'Paid': 'text-emerald-600 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-400/10',
   'Partial': 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-400/10',
   'Unpaid': 'text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-400/10',
+  'Not Invoiced': 'text-slate-500 bg-slate-100 dark:text-slate-400 dark:bg-slate-700',
 };
 
 const BATCH_STATUS_OPTIONS = [
@@ -79,10 +86,15 @@ const VendorShipmentRow: React.FC<{
   onToggle: () => void;
   isSearching: boolean;
   isAdmin: boolean;
+  // Real settlement status for this one shipment's invoice, computed from
+  // PurchaseInvoices + SettlementLedger (see settlementService.ts) — replaces
+  // vendor.payment_status/amount_inr, which used a coarser monthly-blended-FX
+  // estimate that could disagree with the Shipment Tracker's own Paid badge.
+  settlement?: Settlement;
   onSaveShipmentFinance: (shipmentId: string, data: { invoice_no: string; total_amount: number; currency: string; remarks: string }) => Promise<void>;
   onDocumentsUploaded: () => void;
   onRetryEePush: (shipmentId: string, expectedDelivery?: string) => Promise<void>;
-}> = ({ vendor, batchId, batchExpectedDelivery, isExpanded, onToggle, isSearching, isAdmin, onSaveShipmentFinance, onDocumentsUploaded, onRetryEePush }) => {
+}> = ({ vendor, batchId, batchExpectedDelivery, isExpanded, onToggle, isSearching, isAdmin, settlement, onSaveShipmentFinance, onDocumentsUploaded, onRetryEePush }) => {
   const ChevronIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
   const totalUnits = vendor.line_items.reduce((sum, item) => sum + (item.incoming_qty || 0), 0);
   const [isEditingFinance, setIsEditingFinance] = useState(false);
@@ -138,9 +150,12 @@ const VendorShipmentRow: React.FC<{
               <span className="text-base text-slate-900 dark:text-slate-300">{vendor.vendor_name}</span>
               <span className="text-slate-600">|</span>
               <span className="text-sm text-slate-500">Invoice: {vendor.invoiceId}</span>
-              {isAdmin && vendor.payment_status && (
-                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${PAYMENT_STATUS_BADGE[vendor.payment_status]}`}>
-                  {vendor.payment_status}
+              {isAdmin && settlement && (
+                <span
+                  title={settlement.status !== 'Not Invoiced' ? `Invoiced RMB ${settlement.invoicedRmb.toLocaleString()} · Outstanding RMB ${settlement.outstandingRmb.toLocaleString()}` : undefined}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${PAYMENT_STATUS_BADGE[settlement.status]}`}
+                >
+                  {settlement.status}
                 </span>
               )}
               {vendor.ee_po_status === 'FAILED' && (
@@ -157,7 +172,7 @@ const VendorShipmentRow: React.FC<{
               {isSearching && <span className="text-blue-400 ml-2 font-medium">• {vendor.line_items.length} matching items</span>}
               {isAdmin && vendor.total_amount !== undefined && (
                 <span className="ml-2">• {vendor.currency} {vendor.total_amount?.toLocaleString()}
-                  {vendor.amount_inr != null ? ` (₹${vendor.amount_inr.toLocaleString()})` : ' (Rate N/A)'}
+                  {settlement && settlement.invoicedInr > 0 ? ` (₹${Math.round(settlement.invoicedInr).toLocaleString()})` : ' (Not invoiced)'}
                 </span>
               )}
             </div>
@@ -329,6 +344,39 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack, isAdm
   const [lastRequest, setLastRequest] = useState<any>(null);
   const [lastResponse, setLastResponse] = useState<any>(null);
   const [lastTimestamp, setLastTimestamp] = useState<string | null>(null);
+
+  // Real payment/settlement state (Admin-only) — see settlementService.ts's
+  // computeBatchSettlementStatus doc comment for why this replaces the
+  // batch/vendor.payment_status & amount_inr fields get_batch_details returns
+  // (a coarser monthly-blended-FX estimate that could disagree with this
+  // batch's actual PurchaseInvoices/SettlementLedger state).
+  const [purchaseInvoices, setPurchaseInvoices] = useState<PurchaseInvoice[]>([]);
+  const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>([]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    Promise.all([fetchPurchaseInvoices(), fetchSettlementRecords()])
+      .then(([invoices, records]) => {
+        setPurchaseInvoices(invoices);
+        setSettlementRecords(records);
+      })
+      .catch(err => console.error('Failed to load settlement data:', err));
+  }, [isAdmin]);
+
+  const batchSettlement = useMemo<Settlement | null>(() => {
+    if (!isAdmin || !batch?.vendor_shipments || purchaseInvoices.length === 0) return null;
+    const invoiceIds = batch.vendor_shipments.map(vs => vs.invoiceId).filter(Boolean);
+    return computeBatchSettlementStatus(invoiceIds, purchaseInvoices, settlementRecords);
+  }, [isAdmin, batch, purchaseInvoices, settlementRecords]);
+
+  const settlementByShipment = useMemo(() => {
+    const map = new Map<string, Settlement>();
+    if (!isAdmin || !batch?.vendor_shipments || purchaseInvoices.length === 0) return map;
+    batch.vendor_shipments.forEach(vs => {
+      map.set(vs.shipment_id, computeBatchSettlementStatus([vs.invoiceId], purchaseInvoices, settlementRecords));
+    });
+    return map;
+  }, [isAdmin, batch, purchaseInvoices, settlementRecords]);
 
   const loadBatch = useCallback(async () => {
     setIsLoading(true);
@@ -604,12 +652,12 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack, isAdm
                 <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Total Amount</p>
                 <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{batch.total_currency} {batch.total_amount?.toLocaleString()}</p>
                 <p className="text-[11px] mt-0.5">
-                  {batch.amount_inr != null
-                    ? <span className="text-blue-600 dark:text-blue-400 font-semibold">₹{batch.amount_inr.toLocaleString()}</span>
-                    : <span className="text-amber-600 dark:text-amber-500">FX Rate N/A</span>}
+                  {batchSettlement && batchSettlement.invoicedInr > 0
+                    ? <span className="text-blue-600 dark:text-blue-400 font-semibold">₹{Math.round(batchSettlement.invoicedInr).toLocaleString()}</span>
+                    : <span className="text-amber-600 dark:text-amber-500">Not invoiced</span>}
                   {' · '}
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${PAYMENT_STATUS_BADGE[batch.payment_status || 'Unpaid']}`}>
-                    {batch.payment_status || 'Unpaid'}
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${PAYMENT_STATUS_BADGE[batchSettlement?.status || 'Not Invoiced']}`}>
+                    {batchSettlement?.status || 'Not Invoiced'}
                   </span>
                 </p>
               </div>
@@ -706,6 +754,7 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack, isAdm
                     onToggle={() => toggleVendor(vendor.shipment_id)}
                     isSearching={searchTerm.trim().length > 0}
                     isAdmin={isAdmin}
+                    settlement={settlementByShipment.get(vendor.shipment_id)}
                     onSaveShipmentFinance={handleSaveShipmentFinance}
                     onDocumentsUploaded={loadBatch}
                     onRetryEePush={handleRetryEePush}
