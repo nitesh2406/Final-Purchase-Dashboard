@@ -70,6 +70,11 @@ const CheckCell: React.FC<{ value: boolean | null }> = ({ value }) => {
 const VendorShipmentRow: React.FC<{
   vendor: BatchVendorShipment;
   batchId: string;
+  // The shipment-level expected_delivery field isn't actually a persisted
+  // column on Vendor_Shipments today, so it always reads back blank — the
+  // batch's own expected_delivery is the real, displayed date. Passed down
+  // so the retry-date input starts from something meaningful instead of ''.
+  batchExpectedDelivery: string;
   isExpanded: boolean;
   onToggle: () => void;
   isSearching: boolean;
@@ -77,7 +82,7 @@ const VendorShipmentRow: React.FC<{
   onSaveShipmentFinance: (shipmentId: string, data: { invoice_no: string; total_amount: number; currency: string; remarks: string }) => Promise<void>;
   onDocumentsUploaded: () => void;
   onRetryEePush: (shipmentId: string, expectedDelivery?: string) => Promise<void>;
-}> = ({ vendor, batchId, isExpanded, onToggle, isSearching, isAdmin, onSaveShipmentFinance, onDocumentsUploaded, onRetryEePush }) => {
+}> = ({ vendor, batchId, batchExpectedDelivery, isExpanded, onToggle, isSearching, isAdmin, onSaveShipmentFinance, onDocumentsUploaded, onRetryEePush }) => {
   const ChevronIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
   const totalUnits = vendor.line_items.reduce((sum, item) => sum + (item.incoming_qty || 0), 0);
   const [isEditingFinance, setIsEditingFinance] = useState(false);
@@ -87,13 +92,14 @@ const VendorShipmentRow: React.FC<{
   // Lets an admin correct a bad expected-delivery date (the actual root
   // cause behind most first-attempt EasyEcom push failures) right where the
   // failure is shown, instead of hunting for a separate edit screen.
-  const [retryDeliveryDate, setRetryDeliveryDate] = useState(vendor.expected_delivery || '');
+  const [retryDeliveryDate, setRetryDeliveryDate] = useState(vendor.expected_delivery || batchExpectedDelivery || '');
 
   const handleRetryClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsRetryingEePush(true);
     try {
-      const override = retryDeliveryDate && retryDeliveryDate !== vendor.expected_delivery ? retryDeliveryDate : undefined;
+      const original = vendor.expected_delivery || batchExpectedDelivery;
+      const override = retryDeliveryDate && retryDeliveryDate !== original ? retryDeliveryDate : undefined;
       await onRetryEePush(vendor.shipment_id, override);
     } finally {
       setIsRetryingEePush(false);
@@ -695,6 +701,7 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack, isAdm
                     key={vendor.shipment_id}
                     vendor={vendor}
                     batchId={batchId}
+                    batchExpectedDelivery={batch.expected_delivery ? batch.expected_delivery.split('T')[0] : ''}
                     isExpanded={expandedVendors.has(vendor.shipment_id)}
                     onToggle={() => toggleVendor(vendor.shipment_id)}
                     isSearching={searchTerm.trim().length > 0}
