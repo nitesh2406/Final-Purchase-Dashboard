@@ -557,6 +557,10 @@ export interface BatchVendorShipment {
   line_items: BatchLineItem[];
   drive_folder_id?: string;
   drive_folder_url?: string;
+  expected_delivery?: string;
+  ee_po_status?: 'PUSHED' | 'FAILED' | '';
+  ee_po_reference?: string;
+  ee_push_error?: string;
 
   // ── Finance fields — Admin-only, see Batch above for the same contract.
   total_amount?: number;

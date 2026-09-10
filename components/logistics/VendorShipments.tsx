@@ -3,6 +3,7 @@ import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { getSessionAuthHeaders } from '../../services/authToken';
+import { callGasAuthed } from '../../services/gasApi';
 import { 
     CloudArrowUpIcon, 
     DocumentTextIcon, 
@@ -743,6 +744,12 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const [isCreatingShipment, setIsCreatingShipment] = useState(false);
     const [shipmentSuccess, setShipmentSuccess] = useState(false);
     const [createdShipmentId, setCreatedShipmentId] = useState('');
+
+    // Set when the shipment itself saved fine but the EasyEcom PO push
+    // failed (e.g. bad expected-delivery date) — surfaced instead of a
+    // silent success, with a Retry action once the underlying cause is fixed.
+    const [eePushWarning, setEePushWarning] = useState<{ message: string } | null>(null);
+    const [isRetryingEePush, setIsRetryingEePush] = useState(false);
 
     // Drive document upload (after Finalize, once batch_id + shipment_id are known)
     const [isUploadingDocs, setIsUploadingDocs] = useState(false);
@@ -1673,7 +1680,20 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
       if (!finalShipmentAmount || finalShipmentAmount <= 0) {
         errors.amount = "Amount must be greater than 0";
       }
-      
+
+      if (expectedDelivery) {
+        // yyyy-mm-dd string compare is safe here since <input type="date">
+        // always gives us that format — avoids timezone-shift bugs from
+        // parsing into a Date. Catches exactly the A-26019 class of mistake
+        // (wrong month typed in) before it ever reaches EasyEcom, which
+        // rejects a past expected delivery date but previously did so silently
+        // as far as the user could tell.
+        const todayStr = new Date().toISOString().slice(0, 10);
+        if (expectedDelivery < todayStr) {
+          errors.expectedDelivery = "Expected delivery can't be in the past — check the date (day/month easy to mix up)";
+        }
+      }
+
       setValidationErrors(errors);
       return Object.keys(errors).length === 0;
     };
@@ -1841,6 +1861,15 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
         if (data.status === 'success') {
           setCreatedShipmentId(data.shipment_id);
+          // The shipment/batch/PO records did save — that's what data.status
+          // reflects — but the separate EasyEcom PO push can fail on its own
+          // (e.g. an invalid expected delivery date) without affecting that.
+          // Surface it instead of letting a clean success screen hide it.
+          setEePushWarning(
+            data.ee_push === 'FAILED'
+              ? { message: data.ee_push_error || 'EasyEcom PO creation failed for an unknown reason.' }
+              : null
+          );
           // Clear draft from localStorage
           localStorage.removeItem('vendor_shipment_draft');
 
@@ -1857,6 +1886,23 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         setBackendError(error.message || 'Failed to create shipment');
       } finally {
         setIsCreatingShipment(false);
+      }
+    };
+
+    const handleRetryEePush = async () => {
+      if (!createdShipmentId) return;
+      setIsRetryingEePush(true);
+      try {
+        const result = await callGasAuthed(API_ACTIONS.RETRY_EASYECOM_PUSH, { shipment_id: createdShipmentId });
+        if (result.status === 'success') {
+          setEePushWarning(null);
+        } else {
+          setEePushWarning({ message: result.message || 'Retry failed for an unknown reason.' });
+        }
+      } catch (error: any) {
+        setEePushWarning({ message: error.message || 'Retry failed for an unknown reason.' });
+      } finally {
+        setIsRetryingEePush(false);
       }
     };
 
@@ -4509,8 +4555,11 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                               onChange={(e) => setExpectedDelivery(e.target.value)}
                               className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                             />
-                            {batchOption === 'existing' && selectedBatchId && expectedDelivery && (
+                            {batchOption === 'existing' && selectedBatchId && expectedDelivery && !validationErrors.expectedDelivery && (
                               <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1 italic">From batch {selectedBatchId} — edit if needed.</p>
+                            )}
+                            {validationErrors.expectedDelivery && (
+                              <p className="text-red-500 dark:text-red-400 text-xs mt-1">{validationErrors.expectedDelivery}</p>
                             )}
                           </div>
 
@@ -4652,11 +4701,30 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                 <h2 className="text-3xl font-bold text-white mb-2">Shipment Created Successfully!</h2>
                 <p className="text-slate-400 mb-1">Your vendor shipment has been recorded</p>
                 <p className="text-2xl font-mono font-bold text-blue-400 mb-8">{createdShipmentId}</p>
-                
+
+                {eePushWarning && (
+                  <div className="w-full max-w-xl mb-8 bg-amber-500/10 border border-amber-500/40 rounded-lg p-4 text-left">
+                    <p className="text-amber-400 font-bold text-sm mb-1">⚠ EasyEcom PO was not created</p>
+                    <p className="text-amber-200/80 text-xs mb-3">
+                      The shipment above saved fine, but pushing its Purchase Order to EasyEcom failed: <span className="font-mono">{eePushWarning.message}</span>.
+                      Fix the cause (e.g. an expected delivery date already in the past) on the shipment's Batch, then retry — nothing else needs re-entering.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      onClick={handleRetryEePush}
+                      disabled={isRetryingEePush}
+                      className="text-xs py-1.5 px-4"
+                    >
+                      {isRetryingEePush ? 'Retrying…' : 'Retry EasyEcom Push'}
+                    </Button>
+                  </div>
+                )}
+
                 <div className="flex gap-4">
                   <Button
                     onClick={() => {
                       setShipmentSuccess(false);
+                      setEePushWarning(null);
                       clearSelection();
                     }}
                     className="bg-blue-600 hover:bg-blue-700"

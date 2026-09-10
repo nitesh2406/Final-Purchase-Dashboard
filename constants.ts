@@ -33,6 +33,7 @@ export const API_ACTIONS = {
     UPLOAD_SHIPMENT_DOCS: 'upload_shipment_docs',
     GET_OPEN_BATCHES: 'get_open_batches',
     UPDATE_SHIPMENT_DRIVE_DOCS: 'update_shipment_drive_docs',
+    RETRY_EASYECOM_PUSH: 'retry_easyecom_push',
     // Finance Operations
     // get_batches_finance / get_batch_finance_detail retired — merged into
     // get_batches / get_batch_details (role-gated server-side).

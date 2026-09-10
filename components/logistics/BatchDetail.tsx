@@ -76,12 +76,29 @@ const VendorShipmentRow: React.FC<{
   isAdmin: boolean;
   onSaveShipmentFinance: (shipmentId: string, data: { invoice_no: string; total_amount: number; currency: string; remarks: string }) => Promise<void>;
   onDocumentsUploaded: () => void;
-}> = ({ vendor, batchId, isExpanded, onToggle, isSearching, isAdmin, onSaveShipmentFinance, onDocumentsUploaded }) => {
+  onRetryEePush: (shipmentId: string, expectedDelivery?: string) => Promise<void>;
+}> = ({ vendor, batchId, isExpanded, onToggle, isSearching, isAdmin, onSaveShipmentFinance, onDocumentsUploaded, onRetryEePush }) => {
   const ChevronIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
   const totalUnits = vendor.line_items.reduce((sum, item) => sum + (item.incoming_qty || 0), 0);
   const [isEditingFinance, setIsEditingFinance] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isRetryingEePush, setIsRetryingEePush] = useState(false);
+  // Lets an admin correct a bad expected-delivery date (the actual root
+  // cause behind most first-attempt EasyEcom push failures) right where the
+  // failure is shown, instead of hunting for a separate edit screen.
+  const [retryDeliveryDate, setRetryDeliveryDate] = useState(vendor.expected_delivery || '');
+
+  const handleRetryClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsRetryingEePush(true);
+    try {
+      const override = retryDeliveryDate && retryDeliveryDate !== vendor.expected_delivery ? retryDeliveryDate : undefined;
+      await onRetryEePush(vendor.shipment_id, override);
+    } finally {
+      setIsRetryingEePush(false);
+    }
+  };
   const [form, setForm] = useState({
     invoice_no: vendor.invoiceId || '',
     total_amount: vendor.total_amount || 0,
@@ -120,6 +137,14 @@ const VendorShipmentRow: React.FC<{
                   {vendor.payment_status}
                 </span>
               )}
+              {vendor.ee_po_status === 'FAILED' && (
+                <span
+                  title={vendor.ee_push_error || 'EasyEcom PO push failed'}
+                  className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-400/10"
+                >
+                  ⚠ EE PO Failed
+                </span>
+              )}
             </div>
             <div className="text-sm text-slate-500 mt-1">
               {vendor.carton_count} cartons • {totalUnits} units
@@ -130,6 +155,32 @@ const VendorShipmentRow: React.FC<{
                 </span>
               )}
             </div>
+            {vendor.ee_po_status === 'FAILED' && (
+              <div className="text-xs text-red-500 dark:text-red-400 mt-1 flex items-center gap-2 flex-wrap">
+                <span>EasyEcom PO not created: {vendor.ee_push_error || 'unknown error'}</span>
+                {isAdmin && (
+                  <>
+                    <label className="flex items-center gap-1 text-slate-500 dark:text-slate-400 normal-case font-normal">
+                      Expected delivery:
+                      <input
+                        type="date"
+                        value={retryDeliveryDate}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setRetryDeliveryDate(e.target.value)}
+                        className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-1.5 py-0.5 text-xs text-slate-800 dark:text-white"
+                      />
+                    </label>
+                    <button
+                      onClick={handleRetryClick}
+                      disabled={isRetryingEePush}
+                      className="font-bold underline hover:no-underline disabled:opacity-50"
+                    >
+                      {isRetryingEePush ? 'Retrying…' : 'Retry'}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
         {isAdmin && (
@@ -383,6 +434,23 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack, isAdm
     }
   };
 
+  const handleRetryEePush = async (shipmentId: string, expectedDelivery?: string) => {
+    const payload = { action: 'retry_easyecom_push', shipment_id: shipmentId, expected_delivery: expectedDelivery };
+    setLastRequest(payload);
+    try {
+      const result = await callGasAuthed('retry_easyecom_push', { shipment_id: shipmentId, expected_delivery: expectedDelivery });
+      setLastResponse(result);
+      if (result.status === 'success') {
+        loadBatch();
+      } else {
+        alert(result.message || 'EasyEcom retry failed');
+      }
+    } catch (err: any) {
+      console.error('Retry EasyEcom push error:', err);
+      alert('Network error retrying EasyEcom push');
+    }
+  };
+
   const handleCopyDebug = (data: any) => {
     if (data) navigator.clipboard.writeText(JSON.stringify(data, null, 2));
   };
@@ -633,6 +701,7 @@ export const BatchDetail: React.FC<BatchDetailProps> = ({ batchId, onBack, isAdm
                     isAdmin={isAdmin}
                     onSaveShipmentFinance={handleSaveShipmentFinance}
                     onDocumentsUploaded={loadBatch}
+                    onRetryEePush={handleRetryEePush}
                   />
                 ))}
               </div>
