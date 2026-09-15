@@ -671,6 +671,12 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         total: number; matched: number; mismatch: number; multipleVariant: number; unmatched: number;
     } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // Stays the same across retries of one finalize attempt (network drop, EasyEcom
+    // push timing out, a stray double-click) so the backend can recognize a resend
+    // and return the original result instead of creating a duplicate shipment/PO.
+    // Only cleared when the user actually starts a new shipment (clearSelection).
+    const shipmentIdempotencyKeyRef = useRef<string | null>(null);
+    const isFinalizingRef = useRef(false);
     const [showDebug, setShowDebug] = useState(false);
     const [invoiceNumber, setInvoiceNumber] = useState('');
     const [isSuccess, setIsSuccess] = useState(false);
@@ -830,6 +836,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         setStatusFilter('ALL');
         setP2Filter('ALL');
         setIssueReasonFilter('ALL');
+        shipmentIdempotencyKeyRef.current = null;
 
         // Clear saved draft from localStorage
         localStorage.removeItem('vendor_shipment_draft');
@@ -1213,27 +1220,41 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         };
     }, [validationRows]);
 
-    const canProceedToAllocation = useMemo(() => {
-        if (validationRows.length === 0 || backendError) return false;
-        const unresolved = validationRows.filter(r => {
+    // Rows still blocking "Proceed to Allocation" — surfaced (with a reason) so a
+    // dead-end disabled button always has a visible, fixable cause on-screen.
+    const blockingRows = useMemo(() => {
+        return validationRows.reduce<{ row: EnrichedRow; reason: string }[]>((acc, r) => {
             // Genuinely ambiguous, unresolved multi-candidate rows always need an
             // explicit SKU pick — never let a blanket resolution_action (e.g. from
             // "Approve All") wave one through without a real matched_sku.
-            if (r.match_status === 'MISMATCH_MULTIPLE_VARIANT' && !r.matched_sku) return true;
+            if (r.match_status === 'MISMATCH_MULTIPLE_VARIANT' && !r.matched_sku) {
+                acc.push({ row: r, reason: 'Multiple possible SKU matches — pick the correct one' });
+                return acc;
+            }
 
-            if (r.resolution_action === 'REQUEST_NEW_SKU') return false;
-            if (r.resolution_action === 'Skip Item') return false;
-            if (r.resolution_action === 'ACCEPT') return false;
-            if (r.resolution_action === 'OVERRIDE') return false;
-            if (r.match_status === 'MATCH' || r.match_status === 'MATCH_MULTIPLE_VARIANT') return false;
-            if (r.match_status === 'UNMATCHED' && !r.matched_sku && !r.sku) return true;
+            if (r.resolution_action === 'REQUEST_NEW_SKU') return acc;
+            if (r.resolution_action === 'Skip Item') return acc;
+            if (r.resolution_action === 'ACCEPT') return acc;
+            if (r.resolution_action === 'OVERRIDE') return acc;
+            if (r.match_status === 'MATCH' || r.match_status === 'MATCH_MULTIPLE_VARIANT') return acc;
+            if (r.match_status === 'UNMATCHED' && !r.matched_sku && !r.sku) {
+                acc.push({ row: r, reason: 'No SKU match — select or create one' });
+                return acc;
+            }
             // matched_sku is pre-filled with a best-guess candidate even when mismatched —
             // only an explicit resolution_action (set by handleManualMatch/skip/etc.) counts as resolved.
-            if ((r.match_status === 'MISMATCH' || r.match_status === 'MISMATCH_MULTIPLE_VARIANT') && !r.resolution_action) return true;
-            return false;
-        });
-        return unresolved.length === 0;
-    }, [validationRows, backendError]);
+            if ((r.match_status === 'MISMATCH' || r.match_status === 'MISMATCH_MULTIPLE_VARIANT') && !r.resolution_action) {
+                acc.push({ row: r, reason: 'SKU match not yet accepted' });
+                return acc;
+            }
+            return acc;
+        }, []);
+    }, [validationRows]);
+
+    const canProceedToAllocation = useMemo(() => {
+        if (validationRows.length === 0 || backendError) return false;
+        return blockingRows.length === 0;
+    }, [validationRows, backendError, blockingRows]);
 
     const vendorDocConfig = useMemo(() => getVendorDocConfig(vendorCode), [vendorCode]);
 
@@ -1805,6 +1826,17 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
       if (!validateCreation()) {
         return;
       }
+      // Belt-and-suspenders against a rapid double-click: `disabled` only takes
+      // effect after React re-renders, which isn't fast enough to stop two clicks
+      // in the same tick. This ref check is synchronous.
+      if (isFinalizingRef.current) return;
+      isFinalizingRef.current = true;
+
+      if (!shipmentIdempotencyKeyRef.current) {
+        shipmentIdempotencyKeyRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      }
 
       setIsCreatingShipment(true);
 
@@ -1845,7 +1877,8 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
           carrier: carrier,
           expected_delivery: expectedDelivery,
           validated_rows: validationRows,
-          allocations: allocationData
+          allocations: allocationData,
+          idempotency_key: shipmentIdempotencyKeyRef.current
         };
 
         setLastRequest(payload);
@@ -1886,6 +1919,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         setBackendError(error.message || 'Failed to create shipment');
       } finally {
         setIsCreatingShipment(false);
+        isFinalizingRef.current = false;
       }
     };
 
@@ -3503,6 +3537,50 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                         </div>
                         <Badge variant="info" className="text-[10px]">Step 3 of 5</Badge>
                     </div>
+
+                    {/* Error Banner */}
+                    {backendError && (
+                        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 flex items-start gap-3">
+                            <ExclamationTriangleIcon className="w-5 h-5 mt-0.5 text-red-500 shrink-0" />
+                            <div className="flex-1">
+                                <h4 className="font-bold text-red-500">Allocation Failed</h4>
+                                <p className="text-sm text-slate-600 dark:text-slate-300">{backendError}</p>
+                            </div>
+                            <button
+                                onClick={() => setBackendError(null)}
+                                className="text-xs font-bold text-red-500 hover:text-red-600 shrink-0"
+                            >
+                                Dismiss &amp; Retry
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Blocked banner — Proceed to Allocation is gated on Step 2's SKU-match
+                        resolution, not on anything in this screen, so a disabled button here
+                        needs to explain itself or it's a silent dead end. */}
+                    {!backendError && blockingRows.length > 0 && (
+                        <div className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
+                            <ExclamationTriangleIcon className="w-5 h-5 mt-0.5 text-amber-500 shrink-0" />
+                            <div className="flex-1">
+                                <h4 className="font-bold text-amber-600 dark:text-amber-400">
+                                    {blockingRows.length} item{blockingRows.length > 1 ? 's' : ''} still need SKU confirmation in Validate Items
+                                </h4>
+                                <ul className="mt-1 space-y-0.5">
+                                    {blockingRows.slice(0, 5).map(({ row, reason }) => (
+                                        <li key={row.line_id} className="text-sm text-slate-600 dark:text-slate-300">
+                                            <span className="font-semibold">{row.item_name || row.factory_code || row.line_id}</span> — {reason}
+                                        </li>
+                                    ))}
+                                    {blockingRows.length > 5 && (
+                                        <li className="text-sm text-slate-500 dark:text-slate-400">…and {blockingRows.length - 5} more</li>
+                                    )}
+                                </ul>
+                            </div>
+                            <Button variant="secondary" onClick={() => setActiveTab('Validate Items')} className="text-xs shrink-0">
+                                Fix in Validate Items
+                            </Button>
+                        </div>
+                    )}
 
                     {/* Summary counters — one per Step 3 flag category */}
                     {validationRows.length > 0 && (() => {
