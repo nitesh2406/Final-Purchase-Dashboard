@@ -80,6 +80,10 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   const [debugMode, setDebugMode] = useState(false);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterChip>('All');
+  // Bypasses the ship-qty-vs-available-stock cap/validation — for cases where
+  // the user knowingly wants to ship more than the system currently sees as
+  // available (e.g. inbound stock not yet reflected).
+  const [bypassStockValidation, setBypassStockValidation] = useState(false);
   
   // ── Sort state ──────────────────────────────────────────────────────────────
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'channelSKU', direction: 'asc' });
@@ -151,7 +155,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   // ── Helpers ──────────────────────────────────────────────────────────────────
   const getShipQty = (item: AmazonChannelSku) => shipQtyOverrides[item.channelSKU] ?? item.allocation.shippingPlanQty;
   const updateShipQty = (channelSku: string, qty: number, availableQty?: number) => {
-    const capped = availableQty !== undefined ? Math.min(qty, availableQty) : qty;
+    const capped = (availableQty !== undefined && !bypassStockValidation) ? Math.min(qty, availableQty) : qty;
     setShipQtyOverrides(prev => ({ ...prev, [channelSku]: Math.max(0, capped) }));
   };
   
@@ -274,21 +278,24 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
       return;
     }
 
-    // Validate available stock per master SKU for confirmed items
-    const masterTotals: Record<string, { assigned: number; available: number }> = {};
-    for (const item of itemsToConfirm) {
-        if (!masterTotals[item.masterSKU]) {
-            masterTotals[item.masterSKU] = { assigned: 0, available: item.warehouseCheck.availableQty };
-        }
-        //masterTotals[item.masterSKU].assigned += item.allocation.shippingPlanQty;
-        masterTotals[item.masterSKU].assigned += item.allocation.finalAllocatedQty;
-    }
+    // Validate available stock per master SKU for confirmed items — skipped
+    // entirely when the user has enabled the stock-validation bypass toggle.
+    if (!bypassStockValidation) {
+      const masterTotals: Record<string, { assigned: number; available: number }> = {};
+      for (const item of itemsToConfirm) {
+          if (!masterTotals[item.masterSKU]) {
+              masterTotals[item.masterSKU] = { assigned: 0, available: item.warehouseCheck.availableQty };
+          }
+          //masterTotals[item.masterSKU].assigned += item.allocation.shippingPlanQty;
+          masterTotals[item.masterSKU].assigned += item.allocation.finalAllocatedQty;
+      }
 
-    for (const [masterSKU, totals] of Object.entries(masterTotals)) {
-        if (totals.assigned > totals.available) {
-            alert(`Cannot confirm: ${masterSKU} total allocation (${totals.assigned}) exceeds available stock (${totals.available}).`);
-            return;
-        }
+      for (const [masterSKU, totals] of Object.entries(masterTotals)) {
+          if (totals.assigned > totals.available) {
+              alert(`Cannot confirm: ${masterSKU} total allocation (${totals.assigned}) exceeds available stock (${totals.available}).`);
+              return;
+          }
+      }
     }
 
     setIsConfirming(true);
@@ -481,6 +488,30 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
             {chip}
           </button>
         ))}
+
+        {/* Bypass ship-qty-vs-available-stock validation */}
+        <button
+          onClick={() => setBypassStockValidation(v => !v)}
+          title="When on, Ship Qty is no longer capped at available warehouse stock, and Confirm Plan skips the over-allocation check."
+          className={`ml-auto flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
+            bypassStockValidation
+              ? 'bg-red-500/20 text-red-400 border-red-500/40 font-medium'
+              : 'text-gray-500 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+          }`}
+        >
+          <span
+            className={`inline-block w-7 h-3.5 rounded-full relative transition-colors ${
+              bypassStockValidation ? 'bg-red-500' : 'bg-gray-300 dark:bg-gray-600'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-transform ${
+                bypassStockValidation ? 'translate-x-3.5' : 'translate-x-0.5'
+              }`}
+            />
+          </span>
+          Advance Shipment
+        </button>
       </div>
 
       {/* ── TABLE ───────────────────────────────────────────────────────────── */}
