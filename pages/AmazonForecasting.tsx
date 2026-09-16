@@ -489,33 +489,43 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
           </button>
         ))}
 
-        {/* Bypass ship-qty-vs-available-stock validation */}
+        {/* Advance Shipment — bypasses ship-qty-vs-available-stock validation.
+            Set off by a divider (not styled as another filter chip) since this
+            is a mode, not a filter, and it changes behavior across the table. */}
+        <div className="ml-auto h-5 w-px bg-gray-300 dark:bg-gray-600 flex-shrink-0" />
         <button
           onClick={() => setBypassStockValidation(v => !v)}
           title="When on, Ship Qty is no longer capped at available warehouse stock, and Confirm Plan skips the over-allocation check."
-          className={`ml-auto flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
+          className={`flex items-center gap-1.5 text-xs font-medium flex-shrink-0 transition-colors ${
             bypassStockValidation
-              ? 'bg-red-500/20 text-red-400 border-red-500/40 font-medium'
-              : 'text-gray-500 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+              ? 'text-red-500 dark:text-red-400'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
           }`}
         >
+          <span className={`leading-none transition-opacity ${bypassStockValidation ? 'opacity-100' : 'opacity-30'}`}>⚠</span>
+          Advance Shipment
           <span
-            className={`inline-block w-7 h-3.5 rounded-full relative transition-colors ${
+            className={`relative inline-block w-7 h-4 rounded-full flex-shrink-0 transition-colors ${
               bypassStockValidation ? 'bg-red-500' : 'bg-gray-300 dark:bg-gray-600'
             }`}
           >
             <span
-              className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-transform ${
-                bypassStockValidation ? 'translate-x-3.5' : 'translate-x-0.5'
+              className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
+                bypassStockValidation ? 'translate-x-3' : 'translate-x-0'
               }`}
             />
           </span>
-          Advance Shipment
         </button>
       </div>
 
       {/* ── TABLE ───────────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
+
+        {bypassStockValidation && (
+          <div className="flex items-center gap-2 px-4 py-1.5 text-xs font-medium text-red-500 dark:text-red-400 bg-red-500/10 border-b border-red-500/20 flex-shrink-0">
+            ⚠ Advance Shipment is on — Ship Qty can exceed available stock
+          </div>
+        )}
 
         {/* Loading */}
         {isLoading ? (
