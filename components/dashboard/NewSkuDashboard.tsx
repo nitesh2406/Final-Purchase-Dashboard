@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { API_ACTIONS } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { PlusIcon, MagnifyingGlassIcon, ChevronRightIcon, ExclamationTriangleIcon, CheckBadgeIcon, ChevronDownIcon, ArrowPathIcon, XMarkIcon } from '../icons/Icons';
@@ -171,12 +172,7 @@ export const NewSkuDashboard: React.FC<{
     setIsLoading(true);
     setFetchError(null);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: API_ACTIONS.GET_NEW_SKU_REQUESTS })
-      });
-      const result = await response.json();
+      const result = await callGas(API_ACTIONS.GET_NEW_SKU_REQUESTS, {}, 2);
       if (result.success) {
         setData(result.data || []);
         onDataLoaded(result.data || []);
@@ -263,12 +259,7 @@ export const NewSkuDashboard: React.FC<{
   // *_done/status derivation client-side after a retry or mark-complete call.
   const refreshRow = async (requestId: string) => {
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID, request_id: requestId })
-      });
-      const result = await response.json();
+      const result = await callGas(API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID, { request_id: requestId }, 2);
       if (result.success && result.data) {
         setData(prev => {
           const next = prev.map(row => row.request_id === requestId ? { ...row, ...result.data } : row);
@@ -296,12 +287,10 @@ export const NewSkuDashboard: React.FC<{
     setRowBusy(prev => ({ ...prev, [r.request_id]: nextStep.label }));
     setRowError(prev => ({ ...prev, [r.request_id]: null }));
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: nextStep.action, request_id: r.request_id })
-      });
-      const result = await response.json();
+      // Advances an external system (EasyEcom/Zoho/Shopify SKU creation) —
+      // never auto-retried: a garbled response doesn't tell us whether the
+      // create already happened, and retrying could double-create it.
+      const result = await callGas(nextStep.action, { request_id: r.request_id });
       if (result.success) {
         await refreshRow(r.request_id);
         setOpenMenuId(null);
@@ -320,12 +309,7 @@ export const NewSkuDashboard: React.FC<{
     setRowBusy(prev => ({ ...prev, [r.request_id]: 'Mark Complete' }));
     setRowError(prev => ({ ...prev, [r.request_id]: null }));
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: API_ACTIONS.MARK_SKU_COMPLETE, request_id: r.request_id, completed_by: 'user' })
-      });
-      const result = await response.json();
+      const result = await callGas(API_ACTIONS.MARK_SKU_COMPLETE, { request_id: r.request_id, completed_by: 'user' });
       if (result.success) {
         await refreshRow(r.request_id);
         setOpenMenuId(null);

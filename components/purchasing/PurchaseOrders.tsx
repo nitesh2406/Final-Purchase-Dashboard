@@ -7,7 +7,8 @@ import {
     InformationCircleIcon, ArrowLeftIcon, FunnelIcon,
     LinkIcon, EnvelopeIcon, ArrowPathIcon, ExclamationTriangleIcon
 } from '../icons/Icons';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { API_ACTIONS } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { ViewType } from '../../types';
 import { useQueryParam } from '../../hooks/useQueryParam';
 
@@ -191,28 +192,9 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
         }
         setLoading(true);
         setError(null);
-        const payload = {
-            action: API_ACTIONS.GET_PURCHASE_ORDERS
-        };
-
-        const postToBackend = async () => {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-            });
-            return response.json();
-        };
 
         try {
-            let result;
-            try {
-                result = await postToBackend();
-            } catch (parseErr) {
-                // Apps Script occasionally returns a transient non-JSON error page under load; retry once.
-                await new Promise(resolve => setTimeout(resolve, 800));
-                result = await postToBackend();
-            }
+            const result = await callGas(API_ACTIONS.GET_PURCHASE_ORDERS, {}, 2);
             if (!result || result.success !== true) {
                 throw new Error(result?.message || "Failed to load POs");
             }
@@ -238,15 +220,9 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
         setDetailsError(null);
 
         const action = API_ACTIONS.GET_PURCHASE_ORDER_DETAILS || "get_purchase_order_details";
-        const payload = { action, po_id: poId };
 
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: "POST",
-                headers: { "Content-Type": "text/plain;charset=utf-8" },
-                body: JSON.stringify(payload),
-            });
-            const result = await response.json();
+            const result = await callGas(action, { po_id: poId }, 2);
 
             if (!result || result.success !== true) {
                 throw new Error(result?.message || "Failed to load PO details");
@@ -310,12 +286,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
         setClosingPo(true);
         setClosePoError(null);
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: API_ACTIONS.CLOSE_PO, po_id: poId })
-            });
-            const result = await response.json();
+            const result = await callGas(API_ACTIONS.CLOSE_PO, { po_id: poId });
             if (!result || result.success !== true) {
                 throw new Error(result?.message || 'Failed to close PO');
             }
@@ -749,12 +720,7 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
         setLoadingPending(true);
         setError(null);
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: API_ACTIONS.GET_PENDING_LINES })
-            });
-            const result = await response.json();
+            const result = await callGas(API_ACTIONS.GET_PENDING_LINES, {}, 2);
             if (result && result.success === true) {
                 const data = result.data || [];
                 setPendingLines(data);
@@ -1026,15 +992,7 @@ const SKUHistoryView: React.FC<SKUHistoryViewProps> = ({ onPoClick }) => {
         setError(null);
         setSkuSearched('');
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
-                    action: API_ACTIONS.GET_SKU_HISTORY,
-                    sku: skuQuery.trim()
-                })
-            });
-            const result = await response.json();
+            const result = await callGas(API_ACTIONS.GET_SKU_HISTORY, { sku: skuQuery.trim() }, 2);
             if (result && result.success === true) {
                 setSkuResults(result.data || []);
                 setSkuSearched(skuQuery.trim());

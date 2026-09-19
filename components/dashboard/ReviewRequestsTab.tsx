@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { API_ACTIONS } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import {
@@ -101,12 +102,7 @@ export const ReviewRequestsTab: React.FC = () => {
     setIsLoading(true);
     setFetchError(null);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: API_ACTIONS.GET_PENDING_SKU_UPDATE_REQUESTS, status: 'ALL' })
-      });
-      const result = await response.json();
+      const result = await callGas(API_ACTIONS.GET_PENDING_SKU_UPDATE_REQUESTS, { status: 'ALL' }, 2);
       if (result.success) {
         const rows = result.data || [];
         reviewRequestsCache = rows;
@@ -130,17 +126,12 @@ export const ReviewRequestsTab: React.FC = () => {
     if (decision === 'APPROVE' && !window.confirm('Approving pushes this change live to EasyEcom. Continue?')) return;
     setResolvingId(requestId);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: API_ACTIONS.RESOLVE_SKU_UPDATE_REQUEST,
-          request_id: requestId,
-          decision,
-          resolved_by: 'user',
-        })
+      // Approve pushes the change live to EasyEcom — never auto-retried.
+      const result = await callGas(API_ACTIONS.RESOLVE_SKU_UPDATE_REQUEST, {
+        request_id: requestId,
+        decision,
+        resolved_by: 'user',
       });
-      const result = await response.json();
       if (result.success) {
         setResultNote(result.data);
         // Reflect the resolution locally rather than refetching — the row

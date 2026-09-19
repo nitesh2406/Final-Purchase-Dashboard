@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { API_ACTIONS } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { ReviewRequestsTab } from './ReviewRequestsTab';
@@ -129,12 +130,7 @@ export const UpdateSkuScreen: React.FC<{
   useEffect(() => {
     (async () => {
       try {
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: API_ACTIONS.GET_PRODUCT_IDENTIFIERS })
-        });
-        const result = await response.json();
+        const result = await callGas(API_ACTIONS.GET_PRODUCT_IDENTIFIERS, {}, 2);
         if (result.success) setProductIdentifiers(result.data || []);
       } catch (err) {
         console.error('getProductIdentifiers error:', err);
@@ -173,12 +169,7 @@ export const UpdateSkuScreen: React.FC<{
     setSearchError(null);
     setResults(null);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: API_ACTIONS.SEARCH_SKU_FOR_UPDATE, query: q.trim(), sample_only: sampleOnlyOverride ?? sampleOnly })
-      });
-      const result = await response.json();
+      const result = await callGas(API_ACTIONS.SEARCH_SKU_FOR_UPDATE, { query: q.trim(), sample_only: sampleOnlyOverride ?? sampleOnly }, 2);
       if (result.success) {
         setResults(result.data);
       } else {
@@ -203,12 +194,7 @@ export const UpdateSkuScreen: React.FC<{
   const loadRecord = async (requestId: string) => {
     setLoadingRecord(true);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID, request_id: requestId })
-      });
-      const result = await response.json();
+      const result = await callGas(API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID, { request_id: requestId }, 2);
       if (result.success) {
         const rec: SkuRecord = {
           request_id:            result.data.request_id,
@@ -270,12 +256,9 @@ export const UpdateSkuScreen: React.FC<{
     // Unlinked — provision a backing row first, then load it.
     setLoadingRecord(true);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: API_ACTIONS.PROVISION_SKU_FOR_UPDATE, sku: r.suggested_sku })
-      });
-      const result = await response.json();
+      // Provisions a new backing row if one doesn't exist yet — never
+      // auto-retried, to avoid provisioning a second one on a garbled response.
+      const result = await callGas(API_ACTIONS.PROVISION_SKU_FOR_UPDATE, { sku: r.suggested_sku });
       if (result.success) {
         await loadRecord(result.data.request_id);
       } else {
@@ -306,17 +289,11 @@ export const UpdateSkuScreen: React.FC<{
     setSaving(true);
     setSaveSummary(null);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:     API_ACTIONS.UPDATE_SKU_FIELDS,
-          request_id: form.request_id,
-          fields:     changed,
-          updated_by: 'user',
-        })
+      const result = await callGas(API_ACTIONS.UPDATE_SKU_FIELDS, {
+        request_id: form.request_id,
+        fields:     changed,
+        updated_by: 'user',
       });
-      const result = await response.json();
       if (result.success) {
         setOriginal(form);
         setSaveSummary(result.data);

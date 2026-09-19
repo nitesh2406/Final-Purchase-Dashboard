@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { AmazonChannelSku } from '../types/amazon';
 import { AmazonSkuModal } from '../components/amazon/AmazonSkuModal';
-import { APPS_SCRIPT_URL } from '../constants';
+import { callGas } from '../services/gasApi';
 
 // ─── Module-level cache (persists across tab switches) ───────────────────────
 // Declared outside component so it survives unmount/remount
@@ -120,13 +120,10 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'get_amazon_forecast' }),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
+      // Not auto-retried: this is the most expensive endpoint in the app
+      // (full live recompute, see the perf plan) — retrying a real timeout
+      // would just make the user wait 2-3x longer for the same failure.
+      const data = await callGas('get_amazon_forecast', {});
       if (data.status === 'error') throw new Error(data.message);
       if (!Array.isArray(data.data)) throw new Error('Invalid response format');
 
@@ -302,12 +299,8 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
     setConfirmResult(null);
 
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'confirm_amazon_shipment_plan', items: itemsToConfirm }),
-      });
-      const result = await response.json();
+      // Creates a PO — never auto-retried.
+      const result = await callGas('confirm_amazon_shipment_plan', { items: itemsToConfirm });
       if (result.status === 'success') {
         setConfirmResult({ success: true, message: result.message, poNumber: result.poNumber });
         setTimeout(() => setConfirmResult(null), 5000);

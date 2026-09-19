@@ -47,9 +47,25 @@ import { SkeletonDashboard } from './components/feedback/SkeletonDashboard.tsx';
 import { SyncQueueManager, QueueItem } from './services/syncQueue.ts';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { viewToPath, matchPathToView } from './routes.ts';
+import { callGas } from './services/gasApi.ts';
 
 const TEST_LOGIN_BYPASS = import.meta.env.VITE_TEST_LOGIN_BYPASS === 'true';
 const DEV_USER = TEST_LOGIN_BYPASS ? { name: 'Dev User', email: 'dev@local', role: 'ADMIN', loggedInAt: Date.now() } : null;
+
+// Shared by fetchAllData/fetchFinanceData below — both used to hand-roll an
+// identical inline copy of this. Never throws (every caller here reads a
+// sentinel `{status: 'error', ...}` on failure rather than catching), and
+// retries transient GAS failures (timeout/quota HTML pages, dropped
+// connections) twice since every call site is a plain read.
+async function fetchDirectFromGas(payload: { action: string;[key: string]: any }): Promise<any> {
+    const { action, ...rest } = payload;
+    try {
+        return await callGas(action, rest, 2);
+    } catch (err: any) {
+        console.warn(`fetchDirectFromGas failed for ${action}:`, err.message);
+        return { status: 'error', message: err.message };
+    }
+}
 
 const App: React.FC = () => {
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -376,32 +392,7 @@ const App: React.FC = () => {
         setSyncSuccess(false);
         setSyncError(null);
         try {
-            const fetchDirect = async (payload: any) => {
-                try {
-                    const res = await fetch(APPS_SCRIPT_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    const rawText = await res.text();
-
-                    if (!res.ok) {
-                        console.warn(`Fetch error status ${res.status}`);
-                        return { status: 'error', message: `Fetch error status ${res.status}` };
-                    }
-
-                    try {
-                        return JSON.parse(rawText);
-                    } catch (e) {
-                        console.warn("Failed to parse response as JSON:", rawText);
-                        return { status: 'error', message: 'Response was not JSON' };
-                    }
-                } catch (err: any) {
-                    console.warn(`fetchDirect failed for ${payload.action}:`, err.message);
-                    return { status: 'error', message: err.message };
-                }
-            };
+            const fetchDirect = fetchDirectFromGas;
 
             const draftsPromise = fetchDirect({ action: API_ACTIONS.GET_DRAFTS });
 
@@ -468,17 +459,7 @@ const App: React.FC = () => {
         if (financeDataLoaded.current && !force) return;
         financeDataLoaded.current = true; // prevent double-fire
         try {
-            const fetchDirect = async (payload: any) => {
-                try {
-                    const res = await fetch(APPS_SCRIPT_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify(payload)
-                    });
-                    const rawText = await res.text();
-                    try { return JSON.parse(rawText); } catch { return { status: 'error' }; }
-                } catch { return { status: 'error' }; }
-            };
+            const fetchDirect = fetchDirectFromGas;
 
             const [finInvoices, rawShipmentsRes, finPayments, finSettlements, finVendorLedger, masters] =
                 await Promise.all([
@@ -577,12 +558,7 @@ const App: React.FC = () => {
             }
         } catch {}
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'get_forecasting_config' })
-            });
-            const data = await response.json();
+            const data = await callGas('get_forecasting_config', {}, 2);
             if (data?.success && data?.config) {
                 setForecastingConfig(data.config);
                 setConfigLastLoaded(new Date());
@@ -602,12 +578,7 @@ const App: React.FC = () => {
             }
         } catch {}
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: API_ACTIONS.GET_PRICING_CONFIG })
-            });
-            const data = await response.json();
+            const data = await callGas(API_ACTIONS.GET_PRICING_CONFIG, {}, 2);
             if (data?.success && data?.data) {
                 setPricingConfig(data.data);
                 setPricingConfigLastLoaded(new Date());
@@ -627,12 +598,7 @@ const App: React.FC = () => {
             }
         } catch {}
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'get_amazon_config' })
-            });
-            const data = await response.json();
+            const data = await callGas('get_amazon_config', {}, 2);
             if (data?.status === 'success' && data?.config) {
                 setAmazonConfig(data.config);
                 setAmazonConfigLastLoaded(new Date());

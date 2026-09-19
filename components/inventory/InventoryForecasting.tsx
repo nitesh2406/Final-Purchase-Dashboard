@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { ArrowsUpDownIcon, ArrowPathIcon, ShipIcon, AirplaneIcon, ClockIcon, PencilIcon, ExclamationTriangleIcon, ArrowPathIcon as RetryIcon, CheckBadgeIcon, XMarkIcon } from '../icons/Icons';
 import { SkuDetailModal } from './SkuDetailModal';
 import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { ViewType } from '../../types';
 import { useQueryParam } from '../../hooks/useQueryParam';
 
@@ -216,11 +217,16 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
 
         try {
             const response = await fetch(url);
-
-            if (!response.ok) {
-                throw new Error(`Network response was not ok, status: ${response.status}`);
+            const rawText = await response.text();
+            let data: any;
+            try {
+                data = JSON.parse(rawText);
+            } catch {
+                throw new Error('The server took too long to respond or is temporarily overloaded. Please try again in a moment.');
             }
-            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data?.error || data?.message || `Network response was not ok, status: ${response.status}`);
+            }
             addDebugLog('res', data);
 
             if (data.error) {
@@ -491,17 +497,9 @@ export const InventoryForecasting: FC<InventoryForecastingProps> = ({
         addDebugLog('req', { method: 'POST', payload });
 
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const result = await response.json();
+            // Creates a draft order — never auto-retried.
+            const { action: draftAction, ...draftRest } = payload;
+            const result = await callGas(draftAction, draftRest);
             addDebugLog('res', result);
             if (result.draftId) {
                 setToast({ message: `Draft ${result.draftId} created successfully.`, draftId: result.draftId, type: 'success' });

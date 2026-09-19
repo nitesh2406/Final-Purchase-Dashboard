@@ -32,7 +32,8 @@ import {
     LockClosedIcon,
     EyeIcon
 } from '../icons/Icons';
-import { APPS_SCRIPT_URL, API_ACTIONS, DEV_MODE_SKIP_SHIPMENT_WRITE } from '../../constants';
+import { API_ACTIONS, DEV_MODE_SKIP_SHIPMENT_WRITE } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { ViewType } from '../../types';
 import { VendorMaster, Sku } from '../../types';
 
@@ -987,13 +988,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
         setLastRequest(payload);
 
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload)
-        });
-        
-        const data = await response.json();
+        const data = await callGas(payload.action, payload, 2);
         setLastResponse(data);
 
         if (data.status === 'success') {
@@ -1016,12 +1011,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
       setBatchShipmentsLoading(true);
       setBatchShipmentsError(null);
       try {
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: 'get_vendor_shipments' })
-        });
-        const data = await response.json();
+        const data = await callGas('get_vendor_shipments', {}, 2);
 
         if (data.status === 'success' && Array.isArray(data.records)) {
           const rows = data.records.filter((r: any) => String(r.batch_id || '').trim() === batchId);
@@ -1051,13 +1041,8 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     useEffect(() => {
         const loadProductMaster = async () => {
             try {
-                const response = await fetch(APPS_SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: 'get_product_master' })
-                });
-                const data = await response.json();
-                
+                const data = await callGas('get_product_master', {}, 2);
+
                 if (data.status === 'success' && data.products) {
                     setProductMasterList(data.products.map((p: any) => ({
                         id: p.sku || p.id,
@@ -1371,12 +1356,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             const payload = { action: API_ACTIONS.UPLOAD_SHIPMENT_DOCS, vendorCode, shipmentDate, shippingMode, files: allFiles };
             setLastRequest(payload);
 
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-            });
-            const result = await response.json();
+            // Not auto-retried: uploads/parses file content server-side, not a
+            // pure read.
+            const result = await callGas(payload.action, payload);
             setLastResponse(result);
 
             if (result.status === 'success') {
@@ -1484,13 +1466,8 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             };
             setLastRequest(payload);
 
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-            });
-
-            const data = await response.json();
+            // Reserves quantities against open POs server-side — not auto-retried.
+            const data = await callGas(payload.action, payload);
             setLastResponse(data);
 
             if (data.status === 'success') {
@@ -1522,16 +1499,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             allocations: allocationData
           };
           setLastRequest(payload);
-          
-          const response = await fetch(APPS_SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify(payload)
-          });
-          
-          const data = await response.json();
+
+          const data = await callGas(payload.action, payload, 2);
           setLastResponse(data);
-          
+
           if (data.status === 'success') {
             setReviewData(data);
             setCanProceedToCreation(data.can_proceed);
@@ -1570,20 +1541,15 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             vendor_code: vendorCode,
             validated_rows: rowsToAllocate
           };
-          
-          const response = await fetch(APPS_SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify(payload)
-          });
-          
-          const data = await response.json();
-          
+
+          // Reserves quantities against open POs server-side — not auto-retried.
+          const data = await callGas(payload.action, payload);
+
           if (data.status === 'success') {
             // Update allocation data
             setAllocationData(data.allocations);
             setAllocationSummary(data.summary);
-            
+
             // Re-fetch review data with new allocations
             const reviewPayload = {
               action: 'get_review_data',
@@ -1591,15 +1557,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
               validated_rows: validationRows,
               allocations: data.allocations
             };
-            
-            const reviewResponse = await fetch(APPS_SCRIPT_URL, {
-              method: 'POST',
-              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-              body: JSON.stringify(reviewPayload)
-            });
-            
-            const refreshedReviewData = await reviewResponse.json();
-            
+
+            const refreshedReviewData = await callGas(reviewPayload.action, reviewPayload, 2);
+
             if (refreshedReviewData.status === 'success') {
               setReviewData(refreshedReviewData);
               setCanProceedToCreation(refreshedReviewData.can_proceed);
@@ -1657,13 +1617,8 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
           lines
         };
 
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload)
-        });
-
-        const data = await response.json();
+        // Creates Purchase Orders — never auto-retried.
+        const data = await callGas(payload.action, payload);
 
         if (data.status === 'success') {
           setPoCreationResults(prev => {
@@ -1766,15 +1721,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
           // Skipped entirely in dev mode, which must not write anything to Sheets.
           if (DEV_MODE_SKIP_SHIPMENT_WRITE) {
             console.log('[DEV MODE] Skipping update_shipment_drive_docs Sheets write.');
-          } else fetch(APPS_SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({
-              action: API_ACTIONS.UPDATE_SHIPMENT_DRIVE_DOCS,
-              shipmentId,
-              driveFolderId: data.folder.folderId,
-              driveFolderUrl: data.folder.folderUrl
-            })
+          } else callGas(API_ACTIONS.UPDATE_SHIPMENT_DRIVE_DOCS, {
+            shipmentId,
+            driveFolderId: data.folder.folderId,
+            driveFolderUrl: data.folder.folderUrl
           }).catch(err => console.error('Failed to record Drive folder metadata:', err));
         } else {
           const message = data.error || 'Failed to upload shipment documents to Drive';
@@ -1905,13 +1855,11 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
         setLastRequest(payload);
 
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload)
-        });
-
-        const data = await response.json();
+        // Not auto-retried here even though the backend has an idempotency
+        // guard (see PO+Shipment Codes.js) — that protects against a manual
+        // resend, but an automatic retry from inside this helper on a
+        // non-JSON response is a different risk profile best left explicit.
+        const data = await callGas(payload.action, payload);
         setLastResponse(data);
 
         if (data.status === 'success') {

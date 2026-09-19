@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { API_ACTIONS } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import {
@@ -110,18 +111,12 @@ export const AuditLogScreen: React.FC<{
     setIsLoading(true);
     setFetchError(null);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: API_ACTIONS.GET_AUDIT_LOG,
-          channel: channel === 'ALL' ? undefined : channel,
-          date_from: dateFrom || undefined,
-          date_to: dateTo || undefined,
-          search: search.trim() || undefined,
-        })
-      });
-      const result = await response.json();
+      const result = await callGas(API_ACTIONS.GET_AUDIT_LOG, {
+        channel: channel === 'ALL' ? undefined : channel,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+        search: search.trim() || undefined,
+      }, 2);
       if (result.success) {
         setRows(result.data || []);
       } else {

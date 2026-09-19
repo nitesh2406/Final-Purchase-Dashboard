@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { API_ACTIONS } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { MarginGauge } from './MarginGauge';
@@ -329,15 +330,7 @@ export const NewSkuDetail: React.FC<{
   const fetchSourceData = async () => {
     setIsLoadingSource(true);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID,
-          request_id: requestId
-        })
-      });
-      const result = await response.json();
+      const result = await callGas(API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID, { request_id: requestId }, 2);
       if (result.success) {
         setSourceData(result.data);
         // Pre-fill platform status from loaded data
@@ -433,12 +426,7 @@ export const NewSkuDetail: React.FC<{
     if (skuCategoriesCache) return;
     const fetchCategories = async () => {
       try {
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: 'get_sku_categories' })
-        });
-        const result = await response.json();
+        const result = await callGas('get_sku_categories', {}, 2);
         if (result.status === 'success' && Array.isArray(result.categories)) {
           const names = result.categories.map((c: { category: string }) => c.category).filter(Boolean).sort();
           if (names.length > 0) {
@@ -457,12 +445,7 @@ export const NewSkuDetail: React.FC<{
   useEffect(() => {
     const fetchPricingConfig = async () => {
       try {
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: API_ACTIONS.GET_PRICING_CONFIG })
-        });
-        const result = await response.json();
+        const result = await callGas(API_ACTIONS.GET_PRICING_CONFIG, {}, 2);
         if (result.success) {
           const d = result.data;
           setPricingConfig({
@@ -497,20 +480,10 @@ export const NewSkuDetail: React.FC<{
   useEffect(() => {
     const fetchOptions = async () => {
       try {
-        const bRes = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: API_ACTIONS.GET_BRANDS })
-        });
-        const bResult = await bRes.json();
+        const bResult = await callGas(API_ACTIONS.GET_BRANDS, {}, 2);
         if (bResult.success) setBrandOptions(bResult.data);
 
-        const vRes = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: API_ACTIONS.GET_VARIANTS })
-        });
-        const vResult = await vRes.json();
+        const vResult = await callGas(API_ACTIONS.GET_VARIANTS, {}, 2);
         if (vResult.success) setVariantOptions(vResult.data);
       } catch(err) {
         console.error('fetchOptions error:', err);
@@ -588,12 +561,7 @@ export const NewSkuDetail: React.FC<{
     if (cachedRequests && cachedRequests.length > 0) return;
     (async () => {
       try {
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: API_ACTIONS.GET_NEW_SKU_REQUESTS })
-        });
-        const result = await response.json();
+        const result = await callGas(API_ACTIONS.GET_NEW_SKU_REQUESTS, {}, 2);
         if (result.success) setFallbackRequests(result.data || []);
       } catch (err) {
         console.error('fallback getNewSkuRequests error:', err);
@@ -825,15 +793,7 @@ export const NewSkuDetail: React.FC<{
       setParentSkuLoading(true);
       setParentSkuError(null);
       try {
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({
-            action:     API_ACTIONS.GET_PARENT_SKU_DETAILS,
-            parent_sku: sku
-          })
-        });
-        const result = await response.json();
+        const result = await callGas(API_ACTIONS.GET_PARENT_SKU_DETAILS, { parent_sku: sku }, 2);
         if (result.success) {
           lastLookedUpSku.current = sku; // mark as looked up
           setParentSkuDetails(result.data);
@@ -866,15 +826,8 @@ export const NewSkuDetail: React.FC<{
     setSkuAssignSuccess(null);
     setSkuAssignError(null);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:   API_ACTIONS.GET_NEXT_AVAILABLE_SKU,
-          category: form.category
-        })
-      });
-      const result = await response.json();
+      // Not auto-retried: may advance a sequential SKU counter server-side.
+      const result = await callGas(API_ACTIONS.GET_NEXT_AVAILABLE_SKU, { category: form.category });
       if (result.success) {
         updateField('suggested_sku', result.data.suggested_sku);
         setSkuAssignSuccess(result.data.suggested_sku);
@@ -894,15 +847,7 @@ export const NewSkuDetail: React.FC<{
     if (!form.category) return;
     const fetchTags = async () => {
       try {
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({
-            action:   API_ACTIONS.GET_TAGS_BY_CATEGORY,
-            category: form.category
-          })
-        });
-        const result = await response.json();
+        const result = await callGas(API_ACTIONS.GET_TAGS_BY_CATEGORY, { category: form.category }, 2);
         if (result.success && result.data.tags) {
           // Only pre-fill if tags field is currently empty
           if (!form.relevant_tags) {
@@ -934,27 +879,21 @@ export const NewSkuDetail: React.FC<{
         return;
       }
 
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:     API_ACTIONS.SAVE_NEW_SKU_DRAFT,
-          request_id: requestId,
-          edited_by:  'user', // replace with user?.name if passed as prop
-          form: {
-            ...form,
-            // Combine factory code fields into single pipe-separated value
-            // for storage in factory_code column of New_SKU_Requests sheet
-            // Split happens at EE creation time (before | = AccountingSKU,
-            // after | = Article Number)
-            factory_code: [
-              form.factory_code_other,
-              form.article_number
-            ].filter(Boolean).join('|'),
-          },
-        })
+      const result = await callGas(API_ACTIONS.SAVE_NEW_SKU_DRAFT, {
+        request_id: requestId,
+        edited_by:  'user', // replace with user?.name if passed as prop
+        form: {
+          ...form,
+          // Combine factory code fields into single pipe-separated value
+          // for storage in factory_code column of New_SKU_Requests sheet
+          // Split happens at EE creation time (before | = AccountingSKU,
+          // after | = Article Number)
+          factory_code: [
+            form.factory_code_other,
+            form.article_number
+          ].filter(Boolean).join('|'),
+        },
       });
-      const result = await response.json();
       if (result.success) {
         setIsDirty(false);
         console.log('Draft saved:', result.data);
@@ -984,22 +923,16 @@ export const NewSkuDetail: React.FC<{
     if (!isDirty || isNew || loading.save) return;
     setLoading(l => ({ ...l, save: true }));
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: API_ACTIONS.SAVE_NEW_SKU_DRAFT,
-          request_id: requestId,
-          edited_by: 'user',
-          form: {
-            ...form,
-            factory_code: form.factory_code_other && form.article_number
-              ? `${form.factory_code_other}|${form.article_number}`
-              : form.factory_code_other || form.article_number || '',
-          }
-        })
+      const result = await callGas(API_ACTIONS.SAVE_NEW_SKU_DRAFT, {
+        request_id: requestId,
+        edited_by: 'user',
+        form: {
+          ...form,
+          factory_code: form.factory_code_other && form.article_number
+            ? `${form.factory_code_other}|${form.article_number}`
+            : form.factory_code_other || form.article_number || '',
+        }
       });
-      const result = await response.json();
       if (result.success) {
         setIsDirty(false);
         setSaveError(false);
@@ -1027,12 +960,7 @@ export const NewSkuDetail: React.FC<{
     const brand = val.trim();
     if (!brand || brandOptions.some(b => b.toLowerCase() === brand.toLowerCase())) return;
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: API_ACTIONS.ADD_BRAND, brand })
-      });
-      const result = await response.json();
+      const result = await callGas(API_ACTIONS.ADD_BRAND, { brand });
       if (result.success) {
         setBrandOptions(prev =>
           prev.some(b => b.toLowerCase() === brand.toLowerCase())
@@ -1074,30 +1002,24 @@ export const NewSkuDetail: React.FC<{
     }
     setAddingVariant(true);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: API_ACTIONS.CREATE_MANUAL_SKU,
-          created_by: 'user',
-          form: {
-            listing_name:  form.listing_name,
-            category:      form.category,
-            brand:         form.brand,
-            vendor_code:   form.vendor_code,
-            unit_price:    form.unit_price,
-            invoice_qty:   form.invoice_qty,
-            listing_type:  'Existing Variant',
-            parent_sku:    form.suggested_sku,  // current listing's EE SKU as parent
-            is_sample:     form.is_sample,      // inherit from parent listing, editable after
-            // leave blank — must be set per variant
-            variant:       '',
-            ean:           '',
-            factory_code:  '',
-          }
-        })
+      const result = await callGas(API_ACTIONS.CREATE_MANUAL_SKU, {
+        created_by: 'user',
+        form: {
+          listing_name:  form.listing_name,
+          category:      form.category,
+          brand:         form.brand,
+          vendor_code:   form.vendor_code,
+          unit_price:    form.unit_price,
+          invoice_qty:   form.invoice_qty,
+          listing_type:  'Existing Variant',
+          parent_sku:    form.suggested_sku,  // current listing's EE SKU as parent
+          is_sample:     form.is_sample,      // inherit from parent listing, editable after
+          // leave blank — must be set per variant
+          variant:       '',
+          ean:           '',
+          factory_code:  '',
+        }
       });
-      const result = await response.json();
       if (result.success) {
         const newTab: ListingTab = {
           requestId: result.data.request_id,
@@ -1123,22 +1045,16 @@ export const NewSkuDetail: React.FC<{
   // unreliable and could silently drop fields like suggested_sku/mrp.)
   const handleCreateManualFirst = async (): Promise<string | null> => {
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:     API_ACTIONS.CREATE_MANUAL_SKU,
-          created_by:  'user',
-          form: {
-            ...form,
-            factory_code: [
-              form.factory_code_other,
-              form.article_number
-            ].filter(Boolean).join('|'),
-          },
-        })
+      const result = await callGas(API_ACTIONS.CREATE_MANUAL_SKU, {
+        created_by:  'user',
+        form: {
+          ...form,
+          factory_code: [
+            form.factory_code_other,
+            form.article_number
+          ].filter(Boolean).join('|'),
+        },
       });
-      const result = await response.json();
       if (result.success) return result.data.request_id;
       alert('Failed to create request: ' + result.error);
       return null;
@@ -1152,15 +1068,10 @@ export const NewSkuDetail: React.FC<{
   const handleCreateEE = async (requestIdOverride?: string): Promise<boolean> => {
     setLoading(l => ({ ...l, ee: true }));
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:     API_ACTIONS.CREATE_SKU_ON_EE,
-          request_id: requestIdOverride || savedRequestId || requestId
-        })
+      // Creates the SKU on EasyEcom — never auto-retried.
+      const result = await callGas(API_ACTIONS.CREATE_SKU_ON_EE, {
+        request_id: requestIdOverride || savedRequestId || requestId
       });
-      const result = await response.json();
       if (result.success) {
         setPlatformStatus(p => ({ ...p, ee: true }));
         // Refresh source data to get ee_sku written back
@@ -1183,15 +1094,10 @@ export const NewSkuDetail: React.FC<{
   const handleCreateZoho = async (requestIdOverride?: string): Promise<boolean> => {
     setLoading(l => ({ ...l, zoho: true }));
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:     API_ACTIONS.CREATE_SKU_ON_ZOHO,
-          request_id: requestIdOverride || savedRequestId || requestId
-        })
+      // Creates the SKU on Zoho — never auto-retried.
+      const result = await callGas(API_ACTIONS.CREATE_SKU_ON_ZOHO, {
+        request_id: requestIdOverride || savedRequestId || requestId
       });
-      const result = await response.json();
       if (result.success) {
         setPlatformStatus(p => ({ ...p, zoho: true }));
         return true;
@@ -1215,15 +1121,9 @@ export const NewSkuDetail: React.FC<{
   const handleAttachExistingEE = async (): Promise<boolean> => {
     setLoading(l => ({ ...l, ee: true }));
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:     API_ACTIONS.ATTACH_EXISTING_EE_SKU,
-          request_id: savedRequestId || requestId
-        })
+      const result = await callGas(API_ACTIONS.ATTACH_EXISTING_EE_SKU, {
+        request_id: savedRequestId || requestId
       });
-      const result = await response.json();
       if (result.success) {
         setPlatformStatus(p => ({ ...p, ee: true }));
         setSourceData(d => ({ ...d, ee_sku: result.data.ee_sku }));
@@ -1246,15 +1146,9 @@ export const NewSkuDetail: React.FC<{
   const handleAttachExistingZoho = async (): Promise<boolean> => {
     setLoading(l => ({ ...l, zoho: true }));
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:     API_ACTIONS.ATTACH_EXISTING_ZOHO_ITEM,
-          request_id: savedRequestId || requestId
-        })
+      const result = await callGas(API_ACTIONS.ATTACH_EXISTING_ZOHO_ITEM, {
+        request_id: savedRequestId || requestId
       });
-      const result = await response.json();
       if (result.success) {
         setPlatformStatus(p => ({ ...p, zoho: true }));
         return true;
@@ -1275,17 +1169,12 @@ export const NewSkuDetail: React.FC<{
   const handleCreateShopify = async (requestIdOverride?: string): Promise<boolean> => {
     setLoading(l => ({ ...l, shopify: true }));
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:       API_ACTIONS.CREATE_SKU_ON_SHOPIFY,
-          request_id:   requestIdOverride || savedRequestId || requestId,
-          parent_sku:   form.parent_sku   || '',
-          listing_type: form.listing_type || '',
-        })
+      // Creates the SKU on Shopify — never auto-retried.
+      const result = await callGas(API_ACTIONS.CREATE_SKU_ON_SHOPIFY, {
+        request_id:   requestIdOverride || savedRequestId || requestId,
+        parent_sku:   form.parent_sku   || '',
+        listing_type: form.listing_type || '',
       });
-      const result = await response.json();
       if (result.success) {
         setPlatformStatus(p => ({ ...p, shopify: true }));
         if (result.data.shopify_listing_url) {
@@ -1312,16 +1201,10 @@ export const NewSkuDetail: React.FC<{
   const handleUpdateEEPO = async (requestIdOverride?: string): Promise<boolean> => {
     setLoading(l => ({ ...l, ee_po: true }));
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:     API_ACTIONS.UPDATE_EE_PO,
-          request_id: requestIdOverride || savedRequestId || requestId,
-          updated_by: 'user'
-        })
+      const result = await callGas(API_ACTIONS.UPDATE_EE_PO, {
+        request_id: requestIdOverride || savedRequestId || requestId,
+        updated_by: 'user'
       });
-      const result = await response.json();
       if (result.success) {
         setPlatformStatus(p => ({ ...p, ee_po: true }));
         return true;
@@ -1424,17 +1307,11 @@ export const NewSkuDetail: React.FC<{
   const handleConfirmReject = async (remark: string) => {
     if (anyPlatformDone) return; // defense-in-depth — button is disabled, but guard the call too
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:      API_ACTIONS.REJECT_SKU_REQUEST,
-          request_id:  requestId,
-          remark,
-          rejected_by: 'user'
-        })
+      const result = await callGas(API_ACTIONS.REJECT_SKU_REQUEST, {
+        request_id:  requestId,
+        remark,
+        rejected_by: 'user'
       });
-      const result = await response.json();
       if (result.success) {
         setSourceData(d => ({ ...d, status: 'REJECTED' }));
         onBack(); // navigate back to list
@@ -1450,16 +1327,10 @@ export const NewSkuDetail: React.FC<{
   const handleMarkComplete = async () => {
     setMarkCompleteLoading(true);
     try {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action:       API_ACTIONS.MARK_SKU_COMPLETE,
-          request_id:   requestId,
-          completed_by: 'user'
-        })
+      const result = await callGas(API_ACTIONS.MARK_SKU_COMPLETE, {
+        request_id:   requestId,
+        completed_by: 'user'
       });
-      const result = await response.json();
       if (result.success) {
         setSourceData(d => ({ ...d, status: 'CREATED' }));
         setShowMarkCompleteConfirm(false);

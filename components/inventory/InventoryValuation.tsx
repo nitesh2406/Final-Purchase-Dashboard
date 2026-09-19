@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { APPS_SCRIPT_URL } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { InventoryValuationRow } from '../../types';
 import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
 import {
@@ -110,13 +110,7 @@ export const InventoryValuation: React.FC = () => {
         setIsLoading(true);
         setError(null);
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'get_inventory_valuation' })
-            });
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            const result = await response.json();
+            const result = await callGas('get_inventory_valuation', {}, 2);
             if (result.status === 'success') {
                 const newRows: InventoryValuationRow[] = result.records || [];
                 setRawRows(newRows);

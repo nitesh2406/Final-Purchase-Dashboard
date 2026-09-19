@@ -12,7 +12,8 @@ import { DraftOrder, Sku, PurchaseOrder, VendorMaster } from '../../types';
 import { CustomizationModal } from './CustomizationModal';
 import { SelectiveSubmitModal } from './SelectiveSubmitModal';
 import { AddNewSKUModal } from './AddNewSKUModal';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { API_ACTIONS } from '../../constants';
+import { callGas } from '../../services/gasApi';
 
 interface LineItem {
     id: string;
@@ -135,15 +136,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
         const timer = setTimeout(async () => {
             setIsSearchingCatalog(true);
             try {
-                const response = await fetch(APPS_SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({
-                        action: API_ACTIONS.SEARCH_SKU_CATALOG,
-                        query: searchQuery
-                    })
-                });
-                const result = await response.json();
+                const result = await callGas(API_ACTIONS.SEARCH_SKU_CATALOG, { query: searchQuery }, 2);
 
                 const rawItems = result.items || result.skus || result.data || [];
                 const normalized = rawItems.map((item: any) => ({
@@ -293,12 +286,10 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
             setLastTimestamp(timestamp);
             setLastRequest(payload);
 
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-            });
-            const result = await response.json();
+            // Creates/updates a draft order — never auto-retried, since a
+            // garbled response can't tell us whether the write already landed.
+            const { action: draftAction, ...draftPayload } = payload;
+            const result = await callGas(draftAction, draftPayload);
             setLastResponse(result);
 
             if (result.status === 'success' || result.draftId) {
@@ -376,12 +367,9 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
         setLastRequest(payload);
 
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-            });
-            const result = await response.json();
+            // Creates Purchase Orders from this draft — never auto-retried.
+            const { action: submitAction, ...submitPayload } = payload;
+            const result = await callGas(submitAction, submitPayload);
             setLastResponse(result);
 
             if (!result || result.success !== true) {
@@ -428,21 +416,12 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
         });
 
         try {
-            const payload = {
-                action: 'save_customization',
+            const result = await callGas('save_customization', {
                 payload: {
                     sku: customizationItem.sku,
                     ...data
                 }
-            };
-
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
             });
-
-            const result = await response.json();
             if (!result || result.success !== true) {
                 throw new Error(result?.message || result?.error || "Sync failed");
             }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { API_ACTIONS } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import {
@@ -222,12 +223,7 @@ export const PricingConfig: React.FC<{
     const fetchConfig = useCallback(async () => {
         setIsLoading(true);
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: API_ACTIONS.GET_PRICING_CONFIG }),
-            });
-            const result = await response.json();
+            const result = await callGas(API_ACTIONS.GET_PRICING_CONFIG, {}, 2);
             if (result.success) {
                 const mapped = mapPricingResponse(result.data);
                 setConfig(mapped);
@@ -268,20 +264,12 @@ export const PricingConfig: React.FC<{
         if (!hasChanges || isSaving) return;
         setIsSaving(true);
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
-                    // Was 'save_forecasting_config' — a copy-paste bug that
-                    // silently wrote pricing keys into the unrelated
-                    // Forecasting_Config sheet and never touched SKU_Config,
-                    // the sheet this screen actually reads from. Every
-                    // "successful" save was a no-op for its real purpose.
-                    action: 'save_pricing_config',
-                    config,
-                }),
-            });
-            const result = await response.json();
+            // Was 'save_forecasting_config' — a copy-paste bug that
+            // silently wrote pricing keys into the unrelated
+            // Forecasting_Config sheet and never touched SKU_Config,
+            // the sheet this screen actually reads from. Every
+            // "successful" save was a no-op for its real purpose.
+            const result = await callGas('save_pricing_config', { config });
             if (result.success) {
                 setSavedConfig({ ...config });
                 setIsSaved(true);

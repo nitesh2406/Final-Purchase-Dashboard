@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { APPS_SCRIPT_URL } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { 
@@ -120,12 +120,7 @@ export const ForecastingConfig: React.FC<{
         addDebugLog('req', { action: 'get_forecasting_config' });
 
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'get_forecasting_config' })
-            });
-            const data = await response.json();
+            const data = await callGas('get_forecasting_config', {}, 2);
             addDebugLog('res', data);
 
             if (data.success && data.config) {
@@ -198,12 +193,7 @@ export const ForecastingConfig: React.FC<{
         addDebugLog('req', { action: 'save_forecasting_config', config: sectionData });
 
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'save_forecasting_config', config: sectionData })
-            });
-            const data = await response.json();
+            const data = await callGas('save_forecasting_config', { config: sectionData });
             addDebugLog('res', data);
 
             if (data.success) {

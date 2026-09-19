@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { APPS_SCRIPT_URL } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import {
@@ -166,12 +166,7 @@ export const AmazonConfig: React.FC<{
         if (!externalConfig) {
             const timer = setTimeout(async () => {
                 try {
-                    const res = await fetch(APPS_SCRIPT_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify({ action: 'get_amazon_config' }),
-                    });
-                    const data = await res.json();
+                    const data = await callGas('get_amazon_config', {}, 2);
                     if (data?.status === 'success' && data.config) {
                         const merged = { ...DEFAULTS, ...data.config };
                         setConfig(merged);
@@ -224,12 +219,7 @@ export const AmazonConfig: React.FC<{
         SECTION_FIELDS[section].forEach(field => { (sectionConfig as any)[field] = config[field]; });
         addDebugLog('req', { action: 'save_amazon_config', config: sectionConfig });
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'save_amazon_config', config: sectionConfig }),
-            });
-            const result = await response.json();
+            const result = await callGas('save_amazon_config', { config: sectionConfig });
             addDebugLog('res', result);
             if (result.status === 'success') {
                 setSavedConfig(prev => ({ ...prev, ...sectionConfig }));

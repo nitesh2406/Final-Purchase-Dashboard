@@ -1,6 +1,6 @@
 import React, { FC, useState, useMemo, useEffect } from 'react';
 import { AmazonChannelSku, AmazonSupplyChain } from '../../types/amazon';
-import { APPS_SCRIPT_URL } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 interface AmazonSkuModalProps {
@@ -38,15 +38,7 @@ export const AmazonSkuModal: FC<AmazonSkuModalProps> = ({ sku, onClose, config =
     setSupplyChainError(null);
     setSupplyChain(null);
 
-    fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
-        action: 'get_amazon_sku_supply_chain',
-        masterSKU: sku.masterSKU,
-      }),
-    })
-      .then(res => res.json())
+    callGas('get_amazon_sku_supply_chain', { masterSKU: sku.masterSKU }, 2)
       .then(data => {
         if (data.status === 'success') {
           setSupplyChain({

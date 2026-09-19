@@ -11,7 +11,8 @@ import { DraftOrderEdit } from './DraftOrderEdit';
 import { CancelDraftModal } from './CancelDraftModal';
 import { PurchaseOrder, DraftOrder, Sku, DraftStatus, Vendor, VendorMaster } from '../../types';
 import { useQueryParam } from '../../hooks/useQueryParam';
-import { APPS_SCRIPT_URL, API_ACTIONS } from '../../constants';
+import { API_ACTIONS } from '../../constants';
+import { callGas } from '../../services/gasApi';
 import { ViewType } from '../../types';
 
 const StatusBadge: React.FC<{ status: DraftStatus }> = ({ status }) => {
@@ -128,12 +129,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
             const results = await Promise.all(
                 batch.map(async (draft) => {
                     try {
-                        const response = await fetch(APPS_SCRIPT_URL, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                            body: JSON.stringify({ action: API_ACTIONS.GET_DRAFT_BY_ID, draftId: draft.id })
-                        });
-                        const result = await response.json();
+                        const result = await callGas(API_ACTIONS.GET_DRAFT_BY_ID, { draftId: draft.id }, 2);
                         if (result.status === 'success' && result.lines) {
                             return { id: draft.id, lines: result.lines, draft: result.draft };
                         }
@@ -227,12 +223,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
         if (!cancelModalDraft) return;
         setIsMutating(true);
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: API_ACTIONS.CANCEL_DRAFT, id: cancelModalDraft.id })
-            });
-            const result = await response.json();
+            const result = await callGas(API_ACTIONS.CANCEL_DRAFT, { id: cancelModalDraft.id });
             if (result.success) {
                 setDrafts(prev => prev.map(d => d.id === cancelModalDraft.id ? {
                     ...d, status: 'Cancelled' as DraftStatus, cancelledAt: new Date().toISOString()
@@ -255,12 +246,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
         if (confirm(`Cancel ${affected.length} selected draft orders?`)) {
             setIsMutating(true);
             try {
-                const response = await fetch(APPS_SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: 'bulk_cancel_drafts', ids: affected.map(a => a.id) })
-                });
-                const result = await response.json();
+                const result = await callGas('bulk_cancel_drafts', { ids: affected.map(a => a.id) });
                 if (result.success) {
                     setDrafts(prev => prev.map(d => selectedIds.includes(d.id) && ['DRAFT', 'PARTIALLY SUBMITTED'].includes(String(d.status).toUpperCase())
                         ? { ...d, status: 'Cancelled' as DraftStatus, cancelledAt: new Date().toISOString() }
@@ -295,12 +281,7 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
 
         setIsFetchingDetails(true);
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: API_ACTIONS.GET_DRAFT_BY_ID, draftId: id })
-            });
-            const result = await response.json();
+            const result = await callGas(API_ACTIONS.GET_DRAFT_BY_ID, { draftId: id }, 2);
 
             if (result.status === 'success' && result.draft) {
                 setDrafts(prev => prev.map(d => d.id === id ? { ...d, ...result.draft, items: result.lines || [] } : d));
@@ -324,12 +305,9 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
     const handleDuplicate = async (draft: DraftOrder) => {
         setIsMutating(true);
         try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: API_ACTIONS.DUPLICATE_DRAFT, id: draft.id })
-            });
-            const result = await response.json();
+            // Creates a new draft — never auto-retried (a retry after a
+            // garbled response could create a second duplicate).
+            const result = await callGas(API_ACTIONS.DUPLICATE_DRAFT, { id: draft.id });
             if (result.newDraft) {
                 setDrafts(prev => [result.newDraft, ...prev]);
                 handleEdit(result.newDraft.id);
@@ -386,12 +364,8 @@ export const DraftOrdersTable: React.FC<DraftOrdersTableProps> = ({
                                 mode: updated.mode || updated.planned_mode,
                             };
 
-                        const response = await fetch(APPS_SCRIPT_URL, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                            body: JSON.stringify(payload)
-                        });
-                        const result = await response.json();
+                        // Creates/updates a draft order — never auto-retried.
+                        const result = await callGas(action, payload);
 
                         if (result.status === 'success' || result.draftId) {
                             if (view === 'create') {

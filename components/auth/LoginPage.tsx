@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';
-import { APPS_SCRIPT_URL } from '../../constants';
+import { callGas } from '../../services/gasApi';
 
 interface LoginPageProps {
     onLoginSuccess: (user: any) => void;
@@ -19,18 +19,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 throw new Error('No credential received');
             }
             const decoded: any = jwtDecode(credentialResponse.credential);
-            
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
-                    action: 'verify_user',
-                    email: decoded.email
-                })
-            });
 
-            const data = await response.json();
-            
+            // verify_user is a pure read (allowlist check) — safe to retry
+            // automatically on the transient GAS timeout/quota failures that
+            // otherwise surface as "Unexpected token '<'... is not valid JSON".
+            const data = await callGas('verify_user', { email: decoded.email }, 2);
+
             if (data && data.success) {
                 console.log('RAW backend response:', JSON.stringify(data));
                 console.log('data.user:', JSON.stringify(data.user));
