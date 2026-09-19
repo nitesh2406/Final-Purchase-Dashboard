@@ -77,22 +77,27 @@ const FieldDiff: React.FC<{ label: string; current: string | number; proposed: s
 // SKU and back). Now holds ALL statuses in one fetch — the four status
 // pills just filter this client-side instead of each triggering its own
 // round trip (previously every tab switch re-fetched from scratch).
-let reviewRequestsCache: { allRows: SkuUpdateRequest[] } | null = null;
+//
+// `null` means "never successfully fetched" — distinct from an empty array,
+// which is a legitimate "zero requests exist" result. Only set this from
+// inside a successful fetch or a local optimistic update (never mirror it
+// off React state in a useEffect keyed on the state itself: that effect
+// fires with the initial empty value on mount, before the fetch-triggering
+// effect below ever runs, which permanently short-circuited every fetch —
+// the tab looked instantly "loaded" with zero rows and never asked the
+// network again.
+let reviewRequestsCache: SkuUpdateRequest[] | null = null;
 
 export const ReviewRequestsTab: React.FC = () => {
   const [status, setStatus] = useState<ReqStatus>('PENDING');
-  const [allRows, setAllRows] = useState<SkuUpdateRequest[]>(reviewRequestsCache?.allRows || []);
+  const [allRows, setAllRows] = useState<SkuUpdateRequest[]>(reviewRequestsCache || []);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [resultNote, setResultNote] = useState<{ request_id: string; status: string; sync_notes: string } | null>(null);
 
-  useEffect(() => {
-    reviewRequestsCache = { allRows };
-  }, [allRows]);
-
   const fetchRequests = useCallback(async (forceRefresh = false) => {
-    if (!forceRefresh && reviewRequestsCache) return;
+    if (!forceRefresh && reviewRequestsCache !== null) return;
     setIsLoading(true);
     setFetchError(null);
     try {
@@ -103,7 +108,9 @@ export const ReviewRequestsTab: React.FC = () => {
       });
       const result = await response.json();
       if (result.success) {
-        setAllRows(result.data || []);
+        const rows = result.data || [];
+        reviewRequestsCache = rows;
+        setAllRows(rows);
       } else {
         setFetchError(result.error || 'Failed to load requests');
       }
@@ -140,9 +147,13 @@ export const ReviewRequestsTab: React.FC = () => {
         // just moves from PENDING to whatever status the backend settled
         // on (SYNCED/FAILED/REJECTED), so the cache stays correct without
         // a round trip.
-        setAllRows(prev => prev.map(r =>
-          r.request_id === requestId ? { ...r, status: result.data.status, sync_notes: result.data.sync_notes || r.sync_notes } : r
-        ));
+        setAllRows(prev => {
+          const next = prev.map(r =>
+            r.request_id === requestId ? { ...r, status: result.data.status, sync_notes: result.data.sync_notes || r.sync_notes } : r
+          );
+          reviewRequestsCache = next;
+          return next;
+        });
       } else {
         alert('Failed to resolve request: ' + result.error);
       }

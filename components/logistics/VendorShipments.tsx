@@ -1862,6 +1862,28 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
           return;
         }
 
+        // Step 3's per-flag REQUEST_UPDATE/ACCEPT_AS_IS/DISMISS decisions
+        // (step3_actions) never get translated back into the resolution_update_id/
+        // price/ean booleans the backend's writeFieldUpdateRequests_ (11_PO+Shipment
+        // Codes.gs) still reads — those predate the per-flag redesign and nothing
+        // was wired up to replace them, so "Request Update" silently queued nothing.
+        // A flag left untouched displays as "Request Update" (the UI's default
+        // highlighted option — see the FLAGS column below), so an unset action is
+        // treated the same as an explicit one here.
+        const rowsWithFieldUpdateFlags = validationRows.map(r => {
+          const flags = step3FlagsMap.get(r.line_id) || [];
+          const hasFlag = (key: Step3FlagKey) => flags.some(f => f.key === key);
+          const isRequestUpdate = (key: Step3FlagKey) => (r.step3_actions?.[key] || 'REQUEST_UPDATE') === 'REQUEST_UPDATE';
+          return {
+            ...r,
+            resolution_update_price: (hasFlag('PRICE_VARIANCE') && isRequestUpdate('PRICE_VARIANCE'))
+              || (hasFlag('PRICE_MISSING') && isRequestUpdate('PRICE_MISSING')),
+            resolution_update_id: (hasFlag('ID_AN') && isRequestUpdate('ID_AN'))
+              || (hasFlag('ID_FC') && isRequestUpdate('ID_FC')),
+            resolution_update_ean: hasFlag('EAN_CONFLICT') && isRequestUpdate('EAN_CONFLICT'),
+          };
+        });
+
         const payload = {
           action: 'create_vendor_shipment',
           vendor_code: vendorCode,
@@ -1876,7 +1898,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
           invoice_date: invoiceDate,
           carrier: carrier,
           expected_delivery: expectedDelivery,
-          validated_rows: validationRows,
+          validated_rows: rowsWithFieldUpdateFlags,
           allocations: allocationData,
           idempotency_key: shipmentIdempotencyKeyRef.current
         };
