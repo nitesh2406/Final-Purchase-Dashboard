@@ -7,6 +7,7 @@ import { callGas } from '../services/gasApi';
 // Declared outside component so it survives unmount/remount
 let _amazonCache: AmazonChannelSku[] | null = null;
 let _amazonCacheTime: Date | null = null;
+let _amazonDataGeneratedAt: Date | null = null;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,10 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  // When the backend's cached snapshot was actually computed — may be up to
+  // ~30 min older than lastRefreshed, since get_amazon_forecast now serves a
+  // periodically-refreshed cache instead of recomputing live every request.
+  const [dataGeneratedAt, setDataGeneratedAt] = useState<Date | null>(null);
 
   // ── UI state ────────────────────────────────────────────────────────────────
   const [selectedSku, setSelectedSku] = useState<AmazonChannelSku | null>(null);
@@ -113,6 +118,7 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
     if (!forceRefresh && _amazonCache) {
       setSkus(_amazonCache);
       setLastRefreshed(_amazonCacheTime);
+      setDataGeneratedAt(_amazonDataGeneratedAt);
       setIsLoading(false);
       return;
     }
@@ -120,20 +126,26 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
     setIsLoading(true);
     setError(null);
     try {
-      // Not auto-retried: this is the most expensive endpoint in the app
-      // (full live recompute, see the perf plan) — retrying a real timeout
-      // would just make the user wait 2-3x longer for the same failure.
-      const data = await callGas('get_amazon_forecast', {});
+      // get_amazon_forecast now serves a periodically-refreshed backend
+      // cache (see the perf plan) instead of recomputing live on every
+      // request, EXCEPT when forceRefresh asks for a true live recompute
+      // (the manual Refresh button, and the post-shipment-confirm reload
+      // that needs to see the PO it just created). The cached path is cheap
+      // and safe to retry; force:true triggers the ~30s live recompute, so
+      // retrying it would just make a real timeout take 2-3x longer.
+      const data = await callGas('get_amazon_forecast', forceRefresh ? { force: true } : {}, forceRefresh ? 0 : 2);
       if (data.status === 'error') throw new Error(data.message);
       if (!Array.isArray(data.data)) throw new Error('Invalid response format');
 
       // Update module-level cache
-      _amazonCache     = data.data;
-      _amazonCacheTime = new Date();
+      _amazonCache           = data.data;
+      _amazonCacheTime       = new Date();
+      _amazonDataGeneratedAt = data.generatedAt ? new Date(data.generatedAt) : null;
 
       setSkus(data.data);
       if (data.config) setAmazonConfig(data.config);
       setLastRefreshed(_amazonCacheTime);
+      setDataGeneratedAt(_amazonDataGeneratedAt);
       // Reset selections and overrides on new fetch
       setSelectedChannelSkus(new Set());
       setShipQtyOverrides({});
@@ -395,8 +407,11 @@ export const AmazonForecasting: React.FC<AmazonForecastingProps> = ({ amazonConf
         )}
 
         {lastRefreshed && (
-          <span className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0">
+          <span className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0" title={dataGeneratedAt ? `Underlying sales/inventory data as of ${dataGeneratedAt.toLocaleString()} — refreshed automatically every 30 min. Use Refresh for a live recompute.` : undefined}>
             Updated {lastRefreshed.toLocaleTimeString()}
+            {dataGeneratedAt && Math.abs(lastRefreshed.getTime() - dataGeneratedAt.getTime()) > 60000 && (
+              <> · data as of {dataGeneratedAt.toLocaleTimeString()}</>
+            )}
           </span>
         )}
 
