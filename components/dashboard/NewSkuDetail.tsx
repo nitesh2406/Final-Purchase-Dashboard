@@ -201,6 +201,10 @@ const ComboBox: React.FC<ComboBoxProps> = ({
   );
 };
 
+// Fallback only — used until apiGetSkuCategories (SKU_Config sheet, see
+// get_sku_categories) returns, and if that fetch fails outright. The live
+// list is the source of truth: a category added to SKU_Config shows up
+// here without a redeploy; this array does not need to be kept in sync.
 const CATEGORIES = [
   '2x2','3x3','4x4','5x5','6x6','7x7',
   'Accessory','Big Cubes','Clock','Design',
@@ -209,6 +213,11 @@ const CATEGORIES = [
   'Other Puzzles','Pyraminx','SERVICE','Shape Mod',
   'Skewb','Snake','Square-1','Timer and Mat',
 ];
+
+// Module-level cache, same rationale as categoryCache in ShipmentTracker.tsx —
+// shared across mounts of this screen within a session, not across the two
+// files (each fetches independently since they're separate modules).
+let skuCategoriesCache: string[] | null = null;
 
 // ─────────────────────────────────────────
 // HELPERS
@@ -418,6 +427,32 @@ export const NewSkuDetail: React.FC<{
   const [pricingConfig, setPricingConfig] = useState<PricingConfig | null>(null);
   const [pricingConfigLoaded, setPricingConfigLoaded] = useState(false);
   const [pricingConfigError, setPricingConfigError] = useState<string | null>(null);
+  const [categoryOptions, setCategoryOptions] = useState<string[]>(skuCategoriesCache || CATEGORIES);
+
+  useEffect(() => {
+    if (skuCategoriesCache) return;
+    const fetchCategories = async () => {
+      try {
+        const response = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'get_sku_categories' })
+        });
+        const result = await response.json();
+        if (result.status === 'success' && Array.isArray(result.categories)) {
+          const names = result.categories.map((c: { category: string }) => c.category).filter(Boolean).sort();
+          if (names.length > 0) {
+            skuCategoriesCache = names;
+            setCategoryOptions(names);
+          }
+        }
+      } catch (err) {
+        console.error('fetchCategories error:', err);
+        // Falls back silently to the hardcoded CATEGORIES already in state.
+      }
+    };
+    fetchCategories();
+  }, []);
 
   useEffect(() => {
     const fetchPricingConfig = async () => {
@@ -1811,7 +1846,7 @@ export const NewSkuDetail: React.FC<{
                   onBlur={handleBlurSave}
                 >
                   <option value="">Select category...</option>
-                  {CATEGORIES.map(c => (
+                  {categoryOptions.map(c => (
                     <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
