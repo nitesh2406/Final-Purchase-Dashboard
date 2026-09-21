@@ -228,6 +228,11 @@ let skuCategoriesCache: string[] | null = null;
 let brandOptionsCache: string[] | null = null;
 let variantOptionsCache: string[] | null = null;
 
+// The bracket tables the price calculation reads. All must be non-empty arrays.
+const hasPricingBrackets = (c: Partial<PricingConfig> | null | undefined): boolean =>
+  !!c && [c.cm1_brackets, c.cm3_target_brackets, c.mrp_brackets, c.compare_brackets]
+    .every(b => Array.isArray(b) && b.length > 0);
+
 // Raw get_pricing_config response -> the shape the price calculator uses.
 // Shared by the copy App already holds and this screen's own fetch, so both
 // paths apply identical defaults. The fallbacks mirror calculatePricing_ in
@@ -654,6 +659,11 @@ export const NewSkuDetail: React.FC<{
   const calcPricing = (rmbPrice: number, weightGm: number, config: PricingConfig | null) => {
     if (!rmbPrice || !config) return null;
     if (!config.sea_multiplier || !config.air_rate || !config.cny_conv_rate) return null;
+    // A bracket table that is missing or empty (its rows gone or misplaced in
+    // SKU_Config) makes lookupBracket read brackets[0].value of nothing — a
+    // TypeError inside this useMemo that white-screened the whole page. No
+    // prices is the honest result; the banner below says why.
+    if (!hasPricingBrackets(config)) return null;
 
     // Step 1: Landing — RMB price ABOVE threshold ships SEA; at/below ships AIR
     let landing: number, mode: string;
@@ -1089,12 +1099,15 @@ export const NewSkuDetail: React.FC<{
         setPlatformStatus(p => ({ ...p, ee: true }));
         // Refresh source data to get ee_sku written back
         setSourceData(d => ({ ...d, ee_sku: result.data.ee_sku }));
+        noteStepError('ee', null);
         return true;
       } else {
+        noteStepError('ee', result.error || 'EasyEcom creation failed');
         alert('EasyEcom creation failed: ' + result.error);
         return false;
       }
     } catch (err) {
+      noteStepError('ee', 'No response from the server — check EasyEcom before retrying.');
       alert('Network error');
       console.error(err);
       return false;
@@ -1114,12 +1127,15 @@ export const NewSkuDetail: React.FC<{
       });
       if (result.success) {
         setPlatformStatus(p => ({ ...p, zoho: true }));
+        noteStepError('zoho', null);
         return true;
       } else {
+        noteStepError('zoho', result.error || 'Zoho creation failed');
         alert('Zoho creation failed: ' + result.error);
         return false;
       }
     } catch (err) {
+      noteStepError('zoho', 'No response from the server — check Zoho before retrying.');
       alert('Network error');
       console.error(err);
       return false;
@@ -1184,8 +1200,12 @@ export const NewSkuDetail: React.FC<{
   // STEP 3 — Shopify
   const handleCreateShopify = async (requestIdOverride?: string): Promise<boolean> => {
     setLoading(l => ({ ...l, shopify: true }));
+    noteStepError('shopify', null);
     try {
-      // Creates the SKU on Shopify — never auto-retried.
+      // Creates the SKU on Shopify — never auto-retried by the app itself. A
+      // MANUAL retry (the button under a failed/pending Shopify step) is safe:
+      // the backend first looks the SKU up on Shopify and links the listing if
+      // it is already there, rather than creating a second one.
       const result = await callGas(API_ACTIONS.CREATE_SKU_ON_SHOPIFY, {
         request_id:   requestIdOverride || savedRequestId || requestId,
         parent_sku:   form.parent_sku   || '',
@@ -1194,6 +1214,7 @@ export const NewSkuDetail: React.FC<{
       });
       if (result.success) {
         setPlatformStatus(p => ({ ...p, shopify: true }));
+        setStepNotes(n => ({ ...n, shopify: result.data.already_existed ? 'Already on Shopify — linked the existing listing (nothing was created).' : null }));
         if (result.data.shopify_listing_url) {
           setSourceData(d => ({
             ...d,
@@ -1202,10 +1223,12 @@ export const NewSkuDetail: React.FC<{
         }
         return true;
       } else {
+        noteStepError('shopify', result.error || 'Shopify creation failed');
         alert('Shopify creation failed: ' + result.error);
         return false;
       }
     } catch (err) {
+      noteStepError('shopify', 'No response from the server — the listing may or may not have been created. Retry checks Shopify first, so it will not create a duplicate.');
       alert('Network error');
       console.error(err);
       return false;
@@ -1224,12 +1247,15 @@ export const NewSkuDetail: React.FC<{
       });
       if (result.success) {
         setPlatformStatus(p => ({ ...p, ee_po: true }));
+        noteStepError('ee_po', null);
         return true;
       } else {
+        noteStepError('ee_po', result.error || 'EE PO update failed');
         alert('EE PO update failed: ' + result.error);
         return false;
       }
     } catch (err) {
+      noteStepError('ee_po', 'No response from the server — check the EE purchase order before retrying.');
       alert('Network error');
       console.error(err);
       return false;
@@ -1244,6 +1270,14 @@ export const NewSkuDetail: React.FC<{
   // without re-running the prior ones.
   const [creationStarted, setCreationStarted] = useState(false);
   const [stepFailed, setStepFailed] = useState({ ee: false, zoho: false, shopify: false, ee_po: false });
+  // Why a step failed, kept on screen under its red "Failed" row — the alert()
+  // that reports it vanishes, and someone deciding whether to retry needs the
+  // reason. `stepNotes` carries the one positive edge case: a retry that found
+  // the listing already on the platform and linked it instead of creating.
+  type StepKey = 'ee' | 'zoho' | 'shopify' | 'ee_po';
+  const [stepErrors, setStepErrors] = useState<Record<StepKey, string | null>>({ ee: null, zoho: null, shopify: null, ee_po: null });
+  const [stepNotes, setStepNotes] = useState<Record<StepKey, string | null>>({ ee: null, zoho: null, shopify: null, ee_po: null });
+  const noteStepError = (step: StepKey, message: string | null) => setStepErrors(e => ({ ...e, [step]: message }));
   // Lets the user reach the per-step list (to attach an existing EasyEcom
   // SKU / Zoho item) without triggering the full Create Listing sequence.
   const [manualStepsExpanded, setManualStepsExpanded] = useState(false);
@@ -2161,10 +2195,10 @@ export const NewSkuDetail: React.FC<{
               )}
             </div>
 
-            {pricingConfigError && (
+            {(pricingConfigError || (pricingConfigLoaded && !hasPricingBrackets(pricingConfig))) && (
               <div className="mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
                 <span>⚠️</span>
-                <span>{pricingConfigError}</span>
+                <span>{pricingConfigError || 'Pricing brackets are missing or empty in the SKU_Config sheet, so suggested prices are unavailable. Enter MRP and selling price manually, or fix the sheet.'}</span>
               </div>
             )}
             {!pricingConfigLoaded && !pricingConfigError && (
@@ -2500,18 +2534,29 @@ export const NewSkuDetail: React.FC<{
               ) : (
                 <>
                   {([
-                    { key: 'ee' as const,      label: 'EasyEcom',           actionLabel: 'Create on EasyEcom', handler: handleCreateEE,      attachActionLabel: 'Attach Existing EasyEcom SKU', attachHandler: handleAttachExistingEE },
-                    { key: 'zoho' as const,    label: 'Zoho',               actionLabel: 'Create on Zoho',     handler: handleCreateZoho,    attachActionLabel: 'Attach Existing Zoho Item',    attachHandler: handleAttachExistingZoho },
-                    { key: 'shopify' as const, label: 'Shopify',            actionLabel: 'Create on Shopify',  handler: handleCreateShopify, attachActionLabel: null, attachHandler: null },
+                    { key: 'ee' as const,      label: 'EasyEcom',           actionLabel: 'Create on EasyEcom', handler: handleCreateEE,      attachActionLabel: 'Attach Existing EasyEcom SKU', attachHandler: handleAttachExistingEE, showPendingAction: false },
+                    { key: 'zoho' as const,    label: 'Zoho',               actionLabel: 'Create on Zoho',     handler: handleCreateZoho,    attachActionLabel: 'Attach Existing Zoho Item',    attachHandler: handleAttachExistingZoho, showPendingAction: false },
+                    // Shopify has no "attach existing" option, so its pending row used
+                    // to render NO button at all — after a reload (or coming back to a
+                    // request whose Shopify step had failed) there was no way to run
+                    // it from here. showPendingAction gives it a plain action button.
+                    // Safe to press repeatedly: the backend links an existing listing
+                    // instead of creating a duplicate.
+                    { key: 'shopify' as const, label: 'Shopify',            actionLabel: 'Create on Shopify',  handler: handleCreateShopify, attachActionLabel: null, attachHandler: null, showPendingAction: true },
                     ...(sourceData.shipment_id
-                      ? [{ key: 'ee_po' as const, label: 'EE Purchase Order', actionLabel: 'Update EE PO', handler: handleUpdateEEPO, attachActionLabel: null, attachHandler: null }]
+                      ? [{ key: 'ee_po' as const, label: 'EE Purchase Order', actionLabel: 'Update EE PO', handler: handleUpdateEEPO, attachActionLabel: null, attachHandler: null, showPendingAction: false }]
                       : []),
-                  ]).map(({ key, label, actionLabel, handler, attachActionLabel, attachHandler }) => {
+                  ]).map(({ key, label, actionLabel, handler, attachActionLabel, attachHandler, showPendingAction }) => {
                     if (platformStatus[key]) {
                       return (
-                        <div key={key} className="flex items-center gap-2 py-2 px-3 rounded-lg bg-green-50 dark:bg-green-900/20">
-                          <CheckBadgeIcon className="w-4 h-4 text-green-600 dark:text-green-400" />
-                          <span className="text-xs font-semibold text-green-600 dark:text-green-400">{label} — Done</span>
+                        <div key={key} className="space-y-1">
+                          <div className="flex items-center gap-2 py-2 px-3 rounded-lg bg-green-50 dark:bg-green-900/20">
+                            <CheckBadgeIcon className="w-4 h-4 text-green-600 dark:text-green-400" />
+                            <span className="text-xs font-semibold text-green-600 dark:text-green-400">{label} — Done</span>
+                          </div>
+                          {stepNotes[key] && (
+                            <p className="text-[11px] text-green-700 dark:text-green-400 px-1">{stepNotes[key]}</p>
+                          )}
                         </div>
                       );
                     }
@@ -2530,13 +2575,16 @@ export const NewSkuDetail: React.FC<{
                             <XMarkIcon className="w-4 h-4 text-red-600 dark:text-red-400" />
                             <span className="text-xs font-semibold text-red-600 dark:text-red-400">{label} — Failed</span>
                           </div>
+                          {stepErrors[key] && (
+                            <p className="text-[11px] text-red-600 dark:text-red-400 px-1 break-words">{String(stepErrors[key]).slice(0, 300)}</p>
+                          )}
                           <Button
                             variant="primary"
                             className="w-full text-xs"
                             onClick={() => retryPlatform(key, handler)}
                           >
-                            <ChevronRightIcon className="w-4 h-4 mr-1" />
-                            {actionLabel}
+                            <ArrowPathIcon className="w-4 h-4 mr-1" />
+                            Retry {label}
                           </Button>
                         </div>
                       );
@@ -2565,6 +2613,18 @@ export const NewSkuDetail: React.FC<{
                               {attachActionLabel}
                             </Button>
                           </div>
+                        )}
+                        {showPendingAction && !attachHandler && (
+                          <Button
+                            variant="primary"
+                            className="w-full text-xs"
+                            disabled={!canDoStep(key)}
+                            onClick={() => retryPlatform(key, handler)}
+                            title={!canDoStep(key) ? 'The previous step must be done first' : `Runs ${label} creation. If it already exists there it is linked, not duplicated.`}
+                          >
+                            <ChevronRightIcon className="w-4 h-4 mr-1" />
+                            {actionLabel}
+                          </Button>
                         )}
                       </div>
                     );
