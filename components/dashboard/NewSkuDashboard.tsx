@@ -156,6 +156,8 @@ export const NewSkuDashboard: React.FC<{
   const [data, setData] = useState<SkuRequest[]>(() => cachedData || []);
   const [needsAttentionOnly, setNeedsAttentionOnly] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // A background reload while the cached list stays on screen (see the mount effect).
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debugMode, setDebugMode] = useState<boolean>(
@@ -169,29 +171,35 @@ export const NewSkuDashboard: React.FC<{
     }
   }, [cachedData]);
 
-  const fetchRequests = async () => {
-    setIsLoading(true);
+  // silent = the cached list is already showing: reload behind it (spinner on the
+  // Refresh button only) and, if that fails, keep what is on screen instead of
+  // replacing it with an error.
+  const fetchRequests = async (silent = false) => {
+    if (silent) setIsRefreshing(true); else setIsLoading(true);
     setFetchError(null);
     try {
       const result = await callGas(API_ACTIONS.GET_NEW_SKU_REQUESTS, {}, 2);
       if (result.success) {
         setData(result.data || []);
         onDataLoaded(result.data || []);
-      } else {
+      } else if (!silent) {
         setFetchError(result.error || 'Failed to load requests');
       }
     } catch (err) {
-      setFetchError('Network error — could not reach server');
+      if (!silent) setFetchError('Network error — could not reach server');
       console.error('fetchRequests error:', err);
     } finally {
-      setIsLoading(false);
+      if (silent) setIsRefreshing(false); else setIsLoading(false);
     }
   };
 
+  // Every visit reloads. The list used to be fetched once per session and cached in
+  // App, so a request finished on the detail page (Create Listing → Done → back)
+  // still showed its old status here, as did anything other people had raised or
+  // changed, until someone pressed Refresh. Now the cached rows show instantly and
+  // the fresh list replaces them a moment later.
   useEffect(() => {
-    if (!dataLoaded) {
-      fetchRequests();
-    }
+    fetchRequests(dataLoaded);
   }, []);
 
   // Search is client-side only — no refetch needed for search
@@ -357,12 +365,12 @@ export const NewSkuDashboard: React.FC<{
                 requests raised by other people (or new shipments) never show
                 up otherwise. (Previously only reachable via Debug mode.) */}
             <button
-              onClick={fetchRequests}
-              disabled={isLoading}
+              onClick={() => fetchRequests()}
+              disabled={isLoading || isRefreshing}
               title="Reload requests from the server"
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50"
             >
-              <ArrowPathIcon className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              <ArrowPathIcon className={`w-3.5 h-3.5 ${isLoading || isRefreshing ? 'animate-spin' : ''}`} />
               Refresh
             </button>
             {/* Debug toggle */}
@@ -520,7 +528,7 @@ export const NewSkuDashboard: React.FC<{
                       <ExclamationTriangleIcon className="w-8 h-8 text-red-400 mx-auto mb-3" />
                       <p className="text-sm font-medium text-red-500">{fetchError}</p>
                       <button
-                        onClick={fetchRequests}
+                        onClick={() => fetchRequests()}
                         className="mt-3 text-xs text-blue-500 hover:text-blue-600 
                                    underline underline-offset-2">
                         Try again
@@ -751,7 +759,7 @@ export const NewSkuDashboard: React.FC<{
                 {JSON.stringify(filtered.map(r => r.request_id), null, 2)}
               </pre>
               <button
-                onClick={fetchRequests}
+                onClick={() => fetchRequests()}
                 className="mt-2 px-3 py-1 bg-amber-500 text-white text-xs 
                            rounded font-semibold hover:bg-amber-600">
                 Force Refresh

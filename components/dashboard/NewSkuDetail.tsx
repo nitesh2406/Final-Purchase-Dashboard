@@ -444,7 +444,10 @@ export const NewSkuDetail: React.FC<{
     setIsRefreshingTab(true);
     try {
       const ok = await fetchSourceData();
-      if (ok) setIsDirty(false);
+      if (ok) {
+        dirtyRef.current = false;
+        setIsDirty(false);
+      }
     } finally {
       setIsRefreshingTab(false);
     }
@@ -542,8 +545,14 @@ export const NewSkuDetail: React.FC<{
   const [skuAssignSuccess, setSkuAssignSuccess] = useState<string | null>(null);
   const [skuAssignError, setSkuAssignError] = useState<string | null>(null);
 
-  // Dirty flag
+  // Dirty flag. `dirtyRef` / `formVersionRef` mirror it for code that runs after
+  // an await and would otherwise read a stale render: every edit bumps the
+  // version, and a save only marks the form clean if no edit happened while it
+  // was in flight (it used to mark it clean regardless, silently dropping whatever
+  // was typed during the save).
   const [isDirty, setIsDirty] = useState(false);
+  const dirtyRef = useRef(false);
+  const formVersionRef = useRef(0);
 
   // Save feedback
   const [showSaved, setShowSaved] = useState(false);
@@ -553,11 +562,17 @@ export const NewSkuDetail: React.FC<{
   const [savedRequestId, setSavedRequestId] = useState<string | null>(
     isNew ? null : requestId
   );
+  // The request this screen is saving to: the opened request, or — for a brand-new
+  // entry — the row created by its first save. Saves are chained so two never run
+  // at once, and the ref is what a chained save reads (state would be stale).
+  const savedRequestIdRef = useRef<string | null>(isNew ? null : requestId);
+  const saveChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const activeRequestId = isNew ? savedRequestId : requestId;
 
   // Reject UI
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
   const [rejectRemark, setRejectRemark] = useState('');
-  const [isRejected, setIsRejected] = useState(sourceData.status === 'REJECTED');
+  const isRejected = sourceData.status === 'REJECTED';
   const [showConfigPanel, setShowConfigPanel] = useState(false);
 
   // Mark as Complete UI
@@ -580,9 +595,15 @@ export const NewSkuDetail: React.FC<{
     () => localStorage.getItem('skuDebugMode') === 'true'
   );
 
+  // Always the latest form, for saves that run after an await (see dirtyRef above).
+  const formRef = useRef(form);
+  formRef.current = form;
+
   // Helper to update a form field and mark dirty
   const updateField = (field: keyof FormData, value: any) => {
     setForm(f => ({ ...f, [field]: value }));
+    formVersionRef.current += 1;
+    dirtyRef.current = true;
     setIsDirty(true);
   };
 
@@ -633,6 +654,24 @@ export const NewSkuDetail: React.FC<{
       ? `Matches existing SKU request ${eanMatch.request_id}${eanMatch.listing_name ? ` (${eanMatch.listing_name})` : ''}`
       : null);
   };
+
+  // A Suggested SKU that another open request already holds. The sheet has had
+  // several such collisions; creating the second one on EasyEcom would be refused
+  // (or, before that was guarded, would have overwritten the first product), so
+  // say so as soon as it shows on screen instead of at Create Listing. Derived —
+  // recomputed whenever the SKU or the request list changes, no blur needed.
+  const skuDupWarning = useMemo(() => {
+    const sku = form.suggested_sku.trim();
+    if (!sku) return null;
+    const source = (cachedRequests && cachedRequests.length > 0) ? cachedRequests : fallbackRequests;
+    const other = source.find(x =>
+      x.request_id !== activeRequestId &&
+      x.status !== 'REJECTED' &&
+      (String(x.suggested_sku || '').trim() === sku || String(x.ee_sku || '').trim() === sku)
+    );
+    if (!other) return null;
+    return `Also assigned to request ${other.request_id}${other.listing_name ? ` (${other.listing_name})` : ''} — use Auto-assign SKU for a free number`;
+  }, [form.suggested_sku, cachedRequests, fallbackRequests, activeRequestId]);
 
   // ─── Derived pricing calculations ───
   // Bracket lookup — finds highest floor ≤ value, returns that bracket's
@@ -780,6 +819,10 @@ export const NewSkuDetail: React.FC<{
     lastAutoCompare.current = pricing.compare_at_price;
   }, [pricing, pricingConfigLoaded]);
 
+  // AIR-priced item (RMB cost at/below the threshold) with no package weight yet:
+  // no landing cost, so EasyEcom and Zoho creation would be refused server-side.
+  const needsWeight  = !!pricing?.needsWeight;
+
   const currentSP    = Number(form.shopify_selling_price) || 0;
   const currentMRP   = Number(form.mrp) || 0;
   const landedCost   = pricing?.landing || 0;
@@ -858,8 +901,12 @@ export const NewSkuDetail: React.FC<{
     setSkuAssignSuccess(null);
     setSkuAssignError(null);
     try {
-      // Not auto-retried: may advance a sequential SKU counter server-side.
-      const result = await callGas(API_ACTIONS.GET_NEXT_AVAILABLE_SKU, { category: form.category });
+      // Not auto-retried: with a request_id the backend also reserves the number on
+      // that request's row, so a repeat call must not be fired blindly.
+      const result = await callGas(API_ACTIONS.GET_NEXT_AVAILABLE_SKU, {
+        category:   form.category,
+        request_id: activeRequestId || undefined,
+      });
       if (result.success) {
         updateField('suggested_sku', result.data.suggested_sku);
         setSkuAssignSuccess(result.data.suggested_sku);
@@ -899,81 +946,83 @@ export const NewSkuDetail: React.FC<{
   // after | = Article Number). One builder for the manual save, the blur/auto
   // save and the create-new-entry call, which each used to assemble this on
   // their own (with two slightly different join rules).
+  // Reads formRef, not the render's `form`: it is called from saves that run after
+  // an await, which would otherwise send an older form than the one on screen.
   const buildDraftForm = () => ({
-    ...form,
-    factory_code: serializeFactoryCode(form.factory_code_other, form.article_number),
+    ...formRef.current,
+    factory_code: serializeFactoryCode(formRef.current.factory_code_other, formRef.current.article_number),
   });
 
-  const handleSaveDraft = async () => {
-    setLoading(l => ({ ...l, save: true }));
-    try {
-      // Brand-new entry: handleCreateManualFirst alone creates the row AND
-      // writes the full form in one Apps Script call — nothing further
-      // needed. (Previously followed by a separate saveNewSkuDraft call;
-      // firing two Apps Script requests back-to-back for the same new row
-      // was unreliable, see handleCreateManualFirst.)
-      if (isNew) {
-        const newId = await handleCreateManualFirst();
-        if (!newId) return;
-        setSavedRequestId(newId);
-        setIsDirty(false);
-        setShowSaved(true);
-        setTimeout(() => setShowSaved(false), 2000);
-        return;
+  // The one place a draft is written. Every trigger — the Save Draft button, the
+  // blur / timed auto-save, and the pre-flight before Create Listing and each
+  // platform step — goes through here, one save at a time (chained), always
+  // reading the latest form. A brand-new entry's first save creates its row
+  // (CREATE_MANUAL_SKU writes the whole form in that one call); every later save
+  // of that same entry updates that row. It used to create ANOTHER row on every
+  // Save Draft click — the live sheet has one product three times over — and
+  // never auto-saved after the first save.
+  type SaveResult = { ok: boolean; error?: string };
+  const persistDraft = (): Promise<SaveResult> => {
+    const run = async (): Promise<SaveResult> => {
+      const id = isNew ? savedRequestIdRef.current : requestId;
+      if (id && !dirtyRef.current) return { ok: true };   // nothing to write
+      const version = formVersionRef.current;
+      const draft = buildDraftForm();
+      setLoading(l => ({ ...l, save: true }));
+      try {
+        // Both calls write to the sheet — never auto-retried.
+        if (!id) {
+          const created = await callGas(API_ACTIONS.CREATE_MANUAL_SKU, { created_by: getCurrentActor(), form: draft });
+          if (!created.success) return { ok: false, error: created.error || 'Failed to create the request' };
+          savedRequestIdRef.current = created.data.request_id;
+          setSavedRequestId(created.data.request_id);
+        } else {
+          const saved = await callGas(API_ACTIONS.SAVE_NEW_SKU_DRAFT, { request_id: id, edited_by: getCurrentActor(), form: draft });
+          if (!saved.success) return { ok: false, error: saved.error || 'Save failed' };
+        }
+        if (formVersionRef.current === version) {
+          dirtyRef.current = false;
+          setIsDirty(false);
+        }
+        return { ok: true };
+      } catch (err) {
+        console.error('persistDraft error:', err);
+        return { ok: false, error: 'Network error saving the draft' };
+      } finally {
+        setLoading(l => ({ ...l, save: false }));
       }
+    };
+    const result = saveChainRef.current.then(run);
+    saveChainRef.current = result.catch(() => undefined);
+    return result;
+  };
 
-      const result = await callGas(API_ACTIONS.SAVE_NEW_SKU_DRAFT, {
-        request_id: requestId,
-        edited_by:  getCurrentActor(),
-        form:       buildDraftForm(),
-      });
-      if (result.success) {
-        setIsDirty(false);
-        console.log('Draft saved:', result.data);
-        setShowSaved(true);
-        setTimeout(() => setShowSaved(false), 2000);
-      } else {
-        alert('Save failed: ' + result.error);
-      }
-    } catch (err) {
-      console.error('handleSaveDraft error:', err);
-      alert('Network error saving draft');
-    } finally {
-      setLoading(l => ({ ...l, save: false }));
+  const handleSaveDraft = async () => {
+    const result = await persistDraft();
+    if (result.ok) {
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 2000);
+    } else {
+      alert('Save failed: ' + result.error);
     }
   };
 
-  // Shared save path for both the immediate on-blur save and the timed
-  // auto-save below — same request, same validation, same backend action.
-  // Guards (isDirty / isNew / loading.save) make it safe to call from
-  // either trigger without producing duplicate or overlapping saves.
+  // Blur / timed auto-save. Only for a request that already has a row — a
+  // brand-new entry's FIRST save is the explicit Save Draft (or Create Listing).
   const handleBlurSave = async () => {
     // A field-triggered save (blur or auto-save) makes any pending timer redundant.
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
     }
-    if (!isDirty || isNew || loading.save) return;
-    setLoading(l => ({ ...l, save: true }));
-    try {
-      const result = await callGas(API_ACTIONS.SAVE_NEW_SKU_DRAFT, {
-        request_id: requestId,
-        edited_by:  getCurrentActor(),
-        form:       buildDraftForm(),
-      });
-      if (result.success) {
-        setIsDirty(false);
-        setSaveError(false);
-        setSavedToast(true);
-        setTimeout(() => setSavedToast(false), 2000);
-      } else {
-        setSaveError(true);
-      }
-    } catch(err) {
-      console.error('handleBlurSave error:', err);
+    if (!dirtyRef.current || !activeRequestId) return;
+    const result = await persistDraft();
+    if (result.ok) {
+      setSaveError(false);
+      setSavedToast(true);
+      setTimeout(() => setSavedToast(false), 2000);
+    } else {
       setSaveError(true);
-    } finally {
-      setLoading(l => ({ ...l, save: false }));
     }
   };
 
@@ -1010,7 +1059,7 @@ export const NewSkuDetail: React.FC<{
   // action as a normal save. On failure isDirty stays true, so the next
   // keystroke (new timer) or the eventual blur will retry automatically.
   useEffect(() => {
-    if (!isDirty || isNew) return;
+    if (!isDirty || !activeRequestId) return;
     autoSaveTimerRef.current = setTimeout(() => {
       handleBlurSave();
     }, 2500);
@@ -1021,7 +1070,7 @@ export const NewSkuDetail: React.FC<{
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form, isDirty, isNew]);
+  }, [form, isDirty, activeRequestId]);
 
   const handleAddVariant = async () => {
     if (isNew || !savedRequestId && requestId === 'NEW') {
@@ -1062,27 +1111,6 @@ export const NewSkuDetail: React.FC<{
       alert('Network error while adding variant');
     } finally {
       setAddingVariant(false);
-    }
-  };
-
-  // Helper: create manual request first if this is a new entry. Sends the
-  // full form in one call — the backend (apiCreateManualSkuRequest) writes
-  // every field, not just the skeleton, so this alone is a complete save
-  // for a brand-new entry. (A prior version split this into create-then-
-  // saveNewSkuDraft; firing those two Apps Script calls back-to-back was
-  // unreliable and could silently drop fields like suggested_sku/mrp.)
-  const handleCreateManualFirst = async (): Promise<string | null> => {
-    try {
-      const result = await callGas(API_ACTIONS.CREATE_MANUAL_SKU, {
-        created_by:  getCurrentActor(),
-        form:        buildDraftForm(),
-      });
-      if (result.success) return result.data.request_id;
-      alert('Failed to create request: ' + result.error);
-      return null;
-    } catch (err) {
-      console.error('handleCreateManualFirst error:', err);
-      return null;
     }
   };
 
@@ -1289,19 +1317,17 @@ export const NewSkuDetail: React.FC<{
   const [runSummary, setRunSummary] = useState<StepOutcome[] | null>(null);
 
   const handleCreateListing = async () => {
-    // Manual entry with no saved request yet — silently save the draft first
-    // (same call Save Draft makes) so the platform steps below have a real
-    // request_id to attach to, instead of forcing a separate Save Draft click.
-    let requestIdOverride: string | undefined;
-    if (isNew && !savedRequestId) {
-      setLoading(l => ({ ...l, save: true }));
-      const newId = await handleCreateManualFirst();
-      setLoading(l => ({ ...l, save: false }));
-      if (!newId) return;
-      setSavedRequestId(newId);
-      setIsDirty(false);
-      requestIdOverride = newId;
+    // Store the form first. The platform steps read the SHEET, not this screen —
+    // with a pending edit (auto-save waits 2.5s after typing) the product would be
+    // created on EasyEcom / Zoho / Shopify from the previous values. For a manual
+    // entry with no saved request yet this is also what creates its row, so the
+    // steps below have a request_id to attach to.
+    const flushed = await persistDraft();
+    if (!flushed.ok) {
+      alert('Your changes could not be saved, so nothing was created: ' + flushed.error);
+      return;
     }
+    const requestIdOverride: string | undefined = isNew ? (savedRequestIdRef.current || undefined) : undefined;
 
     setCreationStarted(true);
     setStepFailed({ ee: false, zoho: false, shopify: false, ee_po: false });
@@ -1344,6 +1370,13 @@ export const NewSkuDetail: React.FC<{
     handler: () => Promise<boolean>
   ) => {
     setStepFailed(f => ({ ...f, [step]: false }));
+    // Same pre-flight as Create Listing: the step reads the stored row.
+    const flushed = await persistDraft();
+    if (!flushed.ok) {
+      noteStepError(step, 'Your latest changes could not be saved first, so this step was not run: ' + flushed.error);
+      setStepFailed(f => ({ ...f, [step]: true }));
+      return;
+    }
     const ok = await handler();
     if (!ok) setStepFailed(f => ({ ...f, [step]: true }));
   };
@@ -1732,6 +1765,9 @@ export const NewSkuDetail: React.FC<{
                   onBlur={handleBlurSave}
                   placeholder="Auto-assigned or manual entry"
                 />
+                {skuDupWarning && (
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">⚠ {skuDupWarning}</p>
+                )}
               </div>
 
               {/* Row 2: Listing Name (full width) — hidden for Existing Variant when parent is found (shown below parent SKU instead) */}
@@ -2516,12 +2552,18 @@ export const NewSkuDetail: React.FC<{
                   <Button
                     variant="primary"
                     className="w-full text-xs"
-                    disabled={loading.save}
+                    disabled={loading.save || needsWeight}
+                    title={needsWeight ? 'Enter the package weight first' : undefined}
                     onClick={handleCreateListing}
                   >
                     <ChevronRightIcon className="w-4 h-4 mr-1" />
                     Create Listing
                   </Button>
+                  {needsWeight && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 -mt-1">
+                      Enter Pkg Weight first — items costing ¥{pricingConfig?.threshold ?? 40} or less ship by air and are priced per gram.
+                    </p>
+                  )}
                   {canDoStep('ee') && (
                     <button
                       onClick={() => setManualStepsExpanded(true)}
@@ -2536,15 +2578,16 @@ export const NewSkuDetail: React.FC<{
                   {([
                     { key: 'ee' as const,      label: 'EasyEcom',           actionLabel: 'Create on EasyEcom', handler: handleCreateEE,      attachActionLabel: 'Attach Existing EasyEcom SKU', attachHandler: handleAttachExistingEE, showPendingAction: false },
                     { key: 'zoho' as const,    label: 'Zoho',               actionLabel: 'Create on Zoho',     handler: handleCreateZoho,    attachActionLabel: 'Attach Existing Zoho Item',    attachHandler: handleAttachExistingZoho, showPendingAction: false },
-                    // Shopify has no "attach existing" option, so its pending row used
-                    // to render NO button at all — after a reload (or coming back to a
-                    // request whose Shopify step had failed) there was no way to run
-                    // it from here. showPendingAction gives it a plain action button.
-                    // Safe to press repeatedly: the backend links an existing listing
-                    // instead of creating a duplicate.
+                    // Shopify and the EE Purchase Order have no "attach existing" option, so
+                    // their pending rows used to render NO button at all — after a reload
+                    // (or coming back to a request whose step had failed) there was no way
+                    // to run them from here. showPendingAction gives them a plain action
+                    // button. Safe to press repeatedly: Shopify links an existing listing
+                    // instead of duplicating it, and the PO call is an update ('U') that
+                    // re-sends the same lines.
                     { key: 'shopify' as const, label: 'Shopify',            actionLabel: 'Create on Shopify',  handler: handleCreateShopify, attachActionLabel: null, attachHandler: null, showPendingAction: true },
                     ...(sourceData.shipment_id
-                      ? [{ key: 'ee_po' as const, label: 'EE Purchase Order', actionLabel: 'Update EE PO', handler: handleUpdateEEPO, attachActionLabel: null, attachHandler: null, showPendingAction: false }]
+                      ? [{ key: 'ee_po' as const, label: 'EE Purchase Order', actionLabel: 'Update EE PO', handler: handleUpdateEEPO, attachActionLabel: null, attachHandler: null, showPendingAction: true }]
                       : []),
                   ]).map(({ key, label, actionLabel, handler, attachActionLabel, attachHandler, showPendingAction }) => {
                     if (platformStatus[key]) {
@@ -2600,6 +2643,8 @@ export const NewSkuDetail: React.FC<{
                             <Button
                               variant="primary"
                               className="flex-1 text-xs"
+                              disabled={needsWeight}
+                              title={needsWeight ? 'Enter the package weight first' : undefined}
                               onClick={() => retryPlatform(key, handler)}
                             >
                               {actionLabel}
@@ -2861,23 +2906,3 @@ export const NewSkuDetail: React.FC<{
     </div>
   );
 };
-
-/*
-  GAS INTEGRATION — PHASE 2
-  
-  On mount: fetch({ action: 'getNewSkuRequestById', request_id: requestId })
-  On category change: fetch({ action: 'getNextAvailableSku', 
-                              product_type: form.category })
-                      → sets form.suggested_sku
-  On category change: fetch({ action: 'getTagsByProductType', 
-                              product_type: form.category })
-                      → sets form.relevant_tags
-  On Save Draft: fetch({ action: 'saveNewSkuDraft', payload: { ...form } })
-  Step 1: fetch({ action: 'createSkuOnEasyEcom', request_id: requestId })
-  Step 2: fetch({ action: 'createSkuOnZoho', request_id: requestId })
-  Step 3: fetch({ action: 'createSkuOnShopify', request_id: requestId })
-  Step 4: fetch({ action: 'updateEePurchaseOrder', request_id: requestId })
-  
-  All: POST to VITE_GAS_URL, Content-Type: text/plain;charset=utf-8
-  Pricing config: fetch({ action: 'getPricingConfig' }) on mount
-*/
