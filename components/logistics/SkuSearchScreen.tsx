@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { MagnifyingGlassIcon, BoxIcon, ArrowPathIcon, ShipIcon, AirplaneIcon } from '../icons/Icons';
 import { SkuShipmentSearchResult } from '../../types';
 import { callGasAuthed } from '../../services/gasApi';
@@ -17,31 +17,47 @@ interface SkuSearchScreenProps {
 // used to mean opening batches one at a time; this is a single search.
 export const SkuSearchScreen: React.FC<SkuSearchScreenProps> = ({ onNavigateToBatch }) => {
   const [query, setQuery] = useState('');
+  // The term the current results are actually for. `query` is the live text
+  // box, which moves on as the user types — the empty-state message and the
+  // "include Delivered" re-search must use what was searched, not what is
+  // half-typed now.
+  const [searchedQuery, setSearchedQuery] = useState('');
   const [includeDelivered, setIncludeDelivered] = useState(false);
   const [results, setResults] = useState<SkuShipmentSearchResult[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Each search is a slow Apps Script call; if a newer one starts before an
+  // older one returns, the older response must not overwrite the newer results.
+  const latestSearchRef = useRef(0);
+
   const runSearch = useCallback(async (q: string, delivered: boolean) => {
     const trimmed = q.trim();
-    if (!trimmed) { setResults([]); setHasSearched(false); return; }
+    const searchId = ++latestSearchRef.current;
+    if (!trimmed) { setResults([]); setHasSearched(false); setSearchedQuery(''); setIsLoading(false); return; }
 
     setIsLoading(true);
     setError(null);
     try {
       const result = await callGasAuthed('search_sku_shipments', { query: trimmed, includeDelivered: delivered });
+      if (searchId !== latestSearchRef.current) return; // superseded
       if (result.status === 'success') {
         setResults(result.results || []);
+        setSearchedQuery(trimmed);
       } else {
         throw new Error(result.message || 'Search failed');
       }
     } catch (err: any) {
+      if (searchId !== latestSearchRef.current) return;
       setError(err.message || 'Network error');
       setResults([]);
+      setSearchedQuery(trimmed);
     } finally {
-      setIsLoading(false);
-      setHasSearched(true);
+      if (searchId === latestSearchRef.current) {
+        setIsLoading(false);
+        setHasSearched(true);
+      }
     }
   }, []);
 
@@ -52,7 +68,7 @@ export const SkuSearchScreen: React.FC<SkuSearchScreenProps> = ({ onNavigateToBa
 
   const handleToggleDelivered = (checked: boolean) => {
     setIncludeDelivered(checked);
-    if (hasSearched) runSearch(query, checked);
+    if (hasSearched) runSearch(searchedQuery, checked);
   };
 
   return (
@@ -110,7 +126,7 @@ export const SkuSearchScreen: React.FC<SkuSearchScreenProps> = ({ onNavigateToBa
       ) : hasSearched && !isLoading && results.length === 0 ? (
         <div className="text-center py-24 bg-white dark:bg-slate-800 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 shadow-sm">
           <BoxIcon className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
-          <p className="text-lg text-slate-600 dark:text-slate-300 font-medium">No shipments found for "{query}"</p>
+          <p className="text-lg text-slate-600 dark:text-slate-300 font-medium">No shipments found for "{searchedQuery}"</p>
           <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">Try a different SKU code or item name{!includeDelivered && ', or include Delivered batches'}</p>
         </div>
       ) : (

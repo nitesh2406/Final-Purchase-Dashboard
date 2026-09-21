@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { API_ACTIONS } from '../../constants';
 import { callGas } from '../../services/gasApi';
+import { getCurrentActor } from '../../services/authToken';
+import { parseFactoryCode } from '../../utils/factoryCode';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { ReviewRequestsTab } from './ReviewRequestsTab';
@@ -18,7 +20,7 @@ import {
 // save push only the changed fields to whichever platform(s) they
 // actually belong to (EasyEcom / Zoho / Shopify). See
 // apiSearchSkuForUpdate / apiProvisionSkuForUpdate / apiUpdateSkuFields
-// in AppBuilding/18_newskuapi.gs for the backend side of this screen.
+// in NewSkuApi.js for the backend side of this screen.
 // ─────────────────────────────────────────
 
 interface SearchResult {
@@ -82,6 +84,16 @@ const NUMERIC_FIELDS = new Set<keyof SkuRecord>([
   'nw_gm', 'unit_price', 'lead_time', 'moq', 'threshold_qty', 'invoice_qty',
 ]);
 
+// A blank numeric input becomes 0 in this form, and a changed 0 is pushed to
+// EasyEcom/Zoho/Shopify as 0 — for a price that means a live listing at ₹0.
+// Same rule apiUpdateSkuFields enforces server-side; checked here first so
+// the user gets the message without a round trip.
+const PRICE_FIELD_LABELS: Partial<Record<keyof SkuRecord, string>> = {
+  mrp: 'MRP',
+  shopify_selling_price: 'Selling Price',
+  unit_price: 'Cost (RMB ¥)',
+};
+
 const FieldLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <label className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1 block">
     {children}
@@ -114,10 +126,17 @@ export const UpdateSkuScreen: React.FC<{
   const [form, setForm] = useState<SkuRecord | null>(null);
 
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSummary, setSaveSummary] = useState<{
     fields_saved: string[];
     platforms: { easyecom: string; zoho: string; shopify: string };
+    // Fields whose platform push failed — the sheet has them, the platform
+    // doesn't. Absent on responses from a backend that predates this field.
+    failed_fields?: string[];
   } | null>(null);
+  // Same list, kept after the popup closes so the Save card can say why the
+  // form still reads as "unsaved" and that pressing Save retries just those.
+  const [failedFields, setFailedFields] = useState<string[]>([]);
 
   // ─── EAN/Factory Code/Article Number duplicate check (warn, don't block) ───
   // Checked against live EE Product Master (not pending drafts, unlike the
@@ -149,10 +168,8 @@ export const UpdateSkuScreen: React.FC<{
     const eanMatch = ean && others.find(p => String(p.ean || '').trim() === ean);
     setEanDupWarning(eanMatch ? `Matches existing SKU ${eanMatch.sku}` : null);
 
-    const raw     = String(form.factory_code || '').trim();
-    const hasPipe = raw.includes('|');
-    const fc      = hasPipe ? raw.split('|')[0].trim() : '';
-    const an      = hasPipe ? raw.split('|')[1].trim() : raw;
+    // No pipe = Article Number (same rule as the Create SKU screen and the backend)
+    const { other: fc, article: an } = parseFactoryCode(form.factory_code);
 
     const fcMatch = fc && others.find(p => String(p.otherFactoryCode || '').trim() === fc);
     const anMatch = an && others.find(p => String(p.articleNumber || '').trim() === an);
@@ -235,6 +252,8 @@ export const UpdateSkuScreen: React.FC<{
         setOriginal(rec);
         setForm(rec);
         setSaveSummary(null);
+        setSaveError(null);
+        setFailedFields([]);
         setEanDupWarning(null);
         setFactoryDupWarning(null);
       } else {
@@ -274,6 +293,7 @@ export const UpdateSkuScreen: React.FC<{
 
   const updateField = (field: keyof SkuRecord, value: any) => {
     setForm(f => f ? { ...f, [field]: value } : f);
+    setSaveError(null);
   };
 
   const isDirty = !!(form && original && EDITABLE_FIELDS.some(f => form[f] !== original[f]));
@@ -286,22 +306,41 @@ export const UpdateSkuScreen: React.FC<{
     });
     if (Object.keys(changed).length === 0) return;
 
+    const badPrice = (Object.keys(PRICE_FIELD_LABELS) as (keyof SkuRecord)[])
+      .find(k => k in changed && !(Number(changed[k]) > 0));
+    if (badPrice) {
+      setSaveError(`${PRICE_FIELD_LABELS[badPrice]} must be greater than 0.`);
+      return;
+    }
+
     setSaving(true);
     setSaveSummary(null);
+    setSaveError(null);
     try {
+      // Sent straight to Apps Script (not the authed proxy), so this is a
+      // declared name for the audit trail, not a verified identity.
       const result = await callGas(API_ACTIONS.UPDATE_SKU_FIELDS, {
         request_id: form.request_id,
         fields:     changed,
-        updated_by: 'user',
+        updated_by: getCurrentActor(),
       });
       if (result.success) {
-        setOriginal(form);
+        // The sheet is always written first; a platform push can still fail.
+        // Keep those fields' "original" at the old value so the form stays
+        // dirty and pressing Save re-sends exactly them — before this, a
+        // partial failure marked everything saved and left the sheet and the
+        // platform silently out of step with no way to retry.
+        const failed: string[] = result.data.failed_fields || [];
+        const nextOriginal: SkuRecord = { ...form };
+        failed.forEach(f => { (nextOriginal as any)[f] = (original as any)[f]; });
+        setOriginal(nextOriginal);
+        setFailedFields(failed);
         setSaveSummary(result.data);
       } else {
-        alert('Save failed: ' + result.error);
+        setSaveError('Save failed: ' + result.error);
       }
     } catch (err) {
-      alert('Network error while saving');
+      setSaveError('Network error while saving');
       console.error('handleSave error:', err);
     } finally {
       setSaving(false);
@@ -581,14 +620,29 @@ export const UpdateSkuScreen: React.FC<{
 
           {/* Save */}
           <Card>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4">
               <p className="text-xs text-gray-400">
                 {isDirty ? 'Unsaved changes — save pushes only the fields you edited to their platform(s).' : 'No changes yet.'}
               </p>
               <Button variant="primary" onClick={handleSave} disabled={!isDirty || saving}>
-                {saving ? 'Saving...' : 'Save Changes'}
+                {saving ? 'Saving...' : failedFields.length > 0 && isDirty ? 'Retry Failed Push' : 'Save Changes'}
               </Button>
             </div>
+            {failedFields.length > 0 && isDirty && !saveError && (
+              <p className="mt-3 flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0" />
+                <span>
+                  Saved to the sheet, but {failedFields.length} field{failedFields.length === 1 ? '' : 's'} didn't reach a platform
+                  ({failedFields.join(', ')}). Press Retry to send just {failedFields.length === 1 ? 'that field' : 'those fields'} again.
+                </span>
+              </p>
+            )}
+            {saveError && (
+              <p className="mt-3 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0" />
+                <span>{saveError}</span>
+              </p>
+            )}
           </Card>
         </>
       )}
@@ -633,6 +687,12 @@ export const UpdateSkuScreen: React.FC<{
               <p className="text-xs text-gray-400 pt-1">
                 {saveSummary.fields_saved.length} field{saveSummary.fields_saved.length === 1 ? '' : 's'} saved to the sheet regardless of platform result.
               </p>
+              {!!saveSummary.failed_fields?.length && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  {saveSummary.failed_fields.length} field{saveSummary.failed_fields.length === 1 ? '' : 's'} didn't reach a platform and
+                  {saveSummary.failed_fields.length === 1 ? ' is' : ' are'} still marked unsaved — close this and press Retry.
+                </p>
+              )}
             </div>
             <div className="p-4 pt-0">
               <Button variant="secondary" className="w-full text-xs" onClick={() => setSaveSummary(null)}>

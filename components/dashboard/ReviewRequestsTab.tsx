@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_ACTIONS } from '../../constants';
-import { callGas } from '../../services/gasApi';
+import { callGas, callGasAuthed } from '../../services/gasApi';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import {
@@ -127,10 +127,12 @@ export const ReviewRequestsTab: React.FC = () => {
     setResolvingId(requestId);
     try {
       // Approve pushes the change live to EasyEcom — never auto-retried.
-      const result = await callGas(API_ACTIONS.RESOLVE_SKU_UPDATE_REQUEST, {
+      // Goes through the authed proxy so the backend gets the session-verified
+      // email (user_email): apiResolveSkuUpdateRequest checks it is an ADMIN
+      // and records it as the resolver, instead of trusting a client-sent name.
+      const result = await callGasAuthed(API_ACTIONS.RESOLVE_SKU_UPDATE_REQUEST, {
         request_id: requestId,
         decision,
-        resolved_by: 'user',
       });
       if (result.success) {
         setResultNote(result.data);
@@ -146,7 +148,11 @@ export const ReviewRequestsTab: React.FC = () => {
           return next;
         });
       } else {
-        alert('Failed to resolve request: ' + result.error);
+        alert('Failed to resolve request: ' + (result.error || result.message || 'unknown error'));
+        // Most likely someone else already resolved it (the backend now
+        // refuses anything that isn't PENDING) — reload so this card
+        // reflects the real status instead of offering Approve again.
+        fetchRequests(true);
       }
     } catch (err) {
       alert('Network error while resolving request');

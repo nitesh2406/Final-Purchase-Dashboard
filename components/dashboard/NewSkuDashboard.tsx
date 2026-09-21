@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { API_ACTIONS } from '../../constants';
 import { callGas } from '../../services/gasApi';
+import { getCurrentActor } from '../../services/authToken';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { PlusIcon, MagnifyingGlassIcon, ChevronRightIcon, ExclamationTriangleIcon, CheckBadgeIcon, ChevronDownIcon, ArrowPathIcon, XMarkIcon } from '../icons/Icons';
@@ -209,8 +210,13 @@ export const NewSkuDashboard: React.FC<{
         if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
       }
       if (vendorFilter !== 'ALL' && r.vendor_code !== vendorFilter) return false;
-      if (dateFrom && r.requested_at < dateFrom) return false;
-      if (dateTo && r.requested_at > dateTo) return false;
+      // requested_at is a full ISO timestamp, the pickers give YYYY-MM-DD:
+      // compare on the date part (UTC, same as formatDate shows it). Comparing
+      // the whole timestamp made "To" exclusive — "2026-09-21T05:19:43Z" is
+      // greater than "2026-09-21", so every row on the To date was dropped.
+      const requestedDay = (r.requested_at || '').slice(0, 10);
+      if (dateFrom && requestedDay < dateFrom) return false;
+      if (dateTo && requestedDay > dateTo) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         return (
@@ -229,11 +235,9 @@ export const NewSkuDashboard: React.FC<{
   );
 
   const toggleDebug = () => {
-    setDebugMode(prev => {
-      const next = !prev;
-      localStorage.setItem('skuDebugMode', String(next));
-      return next;
-    });
+    const next = !debugMode;
+    setDebugMode(next);
+    localStorage.setItem('skuDebugMode', String(next));
   };
 
   // ─── Per-row actions menu — retry a stuck Create Listing run, or mark an
@@ -257,15 +261,24 @@ export const NewSkuDashboard: React.FC<{
   // Re-fetches a single row from the backend (same derivation the dashboard
   // list itself uses) and patches it into local state — avoids hand-rolling
   // *_done/status derivation client-side after a retry or mark-complete call.
+  //
+  // Reads the current list through a ref instead of a setData(prev => …)
+  // updater, because the parent notification (onDataLoaded) is a setState in
+  // ANOTHER component — calling that from inside an updater function is a
+  // side effect in what React treats as a pure function (it warns, and runs
+  // it twice under Strict Mode). The ref is updated eagerly so two rows
+  // refreshing back to back don't overwrite each other.
+  const dataRef = React.useRef<SkuRequest[]>(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
   const refreshRow = async (requestId: string) => {
     try {
       const result = await callGas(API_ACTIONS.GET_NEW_SKU_REQUEST_BY_ID, { request_id: requestId }, 2);
       if (result.success && result.data) {
-        setData(prev => {
-          const next = prev.map(row => row.request_id === requestId ? { ...row, ...result.data } : row);
-          onDataLoaded(next);
-          return next;
-        });
+        const next = dataRef.current.map(row => row.request_id === requestId ? { ...row, ...result.data } : row);
+        dataRef.current = next;
+        setData(next);
+        onDataLoaded(next);
       }
     } catch (err) {
       console.error('refreshRow error:', err);
@@ -290,7 +303,11 @@ export const NewSkuDashboard: React.FC<{
       // Advances an external system (EasyEcom/Zoho/Shopify SKU creation) —
       // never auto-retried: a garbled response doesn't tell us whether the
       // create already happened, and retrying could double-create it.
-      const result = await callGas(nextStep.action, { request_id: r.request_id });
+      const result = await callGas(nextStep.action, {
+        request_id: r.request_id,
+        edited_by:  getCurrentActor(),
+        updated_by: getCurrentActor(),
+      });
       if (result.success) {
         await refreshRow(r.request_id);
         setOpenMenuId(null);
@@ -309,7 +326,7 @@ export const NewSkuDashboard: React.FC<{
     setRowBusy(prev => ({ ...prev, [r.request_id]: 'Mark Complete' }));
     setRowError(prev => ({ ...prev, [r.request_id]: null }));
     try {
-      const result = await callGas(API_ACTIONS.MARK_SKU_COMPLETE, { request_id: r.request_id, completed_by: 'user' });
+      const result = await callGas(API_ACTIONS.MARK_SKU_COMPLETE, { request_id: r.request_id, completed_by: getCurrentActor() });
       if (result.success) {
         await refreshRow(r.request_id);
         setOpenMenuId(null);
@@ -324,8 +341,6 @@ export const NewSkuDashboard: React.FC<{
     }
   };
 
-  const statusChips: (SkuStatus | 'ALL')[] = ['ALL', 'PENDING', 'IN_PROGRESS', 'ACTION_REQ', 'CREATED', 'REJECTED'];
-
   return (
     <div className="space-y-4 max-w-[1600px] mx-auto p-6 animate-in fade-in duration-500">
 
@@ -338,13 +353,21 @@ export const NewSkuDashboard: React.FC<{
             Manage new SKU creation requests across EasyEcom, Zoho and Shopify
           </p>
           <div className="flex items-center gap-3">
+            {/* Refresh — the list is loaded once per session and cached, so
+                requests raised by other people (or new shipments) never show
+                up otherwise. (Previously only reachable via Debug mode.) */}
+            <button
+              onClick={fetchRequests}
+              disabled={isLoading}
+              title="Reload requests from the server"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50"
+            >
+              <ArrowPathIcon className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
             {/* Debug toggle */}
             <button
-              onClick={() => {
-                const next = !debugMode;
-                setDebugMode(next);
-                localStorage.setItem('skuDebugMode', String(next));
-              }}
+              onClick={toggleDebug}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
                 debugMode
                   ? 'bg-amber-500 text-white'

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { API_ACTIONS } from '../../constants';
 import { callGas } from '../../services/gasApi';
+import { getCurrentActor } from '../../services/authToken';
+import { parseFactoryCode, serializeFactoryCode } from '../../utils/factoryCode';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { MarginGauge } from './MarginGauge';
@@ -220,6 +222,33 @@ const CATEGORIES = [
 // files (each fetches independently since they're separate modules).
 let skuCategoriesCache: string[] | null = null;
 
+// Same idea for the brand / variant dropdown options: they used to be
+// re-fetched (one after the other) on every open of this screen. Session-scoped
+// — a brand typed in is persisted and added to these locally (handleNewBrand).
+let brandOptionsCache: string[] | null = null;
+let variantOptionsCache: string[] | null = null;
+
+// Raw get_pricing_config response -> the shape the price calculator uses.
+// Shared by the copy App already holds and this screen's own fetch, so both
+// paths apply identical defaults. The fallbacks mirror calculatePricing_ in
+// NewSkuApi.js — keep the two in step.
+const normalizePricingConfig = (d: any): PricingConfig => ({
+  cny_conv_rate:    Number(d.cny_conv_rate)    || 14.36,
+  sea_multiplier:   Number(d.sea_multiplier)   || 1.35,
+  air_rate:         Number(d.air_rate)          || 1.6,
+  threshold:        Number(d.threshold)         || 40,
+  pick_pack:        Number(d.pick_pack)         || 85,
+  shopify_cost_pct: Number(d.shopify_cost_pct)  || 0.18,
+  min_margin_pct:   Number(d.min_margin_pct)    || 20,
+  gst_rate:         d.gst_rate !== undefined && d.gst_rate !== null ? Number(d.gst_rate) : 0.05,
+  cm1_brackets:        d.cm1_brackets,
+  cm1_floor_brackets:  d.cm1_floor_brackets,
+  cm3_target_brackets: d.cm3_target_brackets,
+  cm3_floor_brackets:  d.cm3_floor_brackets,
+  mrp_brackets:     d.mrp_brackets,
+  compare_brackets: d.compare_brackets,
+});
+
 // ─────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────
@@ -267,7 +296,11 @@ export const NewSkuDetail: React.FC<{
   // May be empty/stale if this page was opened without visiting the
   // dashboard first — a fallback fetch below covers that case.
   cachedRequests?: any[];
-}> = ({ requestId, onBack, cachedRequests }) => {
+  // The pricing config App already loaded for Settings (raw get_pricing_config
+  // data). Used to render suggested prices immediately; this screen still
+  // re-fetches in the background, because App's copy can be up to an hour old.
+  pricingConfig?: any;
+}> = ({ requestId, onBack, cachedRequests, pricingConfig: appPricingConfig }) => {
   const isNew = requestId === 'NEW';
 
   // Multi-listing (variant) support
@@ -372,13 +405,9 @@ export const NewSkuDetail: React.FC<{
           threshold_qty:         result.data.threshold_qty        || '',
           supplier_code:         result.data.supplier_code        || '',
           pack_size:             result.data.pack_size            || '',
-          factory_code_other: result.data.factory_code
-            ? String(result.data.factory_code).split('|')[0].trim()
-            : '',
-          article_number: result.data.factory_code &&
-            String(result.data.factory_code).includes('|')
-            ? String(result.data.factory_code).split('|')[1].trim()
-            : '',
+          // A value with no pipe is the Article Number (see utils/factoryCode.ts).
+          factory_code_other: parseFactoryCode(result.data.factory_code).other,
+          article_number:     parseFactoryCode(result.data.factory_code).article,
         }));
         return true;
       }
@@ -417,8 +446,10 @@ export const NewSkuDetail: React.FC<{
   };
 
   // Pricing config (fetched from GAS in production)
-  const [pricingConfig, setPricingConfig] = useState<PricingConfig | null>(null);
-  const [pricingConfigLoaded, setPricingConfigLoaded] = useState(false);
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig | null>(
+    () => appPricingConfig ? normalizePricingConfig(appPricingConfig) : null
+  );
+  const [pricingConfigLoaded, setPricingConfigLoaded] = useState(!!appPricingConfig);
   const [pricingConfigError, setPricingConfigError] = useState<string | null>(null);
   const [categoryOptions, setCategoryOptions] = useState<string[]>(skuCategoriesCache || CATEGORIES);
 
@@ -447,49 +478,47 @@ export const NewSkuDetail: React.FC<{
       try {
         const result = await callGas(API_ACTIONS.GET_PRICING_CONFIG, {}, 2);
         if (result.success) {
-          const d = result.data;
-          setPricingConfig({
-            cny_conv_rate:    Number(d.cny_conv_rate)    || 14.36,
-            sea_multiplier:   Number(d.sea_multiplier)   || 1.35,
-            air_rate:         Number(d.air_rate)          || 1.6,
-            threshold:        Number(d.threshold)         || 40,
-            pick_pack:        Number(d.pick_pack)         || 85,
-            shopify_cost_pct: Number(d.shopify_cost_pct)  || 0.18,
-            min_margin_pct:   Number(d.min_margin_pct)    || 20,
-            gst_rate:         d.gst_rate !== undefined && d.gst_rate !== null ? Number(d.gst_rate) : 0.05,
-            cm1_brackets:        d.cm1_brackets,
-            cm1_floor_brackets:  d.cm1_floor_brackets,
-            cm3_target_brackets: d.cm3_target_brackets,
-            cm3_floor_brackets:  d.cm3_floor_brackets,
-            mrp_brackets:     d.mrp_brackets,
-            compare_brackets: d.compare_brackets,
-          });
+          setPricingConfig(normalizePricingConfig(result.data));
           setPricingConfigLoaded(true);
           setPricingConfigError(null);
-        } else {
+        } else if (!appPricingConfig) {
+          // With App's copy already on screen a failed refresh isn't worth
+          // an error banner — the suggested prices are still usable.
           setPricingConfigError('Failed to load pricing config from server.');
         }
       } catch (err) {
         console.error('fetchPricingConfig error:', err);
-        setPricingConfigError('Network error loading pricing config.');
+        if (!appPricingConfig) setPricingConfigError('Network error loading pricing config.');
       }
     };
     fetchPricingConfig();
+    // Once per mount: App's copy (if any) only seeds the first render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Brands and variants are independent, so fetch them together (they were
+  // awaited one after the other — two full Apps Script round trips in series)
+  // and keep them for the session.
   useEffect(() => {
-    const fetchOptions = async () => {
-      try {
-        const bResult = await callGas(API_ACTIONS.GET_BRANDS, {}, 2);
-        if (bResult.success) setBrandOptions(bResult.data);
-
-        const vResult = await callGas(API_ACTIONS.GET_VARIANTS, {}, 2);
-        if (vResult.success) setVariantOptions(vResult.data);
-      } catch(err) {
-        console.error('fetchOptions error:', err);
+    if (brandOptionsCache && variantOptionsCache) return;
+    (async () => {
+      const [brands, variants] = await Promise.allSettled([
+        callGas(API_ACTIONS.GET_BRANDS, {}, 2),
+        callGas(API_ACTIONS.GET_VARIANTS, {}, 2),
+      ]);
+      if (brands.status === 'fulfilled' && brands.value.success) {
+        brandOptionsCache = brands.value.data;
+        setBrandOptions(brands.value.data);
+      } else if (brands.status === 'rejected') {
+        console.error('fetch brands error:', brands.reason);
       }
-    };
-    fetchOptions();
+      if (variants.status === 'fulfilled' && variants.value.success) {
+        variantOptionsCache = variants.value.data;
+        setVariantOptions(variants.value.data);
+      } else if (variants.status === 'rejected') {
+        console.error('fetch variants error:', variants.reason);
+      }
+    })();
   }, []);
 
   // Platform creation status
@@ -538,8 +567,8 @@ export const NewSkuDetail: React.FC<{
   const [parentSkuLoading, setParentSkuLoading] = useState(false);
   const [parentSkuError, setParentSkuError]     = useState<string | null>(null);
 
-  const [brandOptions, setBrandOptions]     = useState<string[]>([]);
-  const [variantOptions, setVariantOptions] = useState<string[]>([]);
+  const [brandOptions, setBrandOptions]     = useState<string[]>(brandOptionsCache || []);
+  const [variantOptions, setVariantOptions] = useState<string[]>(variantOptionsCache || []);
 
   // Debug mode (same localStorage key as list view)
   const [debugMode] = useState(
@@ -584,19 +613,12 @@ export const NewSkuDetail: React.FC<{
     const an  = form.article_number.trim();
     const ean = form.ean.trim();
 
-    const fcMatch = fc && others.find(x => {
-      const [otherFc] = String(x.factory_code || '').split('|').map((s: string) => s.trim());
-      return otherFc === fc;
-    });
+    const fcMatch = fc && others.find(x => parseFactoryCode(x.factory_code).other === fc);
     setFactoryDupWarning(fcMatch
       ? `Matches existing SKU request ${fcMatch.request_id}${fcMatch.listing_name ? ` (${fcMatch.listing_name})` : ''}`
       : null);
 
-    const anMatch = an && others.find(x => {
-      const parts = String(x.factory_code || '').split('|');
-      const otherAn = (parts[1] || '').trim();
-      return otherAn === an;
-    });
+    const anMatch = an && others.find(x => parseFactoryCode(x.factory_code).article === an);
     setArticleDupWarning(anMatch
       ? `Matches existing SKU request ${anMatch.request_id}${anMatch.listing_name ? ` (${anMatch.listing_name})` : ''}`
       : null);
@@ -861,6 +883,17 @@ export const NewSkuDetail: React.FC<{
     fetchTags();
   }, [form.category]);
 
+  // The form as the backend stores it. factory_code_other / article_number are
+  // UI-only halves of the single pipe-separated factory_code column — the
+  // backend splits it back at EasyEcom creation time (before | = AccountingSKU,
+  // after | = Article Number). One builder for the manual save, the blur/auto
+  // save and the create-new-entry call, which each used to assemble this on
+  // their own (with two slightly different join rules).
+  const buildDraftForm = () => ({
+    ...form,
+    factory_code: serializeFactoryCode(form.factory_code_other, form.article_number),
+  });
+
   const handleSaveDraft = async () => {
     setLoading(l => ({ ...l, save: true }));
     try {
@@ -881,18 +914,8 @@ export const NewSkuDetail: React.FC<{
 
       const result = await callGas(API_ACTIONS.SAVE_NEW_SKU_DRAFT, {
         request_id: requestId,
-        edited_by:  'user', // replace with user?.name if passed as prop
-        form: {
-          ...form,
-          // Combine factory code fields into single pipe-separated value
-          // for storage in factory_code column of New_SKU_Requests sheet
-          // Split happens at EE creation time (before | = AccountingSKU,
-          // after | = Article Number)
-          factory_code: [
-            form.factory_code_other,
-            form.article_number
-          ].filter(Boolean).join('|'),
-        },
+        edited_by:  getCurrentActor(),
+        form:       buildDraftForm(),
       });
       if (result.success) {
         setIsDirty(false);
@@ -925,13 +948,8 @@ export const NewSkuDetail: React.FC<{
     try {
       const result = await callGas(API_ACTIONS.SAVE_NEW_SKU_DRAFT, {
         request_id: requestId,
-        edited_by: 'user',
-        form: {
-          ...form,
-          factory_code: form.factory_code_other && form.article_number
-            ? `${form.factory_code_other}|${form.article_number}`
-            : form.factory_code_other || form.article_number || '',
-        }
+        edited_by:  getCurrentActor(),
+        form:       buildDraftForm(),
       });
       if (result.success) {
         setIsDirty(false);
@@ -962,11 +980,11 @@ export const NewSkuDetail: React.FC<{
     try {
       const result = await callGas(API_ACTIONS.ADD_BRAND, { brand });
       if (result.success) {
-        setBrandOptions(prev =>
-          prev.some(b => b.toLowerCase() === brand.toLowerCase())
-            ? prev
-            : [...prev, brand].sort()
-        );
+        const next = brandOptions.some(b => b.toLowerCase() === brand.toLowerCase())
+          ? brandOptions
+          : [...brandOptions, brand].sort();
+        brandOptionsCache = next;
+        setBrandOptions(next);
       } else {
         console.error('handleNewBrand (addBrand) failed:', result.error);
       }
@@ -1003,7 +1021,7 @@ export const NewSkuDetail: React.FC<{
     setAddingVariant(true);
     try {
       const result = await callGas(API_ACTIONS.CREATE_MANUAL_SKU, {
-        created_by: 'user',
+        created_by: getCurrentActor(),
         form: {
           listing_name:  form.listing_name,
           category:      form.category,
@@ -1046,14 +1064,8 @@ export const NewSkuDetail: React.FC<{
   const handleCreateManualFirst = async (): Promise<string | null> => {
     try {
       const result = await callGas(API_ACTIONS.CREATE_MANUAL_SKU, {
-        created_by:  'user',
-        form: {
-          ...form,
-          factory_code: [
-            form.factory_code_other,
-            form.article_number
-          ].filter(Boolean).join('|'),
-        },
+        created_by:  getCurrentActor(),
+        form:        buildDraftForm(),
       });
       if (result.success) return result.data.request_id;
       alert('Failed to create request: ' + result.error);
@@ -1070,7 +1082,8 @@ export const NewSkuDetail: React.FC<{
     try {
       // Creates the SKU on EasyEcom — never auto-retried.
       const result = await callGas(API_ACTIONS.CREATE_SKU_ON_EE, {
-        request_id: requestIdOverride || savedRequestId || requestId
+        request_id: requestIdOverride || savedRequestId || requestId,
+        edited_by:  getCurrentActor(),
       });
       if (result.success) {
         setPlatformStatus(p => ({ ...p, ee: true }));
@@ -1096,7 +1109,8 @@ export const NewSkuDetail: React.FC<{
     try {
       // Creates the SKU on Zoho — never auto-retried.
       const result = await callGas(API_ACTIONS.CREATE_SKU_ON_ZOHO, {
-        request_id: requestIdOverride || savedRequestId || requestId
+        request_id: requestIdOverride || savedRequestId || requestId,
+        edited_by:  getCurrentActor(),
       });
       if (result.success) {
         setPlatformStatus(p => ({ ...p, zoho: true }));
@@ -1122,7 +1136,8 @@ export const NewSkuDetail: React.FC<{
     setLoading(l => ({ ...l, ee: true }));
     try {
       const result = await callGas(API_ACTIONS.ATTACH_EXISTING_EE_SKU, {
-        request_id: savedRequestId || requestId
+        request_id: savedRequestId || requestId,
+        edited_by:  getCurrentActor(),
       });
       if (result.success) {
         setPlatformStatus(p => ({ ...p, ee: true }));
@@ -1147,7 +1162,8 @@ export const NewSkuDetail: React.FC<{
     setLoading(l => ({ ...l, zoho: true }));
     try {
       const result = await callGas(API_ACTIONS.ATTACH_EXISTING_ZOHO_ITEM, {
-        request_id: savedRequestId || requestId
+        request_id: savedRequestId || requestId,
+        edited_by:  getCurrentActor(),
       });
       if (result.success) {
         setPlatformStatus(p => ({ ...p, zoho: true }));
@@ -1174,6 +1190,7 @@ export const NewSkuDetail: React.FC<{
         request_id:   requestIdOverride || savedRequestId || requestId,
         parent_sku:   form.parent_sku   || '',
         listing_type: form.listing_type || '',
+        edited_by:    getCurrentActor(),
       });
       if (result.success) {
         setPlatformStatus(p => ({ ...p, shopify: true }));
@@ -1203,7 +1220,7 @@ export const NewSkuDetail: React.FC<{
     try {
       const result = await callGas(API_ACTIONS.UPDATE_EE_PO, {
         request_id: requestIdOverride || savedRequestId || requestId,
-        updated_by: 'user'
+        updated_by: getCurrentActor(),
       });
       if (result.success) {
         setPlatformStatus(p => ({ ...p, ee_po: true }));
@@ -1310,7 +1327,7 @@ export const NewSkuDetail: React.FC<{
       const result = await callGas(API_ACTIONS.REJECT_SKU_REQUEST, {
         request_id:  requestId,
         remark,
-        rejected_by: 'user'
+        rejected_by: getCurrentActor(),
       });
       if (result.success) {
         setSourceData(d => ({ ...d, status: 'REJECTED' }));
@@ -1329,7 +1346,7 @@ export const NewSkuDetail: React.FC<{
     try {
       const result = await callGas(API_ACTIONS.MARK_SKU_COMPLETE, {
         request_id:   requestId,
-        completed_by: 'user'
+        completed_by: getCurrentActor(),
       });
       if (result.success) {
         setSourceData(d => ({ ...d, status: 'CREATED' }));

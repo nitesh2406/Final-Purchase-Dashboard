@@ -711,6 +711,36 @@ const App: React.FC = () => {
         );
     }
 
+    // The Create SKU list is rendered from two places: the 'Create SKU' route
+    // and the 'SKU Detail' route when it has no :requestId (the fallback).
+    // Both used to spell out the full prop list separately — and the fallback
+    // copy had dropped onOpenUpdateSku, so a "Needs Attention" row clicked
+    // there did nothing different from a normal row.
+    const renderSkuDashboard = () => (
+        <NewSkuDashboard
+            onOpenDetail={(id) => {
+                navigate(viewToPath('SKU Detail', { requestId: id }));
+            }}
+            onOpenUpdateSku={(sku) => {
+                navigate(`${viewToPath('Update SKU')}?sku=${encodeURIComponent(sku)}`);
+            }}
+            cachedData={skuRequests}
+            onDataLoaded={(data) => {
+                setSkuRequests(data);
+                setSkuRequestsLoaded(true);
+            }}
+            dataLoaded={skuRequestsLoaded}
+            statusFilter={skuStatusFilter}
+            onStatusFilterChange={setSkuStatusFilter}
+            vendorFilter={skuVendorFilter}
+            onVendorFilterChange={setSkuVendorFilter}
+            dateFrom={skuDateFrom}
+            onDateFromChange={setSkuDateFrom}
+            dateTo={skuDateTo}
+            onDateToChange={setSkuDateTo}
+        />
+    );
+
     const renderContent = () => {
         switch (currentView) {
             case 'Dashboard':
@@ -842,54 +872,16 @@ const App: React.FC = () => {
                     onConfigUpdate={fetchAmazonConfig}
                 />;
             case 'Create SKU':
-                return <NewSkuDashboard
-                    onOpenDetail={(id) => {
-                        navigate(viewToPath('SKU Detail', { requestId: id }));
-                    }}
-                    onOpenUpdateSku={(sku) => {
-                        navigate(`${viewToPath('Update SKU')}?sku=${encodeURIComponent(sku)}`);
-                    }}
-                    cachedData={skuRequests}
-                    onDataLoaded={(data) => {
-                        setSkuRequests(data);
-                        setSkuRequestsLoaded(true);
-                    }}
-                    dataLoaded={skuRequestsLoaded}
-                    statusFilter={skuStatusFilter}
-                    onStatusFilterChange={setSkuStatusFilter}
-                    vendorFilter={skuVendorFilter}
-                    onVendorFilterChange={setSkuVendorFilter}
-                    dateFrom={skuDateFrom}
-                    onDateFromChange={setSkuDateFrom}
-                    dateTo={skuDateTo}
-                    onDateToChange={setSkuDateTo}
-                />;
+                return renderSkuDashboard();
             case 'SKU Detail':
                 return selectedSkuRequestId ? (
                     <NewSkuDetail
                         requestId={selectedSkuRequestId}
                         onBack={() => setCurrentView('Create SKU')}
                         cachedRequests={skuRequests}
+                        pricingConfig={pricingConfig}
                     />
-                ) : <NewSkuDashboard
-                    onOpenDetail={(id) => {
-                        navigate(viewToPath('SKU Detail', { requestId: id }));
-                    }}
-                    cachedData={skuRequests}
-                    onDataLoaded={(data) => {
-                        setSkuRequests(data);
-                        setSkuRequestsLoaded(true);
-                    }}
-                    dataLoaded={skuRequestsLoaded}
-                    statusFilter={skuStatusFilter}
-                    onStatusFilterChange={setSkuStatusFilter}
-                    vendorFilter={skuVendorFilter}
-                    onVendorFilterChange={setSkuVendorFilter}
-                    dateFrom={skuDateFrom}
-                    onDateFromChange={setSkuDateFrom}
-                    dateTo={skuDateTo}
-                    onDateToChange={setSkuDateTo}
-                />;
+                ) : renderSkuDashboard();
             case 'Update SKU':
                 return <UpdateSkuScreen
                     onBack={() => setCurrentView('Create SKU')}
