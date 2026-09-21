@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { callGas } from '../../services/gasApi';
 import { InventoryValuationRow } from '../../types';
 import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
+import { AggregatedRow, aggregateInventory, summarizeInventory, isZeroStock } from '../../utils/inventoryAggregation';
+import { toCsv, downloadCsv } from '../../utils/csv';
 import {
     ArchiveBoxIcon,
     CubeIcon,
@@ -14,25 +16,32 @@ import {
     ExclamationTriangleIcon,
 } from '../icons/Icons';
 
+// What the backend snapshot says about the data behind the rows — when the
+// sheet was last synced (not when this browser fetched it), and any warning
+// from a degraded sync. All optional: an older backend returns none of it.
+interface InventoryMeta {
+    generatedAt: string | null;
+    syncedAt: string | null;
+    amazonSyncedAt: string | null;
+    warning: string;
+}
+
 // Module-level cache, matching the pattern in ShipmentTracker.tsx — avoids
-// refetching every time the user navigates back to this tab.
-let inventoryCache: { rows: InventoryValuationRow[]; timestamp: number } | null = null;
+// refetching every time the user navigates back to this tab. It expires: the
+// backend now serves a precomputed snapshot (cheap to re-fetch), and without a
+// TTL a value cached at the wrong moment stayed on screen until Refresh.
+const CACHE_TTL_MS = 10 * 60 * 1000;
+// Sync normally runs daily; past this the numbers are worth a warning.
+const STALE_AFTER_HOURS = 36;
+// Reads can stall for minutes (measured 180s once); bound each attempt so the
+// retries below actually get a chance instead of the spinner hanging.
+const FETCH_TIMEOUT_MS = 45_000;
+
+let inventoryCache: { rows: InventoryValuationRow[]; meta: InventoryMeta; fetchedAt: number } | null = null;
 
 type SortColumn = 'sku' | 'name' | 'brand' | 'category' | 'in_stock' | 'inbound' | 'total_qty' | 'cost_inr' | 'cost_rmb' | 'valuation';
 type SortDirection = 'asc' | 'desc';
-
-interface AggregatedRow {
-    sku: string;
-    name: string | null;
-    brand: string | null;
-    category: string | null;
-    in_stock: number;
-    inbound: number;
-    total_qty: number;
-    cost_inr: number | null;
-    cost_rmb: number | null;
-    valuation: number | null;
-}
+type IssueFilter = 'All' | 'Unvalued' | 'Negative';
 
 function getSortValue(row: AggregatedRow, column: SortColumn): string | number {
     switch (column) {
@@ -53,6 +62,8 @@ function getSortValue(row: AggregatedRow, column: SortColumn): string | number {
 const formatNumber = (n: number) => n.toLocaleString('en-IN');
 const formatCurrency = (n: number | null) => n == null ? '—' : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 const formatRmb = (n: number | null) => n == null ? '—' : `¥${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+const formatStamp = (iso: string) => new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+const hoursSince = (iso: string) => (Date.now() - new Date(iso).getTime()) / 3_600_000;
 
 const SortableHeader: React.FC<{
     column: SortColumn;
@@ -77,6 +88,8 @@ const SortableHeader: React.FC<{
 
 export const InventoryValuation: React.FC = () => {
     const [rawRows, setRawRows] = useState<InventoryValuationRow[]>(inventoryCache?.rows || []);
+    const [meta, setMeta] = useState<InventoryMeta | null>(inventoryCache?.meta || null);
+    const [fetchedAt, setFetchedAt] = useState<number | null>(inventoryCache?.fetchedAt || null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -84,6 +97,10 @@ export const InventoryValuation: React.FC = () => {
     const [brand, setBrand] = useQueryParam<string>('brand', 'All');
     const [category, setCategory] = useQueryParam<string>('category', 'All');
     const [channel, setChannel] = useQueryParam<string>('channel', 'All');
+    const [issues, setIssues] = useQueryParam<IssueFilter>('issues', 'All');
+    // View preference, not a filter: 58% of SKUs hold no stock, so they're
+    // hidden unless asked for. '1' = include them.
+    const [includeZero, setIncludeZero] = useQueryParam<string>('zero', '0');
 
     // Column + direction live in one query param ("sku-asc") rather than two
     // separate useQueryParam hooks. Calling two react-router setSearchParams
@@ -98,23 +115,37 @@ export const InventoryValuation: React.FC = () => {
 
     // Raw access to the shared router search params, used only by
     // clearFilters below — same race as above would hit if it called
-    // setBrand/setCategory/setChannel synchronously, so it clears all three
+    // setBrand/setCategory/setChannel synchronously, so it clears them all
     // in one setSearchParams call instead.
     const [, setSearchParamsRaw] = useSearchParams();
 
     const fetchData = useCallback(async (forceRefresh = false) => {
-        if (!forceRefresh && inventoryCache) {
+        if (!forceRefresh && inventoryCache && Date.now() - inventoryCache.fetchedAt < CACHE_TTL_MS) {
             setRawRows(inventoryCache.rows);
+            setMeta(inventoryCache.meta);
+            setFetchedAt(inventoryCache.fetchedAt);
             return;
         }
         setIsLoading(true);
         setError(null);
         try {
-            const result = await callGas('get_inventory_valuation', {}, 2);
+            // `force` makes the backend rebuild from the live sheets instead of
+            // serving its snapshot (the Refresh button). Both are reads, so
+            // they're safe to retry.
+            const result = await callGas('get_inventory_valuation', forceRefresh ? { force: true } : {}, 2, FETCH_TIMEOUT_MS);
             if (result.status === 'success') {
                 const newRows: InventoryValuationRow[] = result.records || [];
+                const newMeta: InventoryMeta = {
+                    generatedAt: result.generatedAt || null,
+                    syncedAt: result.syncedAt || null,
+                    amazonSyncedAt: result.amazonSyncedAt || null,
+                    warning: result.warning || '',
+                };
+                const now = Date.now();
                 setRawRows(newRows);
-                inventoryCache = { rows: newRows, timestamp: Date.now() };
+                setMeta(newMeta);
+                setFetchedAt(now);
+                inventoryCache = { rows: newRows, meta: newMeta, fetchedAt: now };
             } else {
                 throw new Error(result.message || 'Failed to load inventory data');
             }
@@ -146,45 +177,20 @@ export const InventoryValuation: React.FC = () => {
         return Array.from(set).sort();
     }, [rawRows]);
 
+    // Everything the filters act on, before any of them is applied — used for
+    // the data-quality notice so it describes the whole picture for the
+    // selected channel, not just whatever the current filters leave visible.
+    const channelRows = useMemo(() => aggregateInventory(rawRows, channel), [rawRows, channel]);
+    const dataIssues = useMemo(() => summarizeInventory(channelRows), [channelRows]);
+
     const aggregatedRows = useMemo<AggregatedRow[]>(() => {
-        // Channel filter changes what gets summed, not just which rows show —
-        // "All" sums every channel's qty into one row per SKU; picking a
-        // channel re-aggregates using only that channel's rows.
-        const channelFiltered = channel === 'All' ? rawRows : rawRows.filter(r => r.channel === channel);
+        let result = channelRows;
 
-        const bySku = new Map<string, AggregatedRow>();
-        channelFiltered.forEach(row => {
-            const existing = bySku.get(row.sku);
-            if (existing) {
-                existing.in_stock += row.in_stock;
-                existing.inbound += row.inbound;
-            } else {
-                bySku.set(row.sku, {
-                    sku: row.sku,
-                    name: row.name,
-                    brand: row.brand,
-                    category: row.category,
-                    in_stock: row.in_stock,
-                    inbound: row.inbound,
-                    total_qty: 0,
-                    cost_inr: row.cost_inr,
-                    cost_rmb: row.cost_rmb,
-                    valuation: null,
-                });
-            }
-        });
-
-        let result: AggregatedRow[] = Array.from(bySku.values()).map(r => {
-            const total_qty = r.in_stock + r.inbound;
-            return {
-                ...r,
-                total_qty,
-                valuation: r.cost_inr == null ? null : total_qty * r.cost_inr,
-            };
-        });
-
+        if (includeZero !== '1') result = result.filter(r => !isZeroStock(r));
         if (brand !== 'All') result = result.filter(r => r.brand === brand);
         if (category !== 'All') result = result.filter(r => r.category === category);
+        if (issues === 'Unvalued') result = result.filter(r => r.unvalued);
+        if (issues === 'Negative') result = result.filter(r => r.hasNegative);
         if (search) {
             const s = search.toLowerCase();
             result = result.filter(r =>
@@ -194,22 +200,15 @@ export const InventoryValuation: React.FC = () => {
         }
 
         const dir = sortDirection === 'asc' ? 1 : -1;
-        result.sort((a, b) => {
+        return [...result].sort((a, b) => {
             const av = getSortValue(a, sortColumn);
             const bv = getSortValue(b, sortColumn);
             if (typeof av === 'string' && typeof bv === 'string') return dir * av.localeCompare(bv);
             return dir * ((av as number) - (bv as number));
         });
+    }, [channelRows, includeZero, brand, category, issues, search, sortColumn, sortDirection]);
 
-        return result;
-    }, [rawRows, channel, brand, category, search, sortColumn, sortDirection]);
-
-    const totals = useMemo(() => {
-        const totalSkus = aggregatedRows.length;
-        const totalQty = aggregatedRows.reduce((sum, r) => sum + r.total_qty, 0);
-        const totalValuation = aggregatedRows.reduce((sum, r) => sum + (r.valuation || 0), 0);
-        return { totalSkus, totalQty, totalValuation };
-    }, [aggregatedRows]);
+    const totals = useMemo(() => summarizeInventory(aggregatedRows), [aggregatedRows]);
 
     const handleSort = (column: SortColumn) => {
         if (sortColumn === column) {
@@ -226,34 +225,77 @@ export const InventoryValuation: React.FC = () => {
             params.delete('brand');
             params.delete('category');
             params.delete('channel');
+            params.delete('issues');
             return params;
         }, { replace: true });
     };
 
-    const hasActiveFilters = search !== '' || brand !== 'All' || category !== 'All' || channel !== 'All';
+    const hasActiveFilters = search !== '' || brand !== 'All' || category !== 'All' || channel !== 'All' || issues !== 'All';
+
+    const handleExport = () => {
+        const header = ['SKU', 'Name', 'Brand', 'Category', 'In Stock', 'Inbound', 'Total Qty', 'Landed Cost (INR)', 'Cost (RMB)', 'Valuation (INR)', 'Flags'];
+        const body = aggregatedRows.map(r => [
+            r.sku, r.name, r.brand, r.category, r.in_stock, r.inbound, r.total_qty, r.cost_inr, r.cost_rmb, r.valuation,
+            [r.hasNegative && 'Negative stock (valued as 0)', r.unvalued && 'No cost (not in valuation)'].filter(Boolean).join('; '),
+        ]);
+        downloadCsv(`inventory_valuation_${new Date().toISOString().split('T')[0]}.csv`, toCsv([header, ...body]));
+    };
+
+    // ── Freshness ──
+    const syncedAt = meta?.syncedAt || null;
+    const isStale = !!syncedAt && hoursSince(syncedAt) > STALE_AFTER_HOURS;
+    const amazonBehind = !!(syncedAt && meta?.amazonSyncedAt && meta.amazonSyncedAt !== syncedAt && !meta.warning);
+    // A failed load with nothing on screen is "no data", not "zero inventory":
+    // don't render 0 / ₹0 cards or a "nothing matches" message under the error.
+    const loadFailedEmpty = !!error && rawRows.length === 0;
 
     return (
         <div className="p-6 max-w-[1600px] mx-auto animate-in fade-in duration-500 pb-24">
             <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Inventory</h1>
-                    <p className="text-slate-500 dark:text-slate-400 mt-1">Current stock position and retail valuation across all channels</p>
+                    <p className="text-slate-500 dark:text-slate-400 mt-1">Current stock position and landed-cost valuation across all channels</p>
                 </div>
-                <button
-                    onClick={() => fetchData(true)}
-                    disabled={isLoading}
-                    className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                >
-                    <ArrowPathIcon className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-                    Refresh Data
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleExport}
+                        disabled={aggregatedRows.length === 0}
+                        className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                    >
+                        Export CSV
+                    </button>
+                    <button
+                        onClick={() => fetchData(true)}
+                        disabled={isLoading}
+                        className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                    >
+                        <ArrowPathIcon className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                        Refresh Data
+                    </button>
+                </div>
             </div>
+
+            {(meta?.warning || isStale || amazonBehind) && (
+                <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-xl p-4 mb-4 flex items-start gap-3">
+                    <ExclamationTriangleIcon className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                    <div className="text-sm text-amber-800 dark:text-amber-300 space-y-1">
+                        {meta?.warning && (
+                            <p>
+                                {meta.warning}
+                                {meta.amazonSyncedAt && /Amazon/.test(meta.warning) && <> Last successful Amazon refresh: {formatStamp(meta.amazonSyncedAt)}.</>}
+                            </p>
+                        )}
+                        {isStale && syncedAt && <p>Inventory was last synced {formatStamp(syncedAt)} — the numbers below may be out of date.</p>}
+                        {amazonBehind && meta?.amazonSyncedAt && <p>Amazon figures are from {formatStamp(meta.amazonSyncedAt)}, older than the rest.</p>}
+                    </div>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                 {[
-                    { label: 'Total SKUs', value: formatNumber(totals.totalSkus), icon: CubeIcon, color: 'text-blue-500' },
+                    { label: includeZero === '1' ? 'Total SKUs' : 'SKUs In Stock', value: formatNumber(totals.totalSkus), icon: CubeIcon, color: 'text-blue-500' },
                     { label: 'Total Quantity', value: formatNumber(totals.totalQty), icon: ArchiveBoxIcon, color: 'text-indigo-500' },
-                    { label: 'Total Valuation', value: formatCurrency(totals.totalValuation), icon: BanknotesIcon, color: 'text-emerald-500' },
+                    { label: 'Total Valuation (landed cost)', value: formatCurrency(totals.totalValuation), icon: BanknotesIcon, color: 'text-emerald-500' },
                 ].map((card, index) => {
                     const Icon = card.icon;
                     return (
@@ -262,11 +304,36 @@ export const InventoryValuation: React.FC = () => {
                                 <Icon className={`w-5 h-5 ${card.color}`} />
                                 <span className="text-sm text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wide">{card.label}</span>
                             </div>
-                            <div className="text-2xl font-bold text-slate-900 dark:text-slate-100">{card.value}</div>
+                            <div className="text-2xl font-bold text-slate-900 dark:text-slate-100">{loadFailedEmpty ? '—' : card.value}</div>
                         </div>
                     );
                 })}
             </div>
+
+            {(dataIssues.unvaluedSkus > 0 || dataIssues.negativeSkus > 0) && (
+                <div className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                    {dataIssues.unvaluedSkus > 0 && (
+                        <button
+                            onClick={() => setIssues(issues === 'Unvalued' ? 'All' : 'Unvalued')}
+                            className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400 hover:underline"
+                            title="Stocked SKUs with no cost in the EE Product Master (e.g. Discontinued / design categories). They count in Total Quantity but not in Total Valuation."
+                        >
+                            <ExclamationTriangleIcon className="w-3.5 h-3.5" />
+                            {formatNumber(dataIssues.unvaluedSkus)} SKU{dataIssues.unvaluedSkus !== 1 ? 's' : ''} ({formatNumber(dataIssues.unvaluedQty)} units) have no cost and are not in the valuation
+                        </button>
+                    )}
+                    {dataIssues.negativeSkus > 0 && (
+                        <button
+                            onClick={() => setIssues(issues === 'Negative' ? 'All' : 'Negative')}
+                            className="inline-flex items-center gap-1.5 text-red-600 dark:text-red-400 hover:underline"
+                            title="A source row reports negative stock. The figure is shown as reported, but valued as 0."
+                        >
+                            <ExclamationTriangleIcon className="w-3.5 h-3.5" />
+                            {formatNumber(dataIssues.negativeSkus)} SKU{dataIssues.negativeSkus !== 1 ? 's' : ''} with negative stock (valued as 0)
+                        </button>
+                    )}
+                </div>
+            )}
 
             <div className="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 mb-6 shadow-sm">
                 <div className="flex flex-col lg:flex-row gap-3">
@@ -304,7 +371,25 @@ export const InventoryValuation: React.FC = () => {
                         <option value="All">All Channels</option>
                         {channelOptions.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
+                    <select
+                        value={issues}
+                        onChange={(e) => setIssues(e.target.value as IssueFilter)}
+                        className="px-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                        <option value="All">All Data</option>
+                        <option value="Unvalued">No cost only</option>
+                        <option value="Negative">Negative stock only</option>
+                    </select>
                 </div>
+                <label className="flex items-center gap-2 mt-3 text-xs text-slate-500 dark:text-slate-400 font-medium cursor-pointer select-none w-fit">
+                    <input
+                        type="checkbox"
+                        checked={includeZero === '1'}
+                        onChange={(e) => setIncludeZero(e.target.checked ? '1' : '0')}
+                        className="rounded border-slate-300 dark:border-slate-600"
+                    />
+                    Include SKUs with no stock
+                </label>
             </div>
 
             {error && (
@@ -320,21 +405,26 @@ export const InventoryValuation: React.FC = () => {
                     <p className="text-[10px] text-slate-500 dark:text-slate-500 font-bold uppercase tracking-widest">
                         Showing {aggregatedRows.length} SKU{aggregatedRows.length !== 1 ? 's' : ''}
                     </p>
-                    {inventoryCache && (
+                    {(syncedAt || fetchedAt) && (
                         <span className="text-[9px] text-slate-400 dark:text-slate-500 italic">
-                            Last synced: {new Date(inventoryCache.timestamp).toLocaleTimeString()}
+                            {syncedAt
+                                ? `Data as of ${formatStamp(syncedAt)}`
+                                : `Fetched ${new Date(fetchedAt as number).toLocaleTimeString()}`}
                         </span>
                     )}
                 </div>
             )}
 
-            {isLoading && !inventoryCache ? (
+            {isLoading && rawRows.length === 0 ? (
                 <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 animate-pulse h-64 shadow-sm" />
-            ) : aggregatedRows.length === 0 ? (
+            ) : loadFailedEmpty ? null : aggregatedRows.length === 0 ? (
                 <div className="text-center py-24 bg-white dark:bg-slate-800 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 shadow-sm">
                     <ArchiveBoxIcon className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
                     <p className="text-lg text-slate-600 dark:text-slate-300 font-medium">No inventory matching your search</p>
-                    <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">Try adjusting your filters or clearing search query</p>
+                    <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">
+                        Try adjusting your filters or clearing search query
+                        {includeZero !== '1' && ' — SKUs with no stock are hidden'}
+                    </p>
                     {hasActiveFilters && (
                         <button
                             className="mt-6 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors text-sm font-medium"
@@ -357,7 +447,7 @@ export const InventoryValuation: React.FC = () => {
                                     <SortableHeader column="in_stock" label="In Stock" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
                                     <SortableHeader column="inbound" label="Inbound" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
                                     <SortableHeader column="total_qty" label="Total Qty" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
-                                    <SortableHeader column="cost_inr" label="Cost (INR)" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
+                                    <SortableHeader column="cost_inr" label="Landed Cost (INR)" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
                                     <SortableHeader column="cost_rmb" label="Cost (RMB)" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
                                     <SortableHeader column="valuation" label="Valuation" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} align="right" />
                                 </tr>
@@ -369,12 +459,28 @@ export const InventoryValuation: React.FC = () => {
                                         <td className="px-4 py-3 text-sm text-slate-800 dark:text-slate-300">{row.name || '—'}</td>
                                         <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-300 whitespace-nowrap">{row.brand || '—'}</td>
                                         <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-300 whitespace-nowrap">{row.category || '—'}</td>
-                                        <td className="px-4 py-3 text-right text-sm text-slate-900 dark:text-slate-100">{formatNumber(row.in_stock)}</td>
+                                        <td className={`px-4 py-3 text-right text-sm ${row.in_stock < 0 ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-slate-900 dark:text-slate-100'}`}>
+                                            {row.hasNegative && (
+                                                <span title="A source row reports negative stock. Shown as reported, valued as 0.">
+                                                    <ExclamationTriangleIcon className="w-3.5 h-3.5 inline mr-1 -mt-0.5 text-red-500" />
+                                                </span>
+                                            )}
+                                            {formatNumber(row.in_stock)}
+                                        </td>
                                         <td className="px-4 py-3 text-right text-sm text-slate-900 dark:text-slate-100">{formatNumber(row.inbound)}</td>
                                         <td className="px-4 py-3 text-right text-sm font-semibold text-slate-900 dark:text-slate-100">{formatNumber(row.total_qty)}</td>
                                         <td className="px-4 py-3 text-right text-sm text-slate-700 dark:text-slate-300">{formatCurrency(row.cost_inr)}</td>
                                         <td className="px-4 py-3 text-right text-sm text-slate-700 dark:text-slate-300">{formatRmb(row.cost_rmb)}</td>
-                                        <td className="px-4 py-3 text-right text-sm font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(row.valuation)}</td>
+                                        <td className="px-4 py-3 text-right text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                                            {row.unvalued ? (
+                                                <span
+                                                    title="No cost on file, so this stock is not in the valuation."
+                                                    className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                                                >
+                                                    No cost
+                                                </span>
+                                            ) : formatCurrency(row.valuation)}
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
