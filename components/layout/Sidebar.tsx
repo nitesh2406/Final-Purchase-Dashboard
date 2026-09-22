@@ -6,7 +6,7 @@ import {
   CurrencyDollarIcon, ChartBarIcon, Cog6ToothIcon, ChevronDoubleLeftIcon, BeakerIcon,
   PresentationChartLineIcon, DocumentTextIcon, ClipboardDocumentIcon, ListBulletIcon, CloudArrowUpIcon,
   CreditCardIcon, BuildingLibraryIcon, PencilSquareIcon,
-  ClipboardDocumentCheckIcon, ArchiveBoxIcon,
+  ClipboardDocumentCheckIcon, ArchiveBoxIcon, CheckBadgeIcon,
   GlobeAltIcon as MapIcon, BoxIcon as PackageIcon
 } from '../icons/Icons';
 
@@ -18,28 +18,38 @@ interface SidebarProps {
   user?: any;
 }
 
-const navItems: { name: ViewType; icon: React.ReactNode; wip?: boolean; group?: string }[] = [
+// `label` overrides what's displayed/titled without touching `name` (the
+// ViewType key used for routing, permissions and highlighting) — lets a tab
+// get a friendlier sidebar name without a deeper rename across routes.ts /
+// App.tsx / checkAllowed below.
+const navItems: { name: ViewType; label?: string; icon: React.ReactNode; wip?: boolean; group?: string }[] = [
   { name: 'Dashboard', icon: <ChartPieIcon className="w-6 h-6" />, group: 'Main', wip: true },
-  { name: 'Inventory Forecasting', icon: <PresentationChartLineIcon className="w-6 h-6" />, group: 'Main' },
-  { name: 'Inventory Analytics', icon: <ChartBarIcon className="w-6 h-6" />, group: 'Main', wip: true },
   { name: 'Inventory', icon: <ArchiveBoxIcon className="w-6 h-6" />, group: 'Main' },
+  { name: 'Inventory Analytics', label: 'Analytics', icon: <ChartBarIcon className="w-6 h-6" />, group: 'Main', wip: true },
+
+  { name: 'Inventory Forecasting', label: 'Demand Forecasting', icon: <PresentationChartLineIcon className="w-6 h-6" />, group: 'Forecasting' },
+  { name: 'Amazon Forecasting', icon: <ShoppingCartIcon className="w-6 h-6" />, group: 'Forecasting' },
+
   { name: 'Draft Orders', icon: <ListBulletIcon className="w-6 h-6" />, group: 'Procurement' },
   { name: 'Purchase Orders', icon: <ClipboardDocumentIcon className="w-6 h-6" />, group: 'Procurement' },
+  { name: 'Vendor Shipments', icon: <CloudArrowUpIcon className="w-6 h-6" />, group: 'Procurement' },
   { name: 'Create SKU', icon: <CubeIcon className="w-6 h-6" />, group: 'Procurement' },
   { name: 'Update SKU', icon: <PencilSquareIcon className="w-6 h-6" />, group: 'Procurement' },
-  { name: 'Vendor Shipments', icon: <CloudArrowUpIcon className="w-6 h-6" />, group: 'Logistics' },
-  { name: 'Shipment Tracker', icon: <TruckIcon className="w-6 h-6" />, group: 'Logistics' },
-  { name: 'CNF Agent Accounting', icon: <CurrencyDollarIcon className="w-6 h-6" />, group: 'Logistics' },
+  { name: 'Shipment Tracker', icon: <TruckIcon className="w-6 h-6" />, group: 'Procurement' },
+  // Placeholder tab — real screen not built yet, see App.tsx's 'Receive Shipment' case.
+  { name: 'Receive Shipment', icon: <CheckBadgeIcon className="w-6 h-6" />, group: 'Procurement', wip: true },
+
+  { name: 'CNF Agent Accounting', label: 'CNF Agent', icon: <CurrencyDollarIcon className="w-6 h-6" />, group: 'Finance' },
   { name: 'Payment Ledger', icon: <CreditCardIcon className="w-6 h-6" />, group: 'Finance', wip: true },
   { name: 'Settlement Ledger', icon: <BuildingLibraryIcon className="w-6 h-6" />, group: 'Finance', wip: true },
   { name: 'Accounts View', icon: <DocumentTextIcon className="w-6 h-6" />, group: 'Finance', wip: true },
-  { name: 'Amazon Forecasting', icon: <ShoppingCartIcon className="w-6 h-6" />, group: 'Amazon' },
+
   { name: 'Audit Log', icon: <ClipboardDocumentCheckIcon className="w-6 h-6" />, group: 'Other' },
   { name: 'Settings', icon: <Cog6ToothIcon className="w-6 h-6" />, group: 'Other' },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollapsed, setIsCollapsed, user }) => {
-  const groups = ['Main', 'Procurement', 'Logistics', 'Finance', 'Amazon', 'Other'];
+  const groups = ['Main', 'Forecasting', 'Procurement', 'Finance', 'Other'];
 
   const checkAllowed = (name: string, group: string) => {
     if (!user) return false;
@@ -47,21 +57,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollap
       return true;
     }
     const tabs = user.allowedTabs || [];
+    // Every check below is keyed by `name` (the stable ViewType), not
+    // `group` — groups got reshuffled for the sidebar regroup (2026-09-22)
+    // and a group-keyed rule would have silently changed who can see what
+    // (e.g. CNF Agent Accounting moving into the Finance group would have
+    // picked up the 'finance' tab gate below instead of its own 'shipments'
+    // gate, had these been left as group-based catch-alls).
     if (name === 'Dashboard') return true;
     if (name === 'Inventory Forecasting') return tabs.includes('forecasting');
+    if (name === 'Amazon Forecasting') return tabs.includes('forecasting') || tabs.includes('amazon');
     if (name === 'Draft Orders') return tabs.includes('drafts');
     if (name === 'Purchase Orders') return tabs.includes('purchase_orders');
     if (name === 'Vendor Shipments') return tabs.includes('shipments');
     if (name === 'Settings') return tabs.includes('settings');
-    if (group === 'Finance') return tabs.includes('finance');
-    if (group === 'Amazon') return tabs.includes('forecasting') || tabs.includes('amazon');
     if (name === 'Shipment Tracker') return tabs.includes('shipments');
+    if (name === 'Receive Shipment') return tabs.includes('shipments');
     if (name === 'CNF Agent Accounting') return tabs.includes('shipments');
     if (name === 'Inventory Analytics') return tabs.includes('forecasting');
     if (name === 'Inventory') return tabs.includes('forecasting');
     if (name === 'Create SKU') return tabs.includes('create_sku') || tabs.includes('drafts');
     if (name === 'Update SKU') return tabs.includes('create_sku') || tabs.includes('drafts');
     if (name === 'Audit Log') return tabs.includes('create_sku') || tabs.includes('drafts') || tabs.includes('purchase_orders') || tabs.includes('shipments');
+    if (group === 'Finance') return tabs.includes('finance');
     return false;
   };
 
@@ -87,7 +104,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollap
                 {items.map(item => (
                   <button
                     key={item.name}
-                    title={item.name}
+                    title={item.label || item.name}
                     onClick={() => setView(item.name)}
                     className={`w-full flex items-center p-2.5 text-sm font-medium rounded-lg transition-colors ${isCollapsed ? 'justify-center' : ''}
                       ${currentView === item.name
@@ -97,7 +114,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollap
                   >
                     {item.icon}
                     {!isCollapsed && (
-                      <span className="ml-3 flex-1 whitespace-nowrap text-left">{item.name}</span>
+                      <span className="ml-3 flex-1 whitespace-nowrap text-left">{item.label || item.name}</span>
                     )}
                   </button>
                 ))}

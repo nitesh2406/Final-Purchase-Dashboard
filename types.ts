@@ -717,4 +717,4 @@ export type ViewType =
   | 'Inventory Analytics' | 'Inventory' | 'Settings'
   | 'Payment Ledger' | 'Accounts View' | 'Settlement Ledger' | 'Cross Vendor Settlement'
   | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU' | 'Audit Log'
-  | 'CNF Agent Accounting';
+  | 'CNF Agent Accounting' | 'Receive Shipment';

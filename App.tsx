@@ -777,6 +777,18 @@ const App: React.FC = () => {
                 />;
             case 'Shipment Tracker':
                 return <ShipmentTracker isAdmin={user?.role === 'ADMIN'} />;
+            case 'Receive Shipment':
+                // Placeholder — the real screen gets stitched in from a
+                // separate standalone app's repo, matching this app's UI.
+                return (
+                    <div className="p-6 max-w-[1600px] mx-auto">
+                        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-6">Receive Shipment</h1>
+                        <div className="text-center py-24 bg-white dark:bg-slate-800 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 shadow-sm">
+                            <p className="text-lg text-slate-600 dark:text-slate-300 font-medium">Coming soon</p>
+                            <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">This screen is being built and will land here.</p>
+                        </div>
+                    </div>
+                );
             case 'CNF Agent Accounting':
                 return <CnfAgentAccounting />;
             case 'Batch Detail':
