@@ -20,11 +20,13 @@ import {
   SettlementRecord
 } from '../../services/settlementService';
 import { extractInvoiceAmount } from '../../services/geminiService';
-import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate, CnfInvoiceBatch } from '../../types';
+import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate, CnfInvoiceBatch, Batch } from '../../types';
 import { useSubmissionLock } from '../../hooks/useSubmissionLock';
+import { callGasAuthed } from '../../services/gasApi';
 
 export const CnfAgentAccounting: React.FC = () => {
   const [eligibleBatches, setEligibleBatches] = useState<CnfEligibleBatch[]>([]);
+  const [allBatches, setAllBatches] = useState<Batch[]>([]);
   const [purchaseInvoices, setPurchaseInvoices] = useState<PurchaseInvoice[]>([]);
   const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<CnfLedgerEntry[]>([]);
@@ -38,8 +40,9 @@ export const CnfAgentAccounting: React.FC = () => {
 
   const loadAll = async () => {
     setIsLoading(true);
-    const [batches, invoices, settlements, entries, rates, igst, invoiceBatchList] = await Promise.all([
+    const [batches, batchesResult, invoices, settlements, entries, rates, igst, invoiceBatchList] = await Promise.all([
       fetchCnfEligibleBatches(),
+      callGasAuthed('get_batches'),
       fetchPurchaseInvoices(),
       fetchSettlementRecords(),
       fetchCnfLedgerEntries(),
@@ -48,6 +51,10 @@ export const CnfAgentAccounting: React.FC = () => {
       fetchCnfInvoiceBatches()
     ]);
     setEligibleBatches(batches);
+    // get_batches already returns paid_amount_inr/blended_settlement_rate
+    // straight off the Batches sheet (see accounting_logger.js's
+    // syncBatchSettlementAggregate_) — no join/recompute needed here.
+    setAllBatches(batchesResult.status === 'success' ? (batchesResult.batches || []) : []);
     setPurchaseInvoices(invoices);
     setSettlementRecords(settlements);
     setLedgerEntries(entries);
@@ -58,6 +65,23 @@ export const CnfAgentAccounting: React.FC = () => {
   };
 
   useEffect(() => { loadAll(); }, []);
+
+  // Batch overview: every batch, joined against its CNF ledger entry (if
+  // logged). RMB value comes straight from get_batches (total_value_rmb); the
+  // INR value and ER are pre-computed server-side at vendor-settlement time
+  // (paid_amount_inr / blended_settlement_rate), never recomputed here.
+  const ledgerEntryByBatchId = useMemo(() => {
+    const map = new Map<string, CnfLedgerEntry>();
+    ledgerEntries.forEach(e => map.set(e.batchId, e));
+    return map;
+  }, [ledgerEntries]);
+
+  const batchOverviewRows = useMemo(() => {
+    return allBatches.map(b => ({
+      batch: b,
+      ledgerEntry: ledgerEntryByBatchId.get(b.batch_id) || null,
+    }));
+  }, [allBatches, ledgerEntryByBatchId]);
 
   // Pending queue: Delivered+settled batches with no CNF entry yet.
   const loggedBatchIds = useMemo(() => new Set(ledgerEntries.map(e => e.batchId)), [ledgerEntries]);
@@ -237,6 +261,71 @@ export const CnfAgentAccounting: React.FC = () => {
           Log CNF Entry
         </Button>
       </div>
+
+      <Card className="p-0 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+          <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">
+            All Shipments ({batchOverviewRows.length})
+          </h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            INR value and ER are only ever synced when a vendor payment settles — never recalculated on load.
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm border-collapse">
+            <thead>
+              <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 text-[11px] uppercase tracking-wider border-b">
+                <th className="px-4 py-3">Batch ID</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Value (RMB)</th>
+                <th className="px-4 py-3 text-right">Value (INR)</th>
+                <th className="px-4 py-3 text-right">ER</th>
+                <th className="px-4 py-3">CNF Category</th>
+                <th className="px-4 py-3 text-right">CNF Total Payable</th>
+                <th className="px-4 py-3">CNF Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {isLoading ? (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+              ) : batchOverviewRows.length === 0 ? (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No shipments found.</td></tr>
+              ) : batchOverviewRows.map(({ batch, ledgerEntry }) => (
+                <tr key={batch.batch_id}>
+                  <td className="px-4 py-3 font-mono">{batch.batch_id}</td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                      batch.status === 'Delivered'
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                        : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                    }`}>
+                      {batch.status === 'Delivered' ? 'Delivered' : 'Open'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono">
+                    ¥{(batch.total_value_rmb || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono">
+                    {batch.paid_amount_inr != null
+                      ? `₹${batch.paid_amount_inr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono">
+                    {batch.blended_settlement_rate != null ? batch.blended_settlement_rate.toFixed(4) : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                  </td>
+                  <td className="px-4 py-3">{ledgerEntry?.category || <span className="text-slate-300 dark:text-slate-600">—</span>}</td>
+                  <td className="px-4 py-3 text-right font-mono">
+                    {ledgerEntry ? `₹${ledgerEntry.totalPayable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {ledgerEntry ? (ledgerEntry.invoiceBatchId ? 'Billed' : 'Unbilled') : <span className="text-slate-400 italic">Not logged</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
       {pendingApprovalBatches.length > 0 && (
         <Card className="p-4 space-y-3">

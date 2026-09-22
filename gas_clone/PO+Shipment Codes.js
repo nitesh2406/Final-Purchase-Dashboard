@@ -2361,6 +2361,12 @@ function getBatches() {
     var trackingCol = batchHeaders.indexOf('tracking_number');
     var carrierCol = batchHeaders.indexOf('carrier');
     var notesCol = batchHeaders.indexOf('notes');
+    // Written by syncBatchSettlementAggregate_ (accounting_logger.js) at the
+    // moment a vendor payment settles an invoice under this batch — not
+    // computed here. -1 (column not created yet) means no payment has ever
+    // settled against this batch, handled as null below.
+    var paidAmountInrCol = batchHeaders.indexOf('paid_amount_inr');
+    var blendedSettlementRateCol = batchHeaders.indexOf('blended_settlement_rate');
 
     var shipBatchIdCol = shipmentHeaders.indexOf('batch_id');
     var shipmentIdCol = shipmentHeaders.indexOf('shipment_id');
@@ -2432,7 +2438,12 @@ function getBatches() {
           vendorNameMap[vnCode] = productData[vn][prodVendorNameCol] || vnCode;
         }
       }
-      try { scriptCache_.put(vendorNameMapCacheKey_, JSON.stringify(vendorNameMap), 300); } catch (e) {}
+      // 21600s (6h) — CacheService's max TTL, not the original 300s. Vendor
+      // names change rarely (see comment above), but a 5-minute window meant
+      // any gap that long between Shipment Tracker loads forced a full re-read
+      // of the multi-thousand-row EE Product Master sheet (the ~5s/25s+ cost
+      // documented above) on every single call. 6h makes that the rare case.
+      try { scriptCache_.put(vendorNameMapCacheKey_, JSON.stringify(vendorNameMap), 21600); } catch (e) {}
     }
 
     // Known SKU_Config prefixes, longest first, so a longer specific prefix
@@ -2630,6 +2641,13 @@ function getBatches() {
         delay_days: delayDays,
         ee_status: eeStatus,
         ee_push_error: firstEeError,
+        // Persisted at vendor-settlement time (see syncBatchSettlementAggregate_
+        // in accounting_logger.js), not computed here — null until a payment
+        // has settled at least one invoice under this batch.
+        paid_amount_inr: paidAmountInrCol >= 0 && batchesData[i][paidAmountInrCol] !== ''
+          ? (Number(batchesData[i][paidAmountInrCol]) || 0) : null,
+        blended_settlement_rate: blendedSettlementRateCol >= 0 && batchesData[i][blendedSettlementRateCol] !== ''
+          ? (Number(batchesData[i][blendedSettlementRateCol]) || null) : null,
         vendor_shipments: vendorShipments
       });
     }

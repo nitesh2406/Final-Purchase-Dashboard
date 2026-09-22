@@ -1319,6 +1319,10 @@ function fifoLiquidate_(vendorCode, date, paymentId, amountRmb, er2) {
 
   let remainingPayment = amountRmb;
   const round2 = v => Math.round(v * 100) / 100;
+  // Invoice ids this call actually settles (appended a SettlementLedger row
+  // for) — used below to refresh each affected batch's cached paid_amount_inr
+  // / blended_settlement_rate. See syncBatchSettlementAggregate_.
+  const settledInvoiceIds_ = [];
 
   // Was a full getDataRange().getValues() re-read of PurchaseInvoices on
   // EVERY loop iteration, purely to get header indices that never change
@@ -1348,6 +1352,7 @@ function fifoLiquidate_(vendorCode, date, paymentId, amountRmb, er2) {
       round2(-Math.abs(settledAmount)), er1, er2,
       round2(Math.abs(settledAmount) * (er1 - er2)), 'FIFO Settlement'
     ]);
+    settledInvoiceIds_.push(invoiceId);
     remainingPayment -= settledAmount;
   }
 
@@ -1399,6 +1404,137 @@ function fifoLiquidate_(vendorCode, date, paymentId, amountRmb, er2) {
   // other's settlement instead of accumulating it. Invalidate on every exit
   // path so the very next call (however soon) always reads fresh.
   invalidateSheetCache_('PurchaseInvoices');
+
+  if (settledInvoiceIds_.length > 0) {
+    syncBatchSettlementAggregatesForInvoices_(settledInvoiceIds_);
+  }
+}
+
+/**
+ * Given invoice ids that were just settled (SettlementLedger rows written for
+ * them in this same execution), finds every distinct batch they belong to
+ * (Vendor_Shipments.invoice_no -> batch_id) and refreshes each one's cached
+ * settlement aggregate. See syncBatchSettlementAggregate_ for what gets written
+ * and why.
+ */
+function syncBatchSettlementAggregatesForInvoices_(invoiceIds) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const shipmentsSheet = ss.getSheetByName('Vendor_Shipments');
+  if (!shipmentsSheet) return;
+  const shipValues = shipmentsSheet.getDataRange().getValues();
+  const shipHeaders = shipValues[0];
+  const invCol = shipHeaders.indexOf('invoice_no');
+  const batchCol = shipHeaders.indexOf('batch_id');
+  if (invCol === -1 || batchCol === -1) return;
+
+  const wantedInvoiceIds = {};
+  invoiceIds.forEach(function (id) { if (id) wantedInvoiceIds[String(id).trim()] = true; });
+
+  const batchIds = {};
+  for (let i = 1; i < shipValues.length; i++) {
+    const inv = String(shipValues[i][invCol] || '').trim();
+    if (wantedInvoiceIds[inv]) {
+      const b = String(shipValues[i][batchCol] || '').trim();
+      if (b) batchIds[b] = true;
+    }
+  }
+  Object.keys(batchIds).forEach(syncBatchSettlementAggregate_);
+}
+
+/**
+ * Recomputes a batch's total settled amount in INR and its RMB-weighted
+ * blended settlement rate from the authoritative SettlementLedger rows for
+ * every invoice under that batch (joined via Vendor_Shipments), and writes
+ * both onto the batch's own Batches row (paid_amount_inr,
+ * blended_settlement_rate, settlement_synced_at — columns auto-created via
+ * ensureHeaderColumn_ on first use). getBatches() then just reads these
+ * columns directly like any other Batches field — no join, no recomputation,
+ * on every page load.
+ *
+ * This is a FULL recompute every time, never an incremental add, so it can
+ * never drift from the true sum of SettlementLedger rows no matter how many
+ * times or in what order it runs. It mirrors the same math the frontend
+ * already computes live in services/settlementService.ts
+ * (computeBatchSettlementStatus / computeWeightedSettlementRate) — this just
+ * persists the result at payment time instead of re-joining 3 sheets on
+ * every read.
+ *
+ * Deliberately NOT the same thing as the blended-FX-rate-per-batch approach
+ * removed from getBatchDetails (see that function's comment, above): that old
+ * approach used one generic MONTHLY rate off a separate FXRates sheet,
+ * applied uniformly regardless of when each shipment/invoice actually
+ * settled. This instead sums the REAL per-settlement rate (SettlementLedger's
+ * own ER2) actually used at the moment each invoice was really paid — the
+ * same authoritative numbers the frontend's live computation already trusts.
+ *
+ * Reads SettlementLedger/Vendor_Shipments via raw getDataRange() rather than
+ * the cached getSheetData_ helper — this can run immediately after
+ * fifoLiquidate_/autoSettleAdvanceFromInvoice_ append new SettlementLedger
+ * rows in the SAME execution, and neither of those invalidates
+ * SettlementLedger's own read cache after writing.
+ */
+function syncBatchSettlementAggregate_(batchId) {
+  if (!batchId) return;
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const shipmentsSheet = ss.getSheetByName('Vendor_Shipments');
+  const ledgerSheet = ss.getSheetByName('SettlementLedger');
+  const batchesSheet = ss.getSheetByName('Batches');
+  if (!shipmentsSheet || !ledgerSheet || !batchesSheet) return;
+
+  const shipValues = shipmentsSheet.getDataRange().getValues();
+  const shipHeaders = shipValues[0];
+  const shipBatchCol = shipHeaders.indexOf('batch_id');
+  const shipInvCol = shipHeaders.indexOf('invoice_no');
+  if (shipBatchCol === -1 || shipInvCol === -1) return;
+
+  const invoiceIds = {};
+  for (let i = 1; i < shipValues.length; i++) {
+    if (String(shipValues[i][shipBatchCol] || '').trim() === String(batchId).trim()) {
+      const inv = String(shipValues[i][shipInvCol] || '').trim();
+      if (inv) invoiceIds[inv] = true;
+    }
+  }
+  if (!Object.keys(invoiceIds).length) return;
+
+  const ledgerValues = ledgerSheet.getDataRange().getValues();
+  const ledgerHeaders = ledgerValues[0];
+  const colInvoiceId = findHeaderIndex_(ledgerHeaders, 'Invoice ID');
+  const colRmb = ledgerHeaders.indexOf('RMB');
+  const colEr2 = ledgerHeaders.indexOf('ER2');
+  if (colInvoiceId === -1 || colRmb === -1 || colEr2 === -1) return;
+
+  let totalRmb = 0, totalInr = 0;
+  for (let j = 1; j < ledgerValues.length; j++) {
+    const invId = String(ledgerValues[j][colInvoiceId] || '').trim();
+    if (!invoiceIds[invId]) continue;
+    const rmb = Math.abs(Number(ledgerValues[j][colRmb]) || 0);
+    const er2 = Number(ledgerValues[j][colEr2]) || 0;
+    if (!rmb || !er2) continue;
+    totalRmb += rmb;
+    totalInr += rmb * er2;
+  }
+
+  const round2 = v => Math.round(v * 100) / 100;
+  const blendedRate = totalRmb > 0 ? totalInr / totalRmb : 0;
+
+  const batchValues = batchesSheet.getDataRange().getValues();
+  const batchHeaders = batchValues[0];
+  const batchIdCol = batchHeaders.indexOf('batch_id');
+  if (batchIdCol === -1) return;
+  let rowIndex = -1;
+  for (let k = 1; k < batchValues.length; k++) {
+    if (String(batchValues[k][batchIdCol] || '').trim() === String(batchId).trim()) { rowIndex = k + 1; break; }
+  }
+  if (rowIndex === -1) return;
+
+  const paidInrCol = ensureHeaderColumn_(batchesSheet, 'paid_amount_inr');
+  const blendedRateCol = ensureHeaderColumn_(batchesSheet, 'blended_settlement_rate');
+  const syncedAtCol = ensureHeaderColumn_(batchesSheet, 'settlement_synced_at');
+
+  batchesSheet.getRange(rowIndex, paidInrCol + 1).setValue(round2(totalInr));
+  batchesSheet.getRange(rowIndex, blendedRateCol + 1).setValue(totalRmb > 0 ? Math.round(blendedRate * 10000) / 10000 : '');
+  batchesSheet.getRange(rowIndex, syncedAtCol + 1).setValue(new Date().toISOString());
+  invalidateSheetCache_('Batches');
 }
 
 function logToVendorLedger_(vendorCode, date, particulars, refId, rmb) {
@@ -1528,6 +1664,10 @@ function autoSettleAdvanceFromInvoice_(vendorCode, date, invoiceId, amountRmb) {
   // class as fifoLiquidate_ — see the comment there).
   invalidateSheetCache_('PaymentLogs');
   invalidateSheetCache_('PurchaseInvoices');
+
+  if (invSettledTouched) {
+    syncBatchSettlementAggregatesForInvoices_([invoiceId]);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────

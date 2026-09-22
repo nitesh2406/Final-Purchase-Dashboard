@@ -498,6 +498,14 @@ export interface Batch {
   // finance fields below for those callers.
   vendor_shipments?: BatchVendorShipment[];
 
+  // Persisted by the backend (syncBatchSettlementAggregate_ in
+  // accounting_logger.js) the moment a vendor payment settles an invoice
+  // under this batch — never computed/joined on read. null until at least
+  // one payment has settled. Attached by get_batches (unlike the Finance
+  // fields below, which remain get_batch_details/admin-only).
+  paid_amount_inr?: number | null;
+  blended_settlement_rate?: number | null;
+
   // ── Finance fields — only ever attached by get_batch_details (Batch Detail
   // page), never by get_batches (Shipment Tracker). Genuinely absent here,
   // never present-but-null.
