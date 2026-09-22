@@ -34,16 +34,19 @@ let batchListCache: {
 
 let categoryCache: SkuCategory[] | null = null;
 
+// Every status gets its own hue family (not just a lighter/darker shade of a
+// neighbor) so no two are confusable at a glance — In-Transit India and Out
+// for Delivery used to both read as "green".
 const STATUS_CONFIG: Record<string, { label: string; badge: string }> = {
     'OPEN':              { label: 'Open',              badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
     'Shipped':           { label: 'Shipped',           badge: 'bg-purple-100 text-purple-700 dark:bg-purple-500/10 dark:text-purple-400' },
     'In-Transit China':  { label: 'In-Transit China',  badge: 'bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400' },
     'At Port China':     { label: 'At Port China',     badge: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-400' },
-    'In-Transit Ocean':  { label: 'In-Transit Ocean',  badge: 'bg-sky-100 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400' },
+    'In-Transit Ocean':  { label: 'In-Transit Ocean',  badge: 'bg-teal-100 text-teal-700 dark:bg-teal-500/10 dark:text-teal-400' },
     'In-Transit Air':    { label: 'In-Transit Air',    badge: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400' },
-    'Customs Clearance': { label: 'Customs Clearance', badge: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400' },
-    'In-Transit India':  { label: 'In-Transit India',  badge: 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400' },
-    'Out for Delivery':  { label: 'Out for Delivery',  badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' },
+    'Customs Clearance': { label: 'Customs Clearance', badge: 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' },
+    'In-Transit India':  { label: 'In-Transit India',  badge: 'bg-lime-100 text-lime-700 dark:bg-lime-500/10 dark:text-lime-400' },
+    'Out for Delivery':  { label: 'Out for Delivery',  badge: 'bg-pink-100 text-pink-700 dark:bg-pink-500/10 dark:text-pink-400' },
     'Delivered':         { label: 'Delivered',         badge: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300' },
 };
 

@@ -32,15 +32,20 @@ type Settlement = ReturnType<typeof computeBatchSettlementStatus>;
 // Status Badge Component
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const getColor = (status: string) => {
+    // Same distinct-hue-per-status set as ShipmentTracker.tsx's
+    // STATUS_CONFIG — kept in sync so a status reads the same color on
+    // both screens (In-Transit India and Out for Delivery used to both
+    // read as "green" here, and In-Transit Ocean duplicated the same blue
+    // as In-Transit China).
     const colors: Record<string, string> = {
       'Shipped': 'dark:bg-purple-400/10 text-purple-600 dark:text-purple-400',
       'In-Transit China': 'dark:bg-blue-400/10 text-blue-600 dark:text-blue-400',
       'At Port China': 'dark:bg-cyan-400/10 text-cyan-600 dark:text-cyan-400',
-      'In-Transit Ocean': 'dark:bg-blue-500/10 text-blue-600 dark:text-blue-500',
+      'In-Transit Ocean': 'dark:bg-teal-400/10 text-teal-600 dark:text-teal-400',
       'In-Transit Air': 'dark:bg-indigo-400/10 text-indigo-600 dark:text-indigo-400',
-      'Customs Clearance': 'dark:bg-yellow-400/10 text-yellow-600 dark:text-yellow-400',
-      'In-Transit India': 'dark:bg-green-400/10 text-green-600 dark:text-green-400',
-      'Out for Delivery': 'dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400',
+      'Customs Clearance': 'dark:bg-amber-400/10 text-amber-600 dark:text-amber-400',
+      'In-Transit India': 'dark:bg-lime-400/10 text-lime-600 dark:text-lime-400',
+      'Out for Delivery': 'dark:bg-pink-400/10 text-pink-600 dark:text-pink-400',
       'Delivered': 'dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-500',
       'OPEN': 'dark:bg-slate-400/10 text-slate-600 dark:text-slate-400',
     };
