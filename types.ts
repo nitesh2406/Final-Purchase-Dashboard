@@ -711,6 +711,18 @@ export interface InventoryValuationRow {
   cost_rmb: number | null;
 }
 
+// Product master record for the Receive Shipment barcode scanner — sourced
+// from a separate "EE Product Master" Google Sheet (see server/productMasterStore.ts),
+// not this app's main gas_clone data.
+export interface BarcodeProduct {
+  sku: string;
+  product_name: string;
+  mrp: string;
+  model_no?: string;
+  EANUPC?: string;
+  brand?: string;
+}
+
 export type ViewType =
   | 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders'
   | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance'

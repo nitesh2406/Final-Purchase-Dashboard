@@ -37,8 +37,7 @@ const navItems: { name: ViewType; label?: string; icon: React.ReactNode; wip?: b
   { name: 'Update SKU', icon: <PencilSquareIcon className="w-6 h-6" />, group: 'Procurement' },
 
   { name: 'Shipment Tracker', icon: <TruckIcon className="w-6 h-6" />, group: 'Logistics' },
-  // Placeholder tab — real screen not built yet, see App.tsx's 'Receive Shipment' case.
-  { name: 'Receive Shipment', icon: <CheckBadgeIcon className="w-6 h-6" />, group: 'Logistics', wip: true },
+  { name: 'Receive Shipment', icon: <CheckBadgeIcon className="w-6 h-6" />, group: 'Logistics' },
 
   { name: 'CNF Agent Accounting', label: 'CNF Agent', icon: <CurrencyDollarIcon className="w-6 h-6" />, group: 'Finance' },
   { name: 'Payment Ledger', icon: <CreditCardIcon className="w-6 h-6" />, group: 'Finance', wip: true },

@@ -3,6 +3,65 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Fonts for the Receive Shipment barcode label (Cubelelo label layout,
+   ported unchanged from the standalone barcode tool). */
+@font-face {
+  font-family: 'OCRB';
+  src: url('/ocrb.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Rubik-Light';
+  src: url('/Rubik-Light.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+/* Print isolation for the barcode label print portal (#print-only-area,
+   rendered via createPortal into document.body) — same convention as the
+   standalone barcode tool. Only relevant while Receive Shipment is printing
+   a label; harmless everywhere else since #print-only-area doesn't exist
+   outside that flow. */
+@media print {
+  #root,
+  .no-print {
+    display: none !important;
+  }
+  #print-only-area {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+  .print-label-item {
+    width: 50mm !important;
+    height: 30mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    page-break-inside: avoid !important;
+    page-break-after: always !important;
+    display: block !important;
+    background: #ffffff !important;
+  }
+  @page {
+    size: 50mm 30mm !important;
+    margin: 0 !important;
+  }
+}
+@media screen {
+  #print-only-area {
+    display: none !important;
+  }
+}
+
 :root {
   --background: 240 10% 3.9%;
   --foreground: 0 0% 98%;

@@ -2,6 +2,7 @@ import express from "express";
 import dns from "dns";
 import { GoogleGenAI } from "@google/genai";
 import { driveRouter } from "./driveRoutes.js";
+import { barcodeRouter } from "./barcodeRoutes.js";
 import { requireSession, verifyGoogleIdToken } from "./authMiddleware.js";
 import { issueSessionToken } from "./session.js";
 
@@ -151,6 +152,10 @@ export function createApiApp() {
 
   // Google Drive storage endpoints (Vendor Shipment document uploads)
   app.use("/api/drive", driveRouter);
+
+  // Product master lookup for the Receive Shipment barcode scanner (separate
+  // "EE Product Master" Google Sheet/Apps Script deployment — see productMasterStore.ts)
+  app.use("/api/barcode", barcodeRouter);
 
   // Apps Script Proxy Endpoint
   // Was previously unauthenticated with no URL allowlist — a classic SSRF
