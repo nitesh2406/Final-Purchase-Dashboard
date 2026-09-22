@@ -715,7 +715,7 @@ export interface InventoryValuationRow {
 
 export type ViewType =
   | 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders'
-  | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'SKU Item Search' | 'Finance'
+  | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance'
   | 'Inventory Analytics' | 'Inventory' | 'Settings'
   | 'Payment Ledger' | 'Accounts View' | 'Settlement Ledger' | 'Cross Vendor Settlement'
   | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU' | 'Audit Log'

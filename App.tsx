@@ -35,7 +35,6 @@ import { NewSkuDashboard } from './components/dashboard/NewSkuDashboard.tsx';
 import { NewSkuDetail } from './components/dashboard/NewSkuDetail.tsx';
 import { UpdateSkuScreen } from './components/dashboard/UpdateSkuScreen.tsx';
 import { AuditLogScreen } from './components/dashboard/AuditLogScreen.tsx';
-import { SkuSearchScreen } from './components/logistics/SkuSearchScreen.tsx';
 import { PaymentLedger } from './components/finance/PaymentLedger.tsx';
 import { AccountsView } from './components/finance/AccountsView.tsx';
 import { SettlementLedger } from './components/finance/SettlementLedger.tsx';
@@ -788,10 +787,6 @@ const App: React.FC = () => {
                         onBack={() => setCurrentView('Shipment Tracker')}
                     />
                 ) : <ShipmentTracker isAdmin={user?.role === 'ADMIN'} />;
-            case 'SKU Item Search':
-                return <SkuSearchScreen onNavigateToBatch={(id) => {
-                    navigate(viewToPath('Batch Detail', { batchId: id }));
-                }} />;
             case 'Finance':
                 return <Finance
                     invoices={invoices}

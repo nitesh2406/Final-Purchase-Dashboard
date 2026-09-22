@@ -84,6 +84,11 @@ function buildItemTypeOptions(categories: SkuCategory[]): { prefix: string; labe
 type SortColumn = BatchFilters['sortBy'];
 const cmpStr = (a: string, b: string) => (a || '').localeCompare(b || '');
 const cmpNum = (a: number, b: number) => a - b;
+
+// Shared by the batch-list filter (does this batch contain a matching line?)
+// and the expanded accordion (which line matched, so it can be highlighted).
+const lineMatchesTerm = (li: BatchLineItem, term: string) =>
+    String(li.sku || '').toLowerCase().includes(term) || String(li.item_name || '').toLowerCase().includes(term);
 const COLUMN_COMPARATORS: Record<SortColumn, (a: Batch, b: Batch) => number> = {
     batch_id: (a, b) => cmpStr(a.batch_id, b.batch_id),
     mode: (a, b) => cmpStr(a.batch_type, b.batch_type),
@@ -196,7 +201,7 @@ const FilterBar: React.FC<{
                         <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
                         <input
                             type="text"
-                            placeholder="Search by Batch ID, Tracking..."
+                            placeholder="Search by Batch ID, Tracking, SKU, or Item Name..."
                             value={filters.search}
                             onChange={(e) => setFilters({ ...filters, search: e.target.value })}
                             className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -320,7 +325,8 @@ const ShipmentLineTable: React.FC<{
     isAdmin: boolean;
     onToggleFlag: (lineId: string, flag: 'logo' | 'packaging' | 'manual' | 'opp_wrap', value: boolean) => void;
     savingKey: string | null;
-}> = ({ lineItems, isAdmin, onToggleFlag, savingKey }) => (
+    highlightTerm: string;
+}> = ({ lineItems, isAdmin, onToggleFlag, savingKey, highlightTerm }) => (
     <div className="bg-slate-50 dark:bg-slate-900/50 px-6 py-4">
         <div className="overflow-x-auto">
             <table className="w-full min-w-max text-sm">
@@ -337,8 +343,10 @@ const ShipmentLineTable: React.FC<{
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {lineItems.map(item => (
-                        <tr key={item.line_id} className="hover:bg-slate-100/60 dark:hover:bg-slate-800/50 transition-colors">
+                    {lineItems.map(item => {
+                        const isMatch = !!highlightTerm && lineMatchesTerm(item, highlightTerm);
+                        return (
+                        <tr key={item.line_id} className={`hover:bg-slate-100/60 dark:hover:bg-slate-800/50 transition-colors ${isMatch ? 'bg-yellow-100/70 dark:bg-yellow-400/10' : ''}`}>
                             <td className="py-2.5 px-3 font-mono text-xs font-medium text-blue-600 dark:text-blue-400 whitespace-nowrap">{item.sku}</td>
                             <td className="py-2.5 px-3 text-slate-800 dark:text-slate-300 whitespace-nowrap">{item.item_name}</td>
                             <td className="py-2.5 px-3 text-right font-bold text-slate-900 dark:text-white">{item.incoming_qty}</td>
@@ -357,7 +365,8 @@ const ShipmentLineTable: React.FC<{
                                 );
                             })}
                         </tr>
-                    ))}
+                        );
+                    })}
                 </tbody>
             </table>
         </div>
@@ -373,7 +382,8 @@ const ShipmentRow: React.FC<{
     onToggleFlag: (lineId: string, flag: 'logo' | 'packaging' | 'manual' | 'opp_wrap', value: boolean) => void;
     savingKey: string | null;
     onUpload: () => void;
-}> = ({ vendor, isExpanded, onToggle, isAdmin, onToggleFlag, savingKey, onUpload }) => {
+    highlightTerm: string;
+}> = ({ vendor, isExpanded, onToggle, isAdmin, onToggleFlag, savingKey, onUpload, highlightTerm }) => {
     const ChevronIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
     return (
         <div className="border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 overflow-hidden">
@@ -434,6 +444,7 @@ const ShipmentRow: React.FC<{
                     isAdmin={isAdmin}
                     onToggleFlag={onToggleFlag}
                     savingKey={savingKey}
+                    highlightTerm={highlightTerm}
                 />
             )}
         </div>
@@ -588,7 +599,8 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
             const s = filters.search.toLowerCase();
             filtered = filtered.filter(b =>
                 String(b.batch_id || '').toLowerCase().includes(s) ||
-                String(b.tracking_number || '').toLowerCase().includes(s)
+                String(b.tracking_number || '').toLowerCase().includes(s) ||
+                (b.vendor_shipments || []).some(v => v.line_items.some(li => lineMatchesTerm(li, s)))
             );
         }
         if (filters.status !== 'All') filtered = filtered.filter(b => b.status === filters.status);
@@ -604,10 +616,21 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
         return [...filtered].sort((a, b) => dir * cmp(a, b));
     }, [batches, filters]);
 
-    const handleRowClick = (batchId: string) => {
+    const handleRowClick = (batch: Batch) => {
         setOpenBatchId(prev => {
-            const next = prev === batchId ? null : batchId;
-            setOpenShipmentId(null);
+            const next = prev === batch.batch_id ? null : batch.batch_id;
+            if (next) {
+                // Opening while a SKU/item search is active: jump straight to
+                // the shipment containing the match instead of making the
+                // user re-find it by hand among possibly several shipments.
+                const term = filters.search.trim().toLowerCase();
+                const matchedShipment = term
+                    ? (batch.vendor_shipments || []).find(v => v.line_items.some(li => lineMatchesTerm(li, term)))
+                    : null;
+                setOpenShipmentId(matchedShipment ? matchedShipment.shipment_id : null);
+            } else {
+                setOpenShipmentId(null);
+            }
             return next;
         });
     };
@@ -688,11 +711,10 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
         <div className="p-6 max-w-[1600px] mx-auto animate-in fade-in duration-500 pb-24">
             <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Shipment Tracker</h1>
-                    <p className="text-slate-500 dark:text-slate-400 mt-1">
-                        Live tracking for inbound batches — payments &amp; settlement now live in CNF Agent Accounting
+                    <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+                        Shipment Tracker
                         {isAdmin && <span className="ml-2 px-2 py-0.5 bg-red-500/20 text-red-500 border border-red-500/30 rounded text-[10px] font-bold uppercase tracking-widest align-middle">Admin</span>}
-                    </p>
+                    </h1>
                 </div>
                 <Button
                     variant="secondary"
@@ -776,7 +798,7 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
                                     return (
                                         <React.Fragment key={batch.batch_id}>
                                             <tr
-                                                onClick={() => handleRowClick(batch.batch_id)}
+                                                onClick={() => handleRowClick(batch)}
                                                 className={`hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors cursor-pointer ${isOpen ? 'bg-blue-50/60 dark:bg-blue-500/5' : ''}`}
                                             >
                                                 <td className="px-4 py-3 font-mono font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">
@@ -848,6 +870,7 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
                                                                     savingKey={savingFlagKey}
                                                                     onToggleFlag={(lineId, flag, value) => handleToggleFlag(batch.batch_id, lineId, flag, value)}
                                                                     onUpload={() => setUploadTarget({ batchId: batch.batch_id, vendor: vendorShipment })}
+                                                                    highlightTerm={filters.search.trim().toLowerCase()}
                                                                 />
                                                             ))}
                                                         </div>

@@ -6,7 +6,7 @@ import {
   CurrencyDollarIcon, ChartBarIcon, Cog6ToothIcon, ChevronDoubleLeftIcon, BeakerIcon,
   PresentationChartLineIcon, DocumentTextIcon, ClipboardDocumentIcon, ListBulletIcon, CloudArrowUpIcon,
   CreditCardIcon, BuildingLibraryIcon, PencilSquareIcon,
-  ClipboardDocumentCheckIcon, MagnifyingGlassIcon, ArchiveBoxIcon,
+  ClipboardDocumentCheckIcon, ArchiveBoxIcon,
   GlobeAltIcon as MapIcon, BoxIcon as PackageIcon
 } from '../icons/Icons';
 
@@ -29,7 +29,6 @@ const navItems: { name: ViewType; icon: React.ReactNode; wip?: boolean; group?: 
   { name: 'Update SKU', icon: <PencilSquareIcon className="w-6 h-6" />, group: 'Procurement' },
   { name: 'Vendor Shipments', icon: <CloudArrowUpIcon className="w-6 h-6" />, group: 'Logistics' },
   { name: 'Shipment Tracker', icon: <TruckIcon className="w-6 h-6" />, group: 'Logistics' },
-  { name: 'SKU Item Search', icon: <MagnifyingGlassIcon className="w-6 h-6" />, group: 'Logistics' },
   { name: 'CNF Agent Accounting', icon: <CurrencyDollarIcon className="w-6 h-6" />, group: 'Logistics' },
   { name: 'Payment Ledger', icon: <CreditCardIcon className="w-6 h-6" />, group: 'Finance', wip: true },
   { name: 'Settlement Ledger', icon: <BuildingLibraryIcon className="w-6 h-6" />, group: 'Finance', wip: true },
@@ -57,7 +56,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollap
     if (group === 'Finance') return tabs.includes('finance');
     if (group === 'Amazon') return tabs.includes('forecasting') || tabs.includes('amazon');
     if (name === 'Shipment Tracker') return tabs.includes('shipments');
-    if (name === 'SKU Item Search') return tabs.includes('shipments');
     if (name === 'CNF Agent Accounting') return tabs.includes('shipments');
     if (name === 'Inventory Analytics') return tabs.includes('forecasting');
     if (name === 'Inventory') return tabs.includes('forecasting');

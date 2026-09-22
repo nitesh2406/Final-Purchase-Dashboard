@@ -12,7 +12,6 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   'Shipment Tracker': '/logistics/shipment-tracker',
   'CNF Agent Accounting': '/logistics/cnf-agent-accounting',
   'Batch Detail': '/logistics/shipment-tracker/:batchId',
-  'SKU Item Search': '/logistics/sku-search',
   'Finance': '/finance',
   'Inventory Analytics': '/inventory/analytics',
   'Inventory': '/inventory/valuation',
