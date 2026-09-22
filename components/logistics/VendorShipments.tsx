@@ -362,7 +362,12 @@ interface EnrichedRow {
     my_id_mismatch_value?: string | null;
 
     // Canonical fields from auto-detect
-    unit_price_base?: number;
+    // `| string` — the Invoice Price input (manual-line editing) deliberately
+    // stores the raw typed string here (not parsed on every keystroke) so an
+    // in-progress value like "12." or "" doesn't get snapped back to a
+    // computed display mid-edit; every read site already coerces with
+    // toNum()/Number(), so this just makes the type honest about that.
+    unit_price_base?: number | string;
     unit_price_box?: number;
     unit_price_blister?: number;
     unit_price_manual?: number;
@@ -1082,7 +1087,12 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     // Accept. Backend-auto-matched rows aren't affected, they move immediately
     // as before; match_type identifies which case a row is.
     const isLooksGood = (row: EnrichedRow) => {
-        if (row.match_status === 'MANUAL_ENTRY') return true;
+        // A freshly-added manual line starts with no SKU picked yet — only
+        // "looks good" once the user has actually assigned one (this used to
+        // return true unconditionally, so a line the user forgot to pick a
+        // SKU for sailed through every gate and silently vanished at
+        // allocation, since the backend skips any row with an empty SKU).
+        if (row.match_status === 'MANUAL_ENTRY') return !!(row.matched_sku || row.sku);
         if (row.match_status !== 'MATCH' && row.match_status !== 'MATCH_MULTIPLE_VARIANT') return false;
         if (row.match_type === 'Manual Match') return row.resolution_action === 'ACCEPT';
         return true;
@@ -1128,7 +1138,11 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     // match quality — price is intentionally NOT part of this gate; it's Step 3's
     // own concern, reviewed separately via its own per-flag actions.
     const isRowAccepted = (row: EnrichedRow) => {
-        if (row.match_status === 'MANUAL_ENTRY') return true;
+        // Same reasoning as isLooksGood above — a manual line with no SKU
+        // yet must not be treated as accepted, or it moves to Allocation
+        // and the backend silently drops it (apiAllocateToOpenPOs skips any
+        // row with an empty SKU).
+        if (row.match_status === 'MANUAL_ENTRY') return !!(row.matched_sku || row.sku);
         if (row.resolution_action === 'ACCEPT' || row.resolution_action === 'OVERRIDE') return true;
         if (!row.resolution_action
             && (row.match_status === 'MATCH' || row.match_status === 'MATCH_MULTIPLE_VARIANT')) return true;
@@ -1214,6 +1228,14 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             // "Approve All") wave one through without a real matched_sku.
             if (r.match_status === 'MISMATCH_MULTIPLE_VARIANT' && !r.matched_sku) {
                 acc.push({ row: r, reason: 'Multiple possible SKU matches — pick the correct one' });
+                return acc;
+            }
+            // A manual line is created with resolution_action already 'ACCEPT'
+            // (see handleAddManualLine) but no SKU — without this check it hits
+            // the resolution_action==='ACCEPT' branch below and is waved through
+            // with an empty SKU, which apiAllocateToOpenPOs then silently drops.
+            if (r.match_status === 'MANUAL_ENTRY' && !r.matched_sku && !r.sku) {
+                acc.push({ row: r, reason: 'Manual line needs a SKU selected' });
                 return acc;
             }
 
@@ -1365,7 +1387,13 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                 const rows = withAutoAccept(result.rows || []);
                 setValidationRows(rows);
                 setBackendIssues(result.issues || []);
-                if (result.shipmentId) setInvoiceNumber(result.shipmentId);
+                // Only fall back to the backend's internal placeholder ID
+                // (VS-<timestamp>, always present on a successful upload) when
+                // no real invoice number was actually parsed from the file —
+                // this used to run unconditionally and clobbered a correctly
+                // parsed invoice number on every single upload, directly
+                // contradicting the "Invoice No auto-filled" notice shown above.
+                if (result.shipmentId && !firstMeta?.invoiceMeta.invoiceNo) setInvoiceNumber(result.shipmentId);
 
                 setMatchingResultSummary({
                     total: rows.length,

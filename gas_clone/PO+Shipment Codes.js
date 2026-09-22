@@ -2016,6 +2016,24 @@ function updatePOStatus_(poId) {
   });
 }
 
+// Scans Vendor_Shipments for a row already stamped with this idempotency_key
+// — see the durable-idempotency comment in apiCreateVendorShipment for why
+// this exists alongside the CacheService check. `shipmentHeader` must already
+// include 'idempotency_key' (ensureHeaderColumn_ run by the caller first).
+function findVendorShipmentByIdempotencyKey_(shipmentSheet, shipmentHeader, key) {
+  var keyCol = shipmentHeader['idempotency_key'];
+  if (keyCol === undefined) return null;
+  var idCol = shipmentHeader['shipment_id'];
+  var createdCol = shipmentHeader['created_at'];
+  var data = shipmentSheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][keyCol] || '').trim() === key) {
+      return { shipment_id: data[i][idCol], created_at: data[i][createdCol] };
+    }
+  }
+  return null;
+}
+
 /**
  * API: Create Vendor Shipment
  */
@@ -2078,23 +2096,57 @@ function apiCreateVendorShipment(payload) {
 
   const now = new Date();
   const userEmail = Session.getActiveUser().getEmail();
-  
+
+  // Get sheets
+  const shipmentSheet = getSheet_(SHEET_NAMES.VENDOR_SHIPMENTS);
+  // Self-creating column (same pattern as has_logo/has_packaging on
+  // Vendor_Shipment_Lines) — must run before getHeaderMap_ so the new
+  // column is actually in the map appendRowFromObject_ writes against.
+  ensureHeaderColumn_(shipmentSheet, 'idempotency_key');
+  const shipmentHeader = getHeaderMap_(shipmentSheet);
+
+  // Durable idempotency guard — the CacheService check above only covers a
+  // retry within its own short window (60s "in progress" marker, or the 6h
+  // success-result cache written at the very end of this function). If this
+  // function throws partway through a PARTIAL commit (header row written,
+  // then a later step — lines, PO fulfillment, batch totals, EasyEcom push —
+  // fails), neither cache entry reflects that: the "in progress" marker just
+  // expires after 60s with nothing to show for it. A user who retries minutes
+  // later (the realistic case — they see an error, wait, click again) would
+  // sail straight through the CacheService check above and re-run this whole
+  // function from scratch, creating a second shipment/batch-total-increment/
+  // PO-fulfillment/EasyEcom-push for the same real shipment — the exact
+  // "double entry" bug this guard exists to close. Stamping the key onto the
+  // row itself (never expires, survives across executions) lets a retry find
+  // that a prior attempt already got this far. Returning a clear error here
+  // instead of a fabricated "success" is deliberate: we genuinely don't know
+  // whether the prior attempt finished (lines/PO fulfillment/batch totals
+  // may or may not have run), so silently reporting success could hide an
+  // incomplete shipment. Surfacing it tells the user exactly what to check
+  // instead of letting them believe nothing happened.
+  if (idempotency_key) {
+    var existingShip_ = findVendorShipmentByIdempotencyKey_(shipmentSheet, shipmentHeader, idempotency_key);
+    if (existingShip_) {
+      throw new Error(
+        'A shipment for this exact submission already exists (ID: ' + existingShip_.shipment_id +
+        ', created ' + Utilities.formatDate(new Date(existingShip_.created_at), Session.getScriptTimeZone(), 'dd-MMM HH:mm') +
+        '). Please check Shipment Tracker before retrying — do not resubmit. If it looks incomplete, contact an admin instead of clicking Finalize again.'
+      );
+    }
+  }
+
   // Create or use batch
   let finalBatchId = batch_id;
   if (batch_option === 'new') {
     finalBatchId = apiCreateBatch_(batch_type, userEmail);
   }
-  
+
   // Generate shipment ID
   const shipmentId = generateShipmentId_(vendor_code, new Date(shipment_date));
-  
-  // Get sheets
-  const shipmentSheet = getSheet_(SHEET_NAMES.VENDOR_SHIPMENTS);
-  const shipmentHeader = getHeaderMap_(shipmentSheet);
-  
+
   const lineSheet = getSheet_(SHEET_NAMES.VENDOR_SHIPMENT_LINES);
   const lineHeader = getHeaderMap_(lineSheet);
-  
+
   // Create shipment header
   appendRowFromObject_(shipmentSheet, shipmentHeader, {
     shipment_id: shipmentId,
@@ -2102,6 +2154,7 @@ function apiCreateVendorShipment(payload) {
     vendor_code: vendor_code,
     po_id: '',
     status: 'SHIPPED',
+    idempotency_key: idempotency_key || '',
     invoice_no: invoice_no || '',
     invoice_date: invoice_date ? new Date(invoice_date) : '',
     total_amount: total_amount,
