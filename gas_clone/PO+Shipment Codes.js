@@ -2567,8 +2567,11 @@ function getBatches() {
         // Formatting in the script's own timezone sidesteps that entirely.
         expected_delivery: expectedDelivery ? Utilities.formatDate(expectedDelivery, Session.getScriptTimeZone(), 'yyyy-MM-dd') : null,
         actual_delivery: actualDelivery ? Utilities.formatDate(actualDelivery, Session.getScriptTimeZone(), 'yyyy-MM-dd') : null,
-        tracking_number: batchesData[i][trackingCol] || '',
-        carrier: batchesData[i][carrierCol] || '',
+        // String() explicitly — an all-digit tracking number can come back
+        // from Sheets as a JS number, which crashed the frontend's sort
+        // comparator (.localeCompare is not a function on Number.prototype).
+        tracking_number: String(batchesData[i][trackingCol] || ''),
+        carrier: String(batchesData[i][carrierCol] || ''),
         notes: batchesData[i][notesCol] || '',
         is_delayed: isDelayed,
         delay_days: delayDays,

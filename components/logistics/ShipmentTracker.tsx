@@ -82,7 +82,11 @@ function buildItemTypeOptions(categories: SkuCategory[]): { prefix: string; labe
 // direction. A new column defaults to descending (same convention as the
 // Inventory tab's handleSort). expected_delivery is the initial page sort.
 type SortColumn = BatchFilters['sortBy'];
-const cmpStr = (a: string, b: string) => (a || '').localeCompare(b || '');
+// String() first, not just `|| ''` — a tracking number that's all digits can
+// come back from Sheets as a JS number (e.g. 123456789), and `(a || '')`
+// only coerces falsy values; a truthy number passes through untouched and
+// crashes `.localeCompare` (not a function on Number.prototype).
+const cmpStr = (a: string, b: string) => String(a || '').localeCompare(String(b || ''));
 const cmpNum = (a: number, b: number) => a - b;
 
 // Shared by the batch-list filter (does this batch contain a matching line?)
