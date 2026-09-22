@@ -15,8 +15,6 @@ interface EditBatchForm {
     expected_delivery: string;
     status: BatchStatus;
     notes: string;
-    total_amount: number;
-    total_currency: 'RMB' | 'USD';
 }
 
 interface EditBatchTrackingModalProps {
@@ -36,9 +34,7 @@ export const EditBatchTrackingModal: React.FC<EditBatchTrackingModalProps> = ({ 
         tracking_number: batch.tracking_number || '',
         expected_delivery: batch.expected_delivery ? batch.expected_delivery.split('T')[0] : '',
         status: batch.status,
-        notes: batch.notes || '',
-        total_amount: batch.total_amount || 0,
-        total_currency: batch.total_currency || 'RMB'
+        notes: batch.notes || ''
     });
     const [isSaving, setIsSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
@@ -72,7 +68,7 @@ export const EditBatchTrackingModal: React.FC<EditBatchTrackingModalProps> = ({ 
                 </button>
 
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1">Edit Tracking — {batch.batch_id}</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Update carrier, tracking, status, and amount for this batch.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Update carrier, tracking, ETA and status for this batch.</p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
@@ -97,25 +93,15 @@ export const EditBatchTrackingModal: React.FC<EditBatchTrackingModalProps> = ({ 
                             {BATCH_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                     </div>
-                    <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Amount</label>
-                        <input type="number" value={form.total_amount} onChange={e => setForm({ ...form, total_amount: Number(e.target.value) })}
-                            className="w-full mt-1 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-slate-100" />
-                    </div>
-                    <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Currency</label>
-                        <select value={form.total_currency} onChange={e => setForm({ ...form, total_currency: e.target.value as 'RMB' | 'USD' })}
-                            className="w-full mt-1 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-slate-100">
-                            <option value="RMB">RMB</option>
-                            <option value="USD">USD</option>
-                        </select>
-                    </div>
                     <div className="md:col-span-2">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Notes</label>
                         <input type="text" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
                             className="w-full mt-1 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-slate-100" placeholder="Internal notes..." />
                     </div>
                 </div>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-3">
+                    Payment status, amount and payment history have moved to CNF Agent Accounting.
+                </p>
 
                 {saveError && (
                     <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl p-3 mt-4">

@@ -777,12 +777,7 @@ const App: React.FC = () => {
                     productMasterList={skus}
                 />;
             case 'Shipment Tracker':
-                return <ShipmentTracker
-                    isAdmin={user?.role === 'ADMIN'}
-                    onNavigateToBatch={(id) => {
-                        navigate(viewToPath('Batch Detail', { batchId: id }));
-                    }}
-                />;
+                return <ShipmentTracker isAdmin={user?.role === 'ADMIN'} />;
             case 'CNF Agent Accounting':
                 return <CnfAgentAccounting />;
             case 'Batch Detail':
@@ -792,12 +787,7 @@ const App: React.FC = () => {
                         isAdmin={user?.role === 'ADMIN'}
                         onBack={() => setCurrentView('Shipment Tracker')}
                     />
-                ) : <ShipmentTracker
-                    isAdmin={user?.role === 'ADMIN'}
-                    onNavigateToBatch={(id) => {
-                        navigate(viewToPath('Batch Detail', { batchId: id }));
-                    }}
-                />;
+                ) : <ShipmentTracker isAdmin={user?.role === 'ADMIN'} />;
             case 'SKU Item Search':
                 return <SkuSearchScreen onNavigateToBatch={(id) => {
                     navigate(viewToPath('Batch Detail', { batchId: id }));

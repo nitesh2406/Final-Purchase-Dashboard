@@ -9,21 +9,23 @@ import {
     ShipIcon,
     AirplaneIcon,
     ArrowPathIcon,
-    PencilIcon
+    PencilIcon,
+    ChevronDownIcon,
+    ChevronRightIcon,
+    CheckIcon,
+    XMarkIcon,
+    LinkIcon,
+    CloudArrowUpIcon
 } from '../icons/Icons';
-import { Batch, BatchFilters, BatchMetrics, SkuCategory } from '../../types';
+import { Batch, BatchFilters, BatchMetrics, BatchVendorShipment, BatchLineItem, SkuCategory } from '../../types';
 import { callGasAuthed } from '../../services/gasApi';
 import { Button } from '../ui/Button';
 import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
+import { useSearchParams } from 'react-router-dom';
 import { EditBatchTrackingModal } from './EditBatchTrackingModal';
-import {
-    fetchPurchaseInvoices, fetchSettlementRecords, computeBatchSettlementStatus, computeWeightedSettlementRate,
-    PurchaseInvoice, SettlementRecord
-} from '../../services/settlementService';
+import { UploadShipmentDocsModal } from './UploadShipmentDocsModal';
 
-// Module-level cache — one shared cache now that Tracker and Finance are a
-// single screen (previously each had its own, which is what made an edit on
-// one screen look "stale" on the other until its own Refresh was clicked).
+// Module-level cache — survives switching tabs and back.
 let batchListCache: {
     batches: Batch[];
     metrics: BatchMetrics | null;
@@ -32,15 +34,8 @@ let batchListCache: {
 
 let categoryCache: SkuCategory[] | null = null;
 
-// Real payment/settlement state (Admin-only) — computed from PurchaseInvoices +
-// SettlementLedger, the same way CNF Agent Accounting already determines
-// "is this batch paid" (see computeBatchSettlementStatus's doc comment for
-// why: PurchaseInvoice.balance alone isn't reliable). getBatches' own
-// payment_status/amount_inr use a coarser Payments-sheet-total ÷ monthly FX
-// heuristic instead — kept for other consumers, but not used here anymore.
-let settlementCache: { purchaseInvoices: PurchaseInvoice[]; settlementRecords: SettlementRecord[] } | null = null;
-
 const STATUS_CONFIG: Record<string, { label: string; badge: string }> = {
+    'OPEN':              { label: 'Open',              badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
     'Shipped':           { label: 'Shipped',           badge: 'bg-purple-100 text-purple-700 dark:bg-purple-500/10 dark:text-purple-400' },
     'In-Transit China':  { label: 'In-Transit China',  badge: 'bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400' },
     'At Port China':     { label: 'At Port China',     badge: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-400' },
@@ -50,20 +45,10 @@ const STATUS_CONFIG: Record<string, { label: string; badge: string }> = {
     'In-Transit India':  { label: 'In-Transit India',  badge: 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400' },
     'Out for Delivery':  { label: 'Out for Delivery',  badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' },
     'Delivered':         { label: 'Delivered',         badge: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300' },
-    'OPEN':              { label: 'Open',              badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
 };
 
 const getStatusConfig = (status: string) =>
     STATUS_CONFIG[status] || { label: status, badge: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' };
-
-const PAYMENT_STATUS_BADGE: Record<string, string> = {
-    'Paid': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
-    'Partial': 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
-    'Unpaid': 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400',
-    // Not yet invoiced (e.g. still OPEN, pre-shipment) — distinct from a genuinely
-    // outstanding Unpaid balance, so it doesn't read as a payment problem.
-    'Not Invoiced': 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400',
-};
 
 const formatDate = (dateString: string | null) => {
     if (!dateString) return '—';
@@ -89,6 +74,60 @@ function buildItemTypeOptions(categories: SkuCategory[]): { prefix: string; labe
         }))
         .sort((a, b) => a.label.localeCompare(b.label));
 }
+
+// ── Sortable columns — click a header to sort by it, click again to flip
+// direction. A new column defaults to descending (same convention as the
+// Inventory tab's handleSort). expected_delivery is the initial page sort.
+type SortColumn = BatchFilters['sortBy'];
+const cmpStr = (a: string, b: string) => (a || '').localeCompare(b || '');
+const cmpNum = (a: number, b: number) => a - b;
+const COLUMN_COMPARATORS: Record<SortColumn, (a: Batch, b: Batch) => number> = {
+    batch_id: (a, b) => cmpStr(a.batch_id, b.batch_id),
+    mode: (a, b) => cmpStr(a.batch_type, b.batch_type),
+    status: (a, b) => cmpStr(a.status, b.status),
+    ee_status: (a, b) => cmpStr(a.ee_status || '', b.ee_status || ''),
+    expected_delivery: (a, b) => {
+        // No ETA always sorts last, regardless of direction — a batch with an
+        // unknown ETA isn't "earliest", it's unscheduled.
+        if (!a.expected_delivery && !b.expected_delivery) return 0;
+        if (!a.expected_delivery) return 1;
+        if (!b.expected_delivery) return -1;
+        return new Date(a.expected_delivery).getTime() - new Date(b.expected_delivery).getTime();
+    },
+    delay: (a, b) => cmpNum(a.is_delayed ? a.delay_days : 0, b.is_delayed ? b.delay_days : 0),
+    carrier: (a, b) => cmpStr(a.carrier, b.carrier),
+    tracking_number: (a, b) => cmpStr(a.tracking_number, b.tracking_number),
+    vendors: (a, b) => cmpNum(a.total_vendors, b.total_vendors),
+    cartons: (a, b) => cmpNum(a.total_cartons, b.total_cartons),
+    units: (a, b) => cmpNum(a.total_units, b.total_units),
+};
+
+const COLUMN_LABELS: Record<SortColumn, string> = {
+    batch_id: 'Batch ID', mode: 'Mode', status: 'Status', ee_status: 'EE PO',
+    expected_delivery: 'Expected Delivery', delay: 'Delay', carrier: 'Carrier',
+    tracking_number: 'Tracking Number', vendors: 'Vendors', cartons: 'Cartons', units: 'Units'
+};
+
+const SortableHeader: React.FC<{
+    column: SortColumn;
+    sortBy: SortColumn;
+    sortDir: 'asc' | 'desc';
+    onSort: (col: SortColumn) => void;
+    align?: 'left' | 'right';
+}> = ({ column, sortBy, sortDir, onSort, align = 'left' }) => {
+    const active = sortBy === column;
+    return (
+        <th
+            onClick={() => onSort(column)}
+            className={`px-4 py-3 cursor-pointer select-none hover:text-slate-700 dark:hover:text-slate-200 ${align === 'right' ? 'text-right' : 'text-left'}`}
+        >
+            {COLUMN_LABELS[column]}
+            <span className={`ml-1 text-[9px] ${active ? 'text-blue-500' : 'opacity-30'}`}>
+                {active ? (sortDir === 'asc' ? '▲' : '▼') : '▲▼'}
+            </span>
+        </th>
+    );
+};
 
 const DashboardCards: React.FC<{
     metrics: BatchMetrics | null;
@@ -145,8 +184,7 @@ const FilterBar: React.FC<{
     vendorOptions: string[];
     carrierOptions: string[];
     itemTypeOptions: { prefix: string; label: string }[];
-    isAdmin: boolean;
-}> = ({ filters, setFilters, vendorOptions, carrierOptions, itemTypeOptions, isAdmin }) => {
+}> = ({ filters, setFilters, vendorOptions, carrierOptions, itemTypeOptions }) => {
     return (
         <div className="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 mb-6 shadow-sm space-y-3">
             <div className="flex flex-col lg:flex-row lg:flex-wrap gap-3">
@@ -168,7 +206,7 @@ const FilterBar: React.FC<{
                     onChange={(e) => setFilters({ ...filters, status: e.target.value as any })}
                     className="px-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                    <option value="All">All Statuses</option>
+                    <option value="All">All Statuses (excl. Delivered)</option>
                     {Object.keys(STATUS_CONFIG).map(s => <option key={s} value={s}>{getStatusConfig(s).label}</option>)}
                 </select>
 
@@ -186,6 +224,16 @@ const FilterBar: React.FC<{
                         </button>
                     ))}
                 </div>
+
+                <label className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-500 dark:text-slate-400 cursor-pointer select-none">
+                    <input
+                        type="checkbox"
+                        checked={filters.showDelivered}
+                        onChange={(e) => setFilters({ ...filters, showDelivered: e.target.checked })}
+                        className="w-3.5 h-3.5 accent-blue-600"
+                    />
+                    Show Delivered
+                </label>
             </div>
 
             <div className="flex flex-col lg:flex-row lg:flex-wrap gap-3">
@@ -233,44 +281,167 @@ const FilterBar: React.FC<{
                         title="Shipped to"
                     />
                 </div>
-
-                {isAdmin && (
-                    <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700">
-                        {(['All', 'Unpaid', 'Partial', 'Paid'] as const).map(p => (
-                            <button
-                                key={p}
-                                onClick={() => setFilters({ ...filters, paymentStatus: p })}
-                                className={`px-3 py-1 rounded-md text-[10px] font-bold uppercase transition-all ${
-                                    (filters.paymentStatus || 'All') === p ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-                                }`}
-                            >
-                                {p}
-                            </button>
-                        ))}
-                    </div>
-                )}
-
-                <select
-                    value={filters.sortBy}
-                    onChange={(e) => setFilters({ ...filters, sortBy: e.target.value as any })}
-                    className="px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                    <option value="expected_delivery">Sort: Expected Delivery</option>
-                    <option value="batch_id">Sort: Batch ID</option>
-                    <option value="shipped_at">Sort: Shipped Date</option>
-                    <option value="total_value">Sort: Total Value</option>
-                </select>
             </div>
         </div>
     );
 };
 
+const CheckCell: React.FC<{
+    value: boolean;
+    isAdmin: boolean;
+    onToggle?: () => void;
+    isSaving?: boolean;
+}> = ({ value, isAdmin, onToggle, isSaving }) => {
+    if (!isAdmin) {
+        return value
+            ? <CheckIcon className="w-4 h-4 text-green-500 mx-auto" />
+            : <XMarkIcon className="w-4 h-4 text-slate-300 dark:text-slate-600 mx-auto" />;
+    }
+    return (
+        <input
+            type="checkbox"
+            checked={value}
+            disabled={isSaving}
+            onChange={(e) => { e.stopPropagation(); onToggle && onToggle(); }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-4 h-4 mx-auto block accent-blue-600 disabled:opacity-50 cursor-pointer"
+        />
+    );
+};
+
+// One shipment's SKU line items — always shown when the shipment row is
+// expanded (no further nesting; there's nothing useful to collapse below a
+// SKU row).
+const ShipmentLineTable: React.FC<{
+    lineItems: BatchLineItem[];
+    isAdmin: boolean;
+    onToggleFlag: (lineId: string, flag: 'logo' | 'packaging' | 'manual' | 'opp_wrap', value: boolean) => void;
+    savingKey: string | null;
+}> = ({ lineItems, isAdmin, onToggleFlag, savingKey }) => (
+    <div className="bg-slate-50 dark:bg-slate-900/50 px-6 py-4">
+        <div className="overflow-x-auto">
+            <table className="w-full min-w-max text-sm">
+                <thead>
+                    <tr className="border-b border-slate-300 dark:border-slate-700">
+                        {['SKU', 'Item Name', 'Incoming', 'Logo', 'Pkg', 'Manual', 'OPP'].map((label, i) => (
+                            <th
+                                key={label}
+                                className={`py-2.5 px-3 text-[10px] font-bold text-slate-500 dark:text-slate-500 uppercase tracking-wider ${i < 2 ? 'text-left' : i === 2 ? 'text-right' : 'text-center'}`}
+                            >
+                                {label}
+                            </th>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {lineItems.map(item => (
+                        <tr key={item.line_id} className="hover:bg-slate-100/60 dark:hover:bg-slate-800/50 transition-colors">
+                            <td className="py-2.5 px-3 font-mono text-xs font-medium text-blue-600 dark:text-blue-400 whitespace-nowrap">{item.sku}</td>
+                            <td className="py-2.5 px-3 text-slate-800 dark:text-slate-300 whitespace-nowrap">{item.item_name}</td>
+                            <td className="py-2.5 px-3 text-right font-bold text-slate-900 dark:text-white">{item.incoming_qty}</td>
+                            {(['logo', 'packaging', 'manual', 'opp_wrap'] as const).map(flag => {
+                                const value = flag === 'logo' ? !!item.has_logo : flag === 'packaging' ? !!item.has_packaging : flag === 'manual' ? !!item.has_manual : !!item.has_opp_wrap;
+                                const key = `${item.line_id}:${flag}`;
+                                return (
+                                    <td key={flag} className="py-2.5 px-3">
+                                        <CheckCell
+                                            value={value}
+                                            isAdmin={isAdmin}
+                                            isSaving={savingKey === key}
+                                            onToggle={() => onToggleFlag(item.line_id, flag, !value)}
+                                        />
+                                    </td>
+                                );
+                            })}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    </div>
+);
+
+const ShipmentRow: React.FC<{
+    vendor: BatchVendorShipment;
+    batchId: string;
+    isExpanded: boolean;
+    onToggle: () => void;
+    isAdmin: boolean;
+    onToggleFlag: (lineId: string, flag: 'logo' | 'packaging' | 'manual' | 'opp_wrap', value: boolean) => void;
+    savingKey: string | null;
+    onUpload: () => void;
+}> = ({ vendor, isExpanded, onToggle, isAdmin, onToggleFlag, savingKey, onUpload }) => {
+    const ChevronIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
+    return (
+        <div className="border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 overflow-hidden">
+            {/* A real <button> can't contain the nested Upload/View Documents
+                buttons (invalid HTML — button-in-button), so this is a div
+                with button semantics instead. */}
+            <div
+                role="button"
+                tabIndex={0}
+                onClick={onToggle}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+                className="w-full px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors flex items-center justify-between gap-3 flex-wrap text-left cursor-pointer"
+            >
+                <div className="flex items-center gap-3 flex-wrap">
+                    <ChevronIcon className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <span className="font-bold text-sm text-slate-900 dark:text-slate-100 uppercase tracking-tight">{vendor.vendor_code}</span>
+                    <span className="text-slate-300 dark:text-slate-600">|</span>
+                    <span className="text-sm text-slate-700 dark:text-slate-300">{vendor.vendor_name}</span>
+                    <span className="text-slate-300 dark:text-slate-600">|</span>
+                    <span className="text-xs text-slate-500">Invoice {vendor.invoiceId || '—'}</span>
+                    {vendor.ee_po_status === 'FAILED' && (
+                        <span
+                            title={vendor.ee_push_error || 'EasyEcom PO push failed'}
+                            className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-400/10"
+                        >
+                            ⚠ EE PO Failed
+                        </span>
+                    )}
+                </div>
+                <div className="flex items-center gap-4 flex-wrap">
+                    <span className="text-xs text-slate-500">{vendor.carton_count} cartons · {vendor.total_units} units</span>
+                    {vendor.drive_folder_url ? (
+                        <a
+                            href={vendor.drive_folder_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                        >
+                            <LinkIcon className="w-3.5 h-3.5" /> View Documents
+                        </a>
+                    ) : (
+                        <span className="text-xs text-slate-400 dark:text-slate-600 italic">No documents yet</span>
+                    )}
+                    {isAdmin && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onUpload(); }}
+                            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                        >
+                            <CloudArrowUpIcon className="w-3.5 h-3.5" /> {vendor.drive_folder_url ? 'Add More' : 'Upload Documents'}
+                        </button>
+                    )}
+                </div>
+            </div>
+            {isExpanded && (
+                <ShipmentLineTable
+                    lineItems={vendor.line_items}
+                    isAdmin={isAdmin}
+                    onToggleFlag={onToggleFlag}
+                    savingKey={savingKey}
+                />
+            )}
+        </div>
+    );
+};
+
 interface ShipmentTrackerProps {
-    onNavigateToBatch?: (id: string) => void;
     isAdmin?: boolean;
 }
 
-export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBatch, isAdmin = false }) => {
+export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = false }) => {
     const [batches, setBatches] = useState<Batch[]>(batchListCache?.batches || []);
     const [metrics, setMetrics] = useState<BatchMetrics | null>(batchListCache?.metrics || null);
     const [categories, setCategories] = useState<SkuCategory[]>(categoryCache || []);
@@ -285,12 +456,28 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
     const [dateFrom, setDateFrom] = useQueryParam<string>('dateFrom', '');
     const [dateTo, setDateTo] = useQueryParam<string>('dateTo', '');
     const [itemTypePrefix, setItemTypePrefix] = useQueryParam<string>('itemType', 'All');
-    const [sortBy, setSortBy] = useQueryParam<BatchFilters['sortBy']>('sortBy', 'expected_delivery');
-    const [paymentStatus, setPaymentStatus] = useQueryParam<NonNullable<BatchFilters['paymentStatus']>>('paymentStatus', 'All');
+    const [showDeliveredStr, setShowDeliveredStr] = useQueryParam<string>('delivered', '0');
+    // Column + direction share one query param ("expected_delivery-asc") rather
+    // than two separate useQueryParam hooks — calling two react-router
+    // setSearchParams setters synchronously in one click races (each computes
+    // its update from the not-yet-committed previous URL), so only the second
+    // call's change would land. One param, one setter, no race (same fix as
+    // the Inventory tab's sort state).
+    const [sortState, setSortState] = useQueryParam<string>('sort', 'expected_delivery-asc');
+    const [sortBy, sortDir] = useMemo((): [SortColumn, 'asc' | 'desc'] => {
+        const [col, dir] = sortState.split('-') as [SortColumn, string];
+        return [(col || 'expected_delivery') as SortColumn, dir === 'desc' ? 'desc' : 'asc'];
+    }, [sortState]);
+
+    // Raw access to the shared router search params, used only by
+    // clearFilters below — calling setSearch/setStatus/... synchronously in
+    // one click handler has the same race described above, so clearFilters
+    // resets them all in one setSearchParams call instead.
+    const [, setSearchParamsRaw] = useSearchParams();
 
     const filters: BatchFilters = {
         search, status: status as any, mode: mode as any, vendor, carrier,
-        dateFrom, dateTo, itemTypePrefix, sortBy, paymentStatus
+        dateFrom, dateTo, itemTypePrefix, showDelivered: showDeliveredStr === '1', sortBy, sortDir
     };
     const setFilters = useCallback((next: BatchFilters) => {
         if (next.search !== search) setSearch(next.search);
@@ -301,10 +488,18 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
         if (next.dateFrom !== dateFrom) setDateFrom(next.dateFrom);
         if (next.dateTo !== dateTo) setDateTo(next.dateTo);
         if (next.itemTypePrefix !== itemTypePrefix) setItemTypePrefix(next.itemTypePrefix);
-        if (next.sortBy !== sortBy) setSortBy(next.sortBy);
-        if (next.paymentStatus !== paymentStatus) setPaymentStatus(next.paymentStatus || 'All');
-    }, [search, status, mode, vendor, carrier, dateFrom, dateTo, itemTypePrefix, sortBy, paymentStatus,
-        setSearch, setStatus, setMode, setVendor, setCarrier, setDateFrom, setDateTo, setItemTypePrefix, setSortBy, setPaymentStatus]);
+        const nextDeliveredStr = next.showDelivered ? '1' : '0';
+        if (nextDeliveredStr !== showDeliveredStr) setShowDeliveredStr(nextDeliveredStr);
+    }, [search, status, mode, vendor, carrier, dateFrom, dateTo, itemTypePrefix, showDeliveredStr,
+        setSearch, setStatus, setMode, setVendor, setCarrier, setDateFrom, setDateTo, setItemTypePrefix, setShowDeliveredStr]);
+
+    const handleSort = useCallback((column: SortColumn) => {
+        if (sortBy === column) {
+            setSortState(`${column}-${sortDir === 'asc' ? 'desc' : 'asc'}`);
+        } else {
+            setSortState(`${column}-desc`);
+        }
+    }, [sortBy, sortDir, setSortState]);
 
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -312,8 +507,14 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
     const [lastRequest, setLastRequest] = useState<any>(null);
     const [lastResponse, setLastResponse] = useState<any>(null);
     const [editingBatch, setEditingBatch] = useState<Batch | null>(null);
-    const [purchaseInvoices, setPurchaseInvoices] = useState<PurchaseInvoice[]>(settlementCache?.purchaseInvoices || []);
-    const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>(settlementCache?.settlementRecords || []);
+
+    // Accordion state: only one batch open at a time, only one shipment
+    // within it open at a time — switching batches always resets the
+    // shipment selection.
+    const [openBatchId, setOpenBatchId] = useState<string | null>(null);
+    const [openShipmentId, setOpenShipmentId] = useState<string | null>(null);
+    const [uploadTarget, setUploadTarget] = useState<{ batchId: string; vendor: BatchVendorShipment } | null>(null);
+    const [savingFlagKey, setSavingFlagKey] = useState<string | null>(null);
 
     const fetchData = useCallback(async (forceRefresh = false) => {
         if (!forceRefresh && batchListCache) {
@@ -359,42 +560,10 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
             .catch(err => console.error('get_sku_categories failed:', err));
     }, []);
 
-    // Only admins see the Payment Status column, so only fetch the (larger)
-    // settlement data for them — non-admins skip these two requests entirely.
-    useEffect(() => {
-        if (!isAdmin) return;
-        if (settlementCache) {
-            setPurchaseInvoices(settlementCache.purchaseInvoices);
-            setSettlementRecords(settlementCache.settlementRecords);
-            return;
-        }
-        Promise.all([fetchPurchaseInvoices(), fetchSettlementRecords()])
-            .then(([invoices, records]) => {
-                settlementCache = { purchaseInvoices: invoices, settlementRecords: records };
-                setPurchaseInvoices(invoices);
-                setSettlementRecords(records);
-            })
-            .catch(err => console.error('Failed to load settlement data:', err));
-    }, [isAdmin]);
-
-    // batch_id -> real settlement status, derived the same way CNF Agent
-    // Accounting determines it (see computeBatchSettlementStatus).
-    const settlementByBatch = useMemo(() => {
-        const map = new Map<string, ReturnType<typeof computeBatchSettlementStatus> & { applicableEr: number }>();
-        if (!isAdmin || purchaseInvoices.length === 0) return map;
-        batches.forEach(b => {
-            const invoiceIds = (b.vendor_summary || []).map(v => v.invoice_no).filter(Boolean);
-            const settlement = computeBatchSettlementStatus(invoiceIds, purchaseInvoices, settlementRecords);
-            const applicableEr = computeWeightedSettlementRate(invoiceIds, settlementRecords);
-            map.set(b.batch_id, { ...settlement, applicableEr });
-        });
-        return map;
-    }, [batches, purchaseInvoices, settlementRecords, isAdmin]);
-
     const itemTypeOptions = useMemo(() => buildItemTypeOptions(categories), [categories]);
     const vendorOptions = useMemo(() => {
         const set = new Set<string>();
-        batches.forEach(b => (b.vendor_summary || []).forEach(v => v.vendor_code && set.add(v.vendor_code)));
+        batches.forEach(b => (b.vendor_shipments || []).forEach(v => v.vendor_code && set.add(v.vendor_code)));
         return Array.from(set).sort();
     }, [batches]);
     const carrierOptions = useMemo(() => {
@@ -405,6 +574,13 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
 
     const filteredBatches = useMemo(() => {
         let filtered = [...batches];
+        // Delivered batches are the bulk of the sheet and not what ops needs
+        // to watch day to day — hidden unless explicitly asked for (either
+        // the "Show Delivered" toggle, or picking Delivered in the Status
+        // filter itself).
+        if (!filters.showDelivered && filters.status !== 'Delivered') {
+            filtered = filtered.filter(b => b.status !== 'Delivered');
+        }
         if (filters.search) {
             const s = filters.search.toLowerCase();
             filtered = filtered.filter(b =>
@@ -414,58 +590,33 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
         }
         if (filters.status !== 'All') filtered = filtered.filter(b => b.status === filters.status);
         if (filters.mode !== 'All') filtered = filtered.filter(b => b.batch_type === filters.mode);
-        if (filters.vendor !== 'All') filtered = filtered.filter(b => (b.vendor_summary || []).some(v => v.vendor_code === filters.vendor));
+        if (filters.vendor !== 'All') filtered = filtered.filter(b => (b.vendor_shipments || []).some(v => v.vendor_code === filters.vendor));
         if (filters.carrier !== 'All') filtered = filtered.filter(b => b.carrier === filters.carrier);
         if (filters.itemTypePrefix !== 'All') filtered = filtered.filter(b => (b.item_type_prefixes || []).includes(filters.itemTypePrefix));
         if (filters.dateFrom) filtered = filtered.filter(b => b.shipped_at && b.shipped_at.slice(0, 10) >= filters.dateFrom);
         if (filters.dateTo) filtered = filtered.filter(b => b.shipped_at && b.shipped_at.slice(0, 10) <= filters.dateTo);
-        if (isAdmin && filters.paymentStatus && filters.paymentStatus !== 'All') {
-            filtered = filtered.filter(b => settlementByBatch.get(b.batch_id)?.status === filters.paymentStatus);
-        }
 
-        const sorted = [...filtered];
-        // Primary comparator per the chosen sort field...
-        let cmp: (a: Batch, b: Batch) => number;
-        switch (filters.sortBy) {
-            case 'batch_id':
-                cmp = (a, b) => a.batch_id.localeCompare(b.batch_id);
-                break;
-            case 'shipped_at':
-                cmp = (a, b) => new Date(b.shipped_at || 0).getTime() - new Date(a.shipped_at || 0).getTime();
-                break;
-            case 'total_value':
-                cmp = (a, b) => (b.total_value_rmb || 0) - (a.total_value_rmb || 0);
-                break;
-            case 'expected_delivery':
-            default:
-                cmp = (a, b) => {
-                    if (!a.expected_delivery) return 1;
-                    if (!b.expected_delivery) return -1;
-                    return new Date(a.expected_delivery).getTime() - new Date(b.expected_delivery).getTime();
-                };
-        }
-        // ...but a Delivered batch's expected_delivery is always in the past
-        // by definition, so sorting purely by date/value pushes it above
-        // still-active batches. Active batches always sort first; Delivered
-        // ones fall to the end, ordered by the same comparator among themselves.
-        sorted.sort((a, b) => {
-            const aDelivered = a.status === 'Delivered' ? 1 : 0;
-            const bDelivered = b.status === 'Delivered' ? 1 : 0;
-            if (aDelivered !== bDelivered) return aDelivered - bDelivered;
-            return cmp(a, b);
+        const cmp = COLUMN_COMPARATORS[filters.sortBy] || COLUMN_COMPARATORS.expected_delivery;
+        const dir = filters.sortDir === 'asc' ? 1 : -1;
+        return [...filtered].sort((a, b) => dir * cmp(a, b));
+    }, [batches, filters]);
+
+    const handleRowClick = (batchId: string) => {
+        setOpenBatchId(prev => {
+            const next = prev === batchId ? null : batchId;
+            setOpenShipmentId(null);
+            return next;
         });
-        return sorted;
-    }, [batches, filters, isAdmin, settlementByBatch]);
+    };
 
-    const handleViewDetails = (batchId: string) => {
-        if (onNavigateToBatch) onNavigateToBatch(batchId);
+    const handleToggleShipment = (shipmentId: string) => {
+        setOpenShipmentId(prev => (prev === shipmentId ? null : shipmentId));
     };
 
     // Applies a saved tracking edit to the in-memory batch list directly,
     // instead of re-running the full get_batches computation (every batch,
-    // every shipment, every line item, plus admin FX/payment math) just to
-    // reflect the handful of fields the modal just changed — that refetch is
-    // what made "Save" feel slow.
+    // every shipment, every line item) just to reflect the handful of fields
+    // the modal just changed — that refetch is what made "Save" feel slow.
     const handleTrackingSaved = useCallback((updates: Partial<Batch> & { batch_id: string }) => {
         const today = new Date();
         setBatches(prev => {
@@ -485,20 +636,50 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
             if (batchListCache) batchListCache = { ...batchListCache, batches: next };
             return next;
         });
-        // total_amount/total_currency feed FX-derived fields (amount_inr,
-        // payment_status, blended_rate) computed server-side — those would
-        // go stale from a pure local patch, so reconcile them quietly in the
-        // background without blocking the modal close or re-showing a
-        // loading state for the whole table.
-        if (updates.total_amount !== undefined || updates.total_currency !== undefined) {
-            fetchData(true);
-        }
-    }, [fetchData]);
+    }, []);
 
-    const clearFilters = () => setFilters({
-        search: '', status: 'All', mode: 'All', vendor: 'All', carrier: 'All',
-        dateFrom: '', dateTo: '', itemTypePrefix: 'All', sortBy: 'expected_delivery', paymentStatus: 'All'
-    });
+    const handleToggleFlag = useCallback(async (
+        batchId: string, lineId: string, flag: 'logo' | 'packaging' | 'manual' | 'opp_wrap', value: boolean
+    ) => {
+        const key = `${lineId}:${flag}`;
+        setSavingFlagKey(key);
+        try {
+            const result = await callGasAuthed('update_shipment_line_flag', { line_id: lineId, flag, value });
+            if (result.status !== 'success') {
+                alert(result.message || 'Failed to update');
+                return;
+            }
+            const fieldName = flag === 'logo' ? 'has_logo' : flag === 'packaging' ? 'has_packaging' : flag === 'manual' ? 'has_manual' : 'has_opp_wrap';
+            setBatches(prev => {
+                const next = prev.map(b => {
+                    if (b.batch_id !== batchId) return b;
+                    return {
+                        ...b,
+                        vendor_shipments: (b.vendor_shipments || []).map(vs => ({
+                            ...vs,
+                            line_items: vs.line_items.map(li => li.line_id === lineId ? { ...li, [fieldName]: value } : li)
+                        }))
+                    };
+                });
+                if (batchListCache) batchListCache = { ...batchListCache, batches: next };
+                return next;
+            });
+        } catch (err: any) {
+            console.error('Flag toggle failed:', err);
+            alert('Network error updating flag');
+        } finally {
+            setSavingFlagKey(null);
+        }
+    }, []);
+
+    const clearFilters = () => {
+        setSearch('');
+        setSearchParamsRaw(prev => {
+            const params = new URLSearchParams(prev);
+            ['status', 'mode', 'vendor', 'carrier', 'dateFrom', 'dateTo', 'itemType', 'delivered', 'sort'].forEach(k => params.delete(k));
+            return params;
+        }, { replace: true });
+    };
 
     return (
         <div className="p-6 max-w-[1600px] mx-auto animate-in fade-in duration-500 pb-24">
@@ -506,7 +687,7 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                 <div>
                     <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Shipment Tracker</h1>
                     <p className="text-slate-500 dark:text-slate-400 mt-1">
-                        Consolidated container tracking & landing reconciliation
+                        Live tracking for inbound batches — payments &amp; settlement now live in CNF Agent Accounting
                         {isAdmin && <span className="ml-2 px-2 py-0.5 bg-red-500/20 text-red-500 border border-red-500/30 rounded text-[10px] font-bold uppercase tracking-widest align-middle">Admin</span>}
                     </p>
                 </div>
@@ -527,7 +708,6 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                 vendorOptions={vendorOptions}
                 carrierOptions={carrierOptions}
                 itemTypeOptions={itemTypeOptions}
-                isAdmin={isAdmin}
             />
 
             {error && (
@@ -571,20 +751,17 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="bg-slate-50 dark:bg-slate-900/50 text-[10px] font-bold text-slate-500 dark:text-slate-500 uppercase tracking-widest border-b border-slate-200 dark:border-slate-700">
-                                    <th className="px-4 py-3">Batch ID</th>
-                                    <th className="px-4 py-3">Mode</th>
-                                    <th className="px-4 py-3">Status</th>
-                                    <th className="px-4 py-3">EE PO</th>
-                                    <th className="px-4 py-3">Expected Delivery</th>
-                                    <th className="px-4 py-3">Delay</th>
-                                    <th className="px-4 py-3">Carrier</th>
-                                    <th className="px-4 py-3">Tracking Number</th>
-                                    <th className="px-4 py-3 text-right">Vendors</th>
-                                    <th className="px-4 py-3 text-right">Cartons</th>
-                                    <th className="px-4 py-3 text-right">Units</th>
-                                    {isAdmin && <th className="px-4 py-3">Payment Status</th>}
-                                    {isAdmin && <th className="px-4 py-3 text-right">Total Amount (RMB)</th>}
-                                    {isAdmin && <th className="px-4 py-3 text-right">INR Equivalent</th>}
+                                    <SortableHeader column="batch_id" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                                    <SortableHeader column="mode" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                                    <SortableHeader column="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                                    <SortableHeader column="ee_status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                                    <SortableHeader column="expected_delivery" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                                    <SortableHeader column="delay" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                                    <SortableHeader column="carrier" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                                    <SortableHeader column="tracking_number" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                                    <SortableHeader column="vendors" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
+                                    <SortableHeader column="cartons" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
+                                    <SortableHeader column="units" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} align="right" />
                                     {isAdmin && <th className="px-4 py-3 text-center">Edit</th>}
                                 </tr>
                             </thead>
@@ -592,85 +769,89 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                                 {filteredBatches.map(batch => {
                                     const sc = getStatusConfig(batch.status);
                                     const ModeIcon = batch.batch_type === 'sea' ? ShipIcon : AirplaneIcon;
-                                    const settlement = settlementByBatch.get(batch.batch_id);
+                                    const isOpen = openBatchId === batch.batch_id;
                                     return (
-                                        <tr
-                                            key={batch.batch_id}
-                                            onClick={() => handleViewDetails(batch.batch_id)}
-                                            className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors cursor-pointer"
-                                        >
-                                            <td className="px-4 py-3 font-mono font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">{batch.batch_id}</td>
-                                            <td className="px-4 py-3"><ModeIcon className="w-4 h-4 text-slate-400 dark:text-slate-500" /></td>
-                                            <td className="px-4 py-3">
-                                                <span className={`inline-block px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${sc.badge}`}>{sc.label}</span>
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                {batch.ee_status === 'FAILED' ? (
-                                                    <span
-                                                        title={batch.ee_push_error || 'EasyEcom PO push failed'}
-                                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-400/10"
-                                                    >
-                                                        <ExclamationTriangleIcon className="w-3 h-3" /> Failed
-                                                    </span>
-                                                ) : batch.ee_status === 'PUSHED' ? (
-                                                    <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap text-emerald-600 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-400/10">
-                                                        Pushed
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-slate-400 dark:text-slate-600 text-xs">—</span>
-                                                )}
-                                            </td>
-                                            <td className={`px-4 py-3 text-sm whitespace-nowrap ${batch.is_delayed ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-slate-700 dark:text-slate-300'}`}>
-                                                {formatDate(batch.expected_delivery)}
-                                            </td>
-                                            <td className="px-4 py-3 text-sm">
-                                                {batch.is_delayed ? (
-                                                    <span className="flex items-center gap-1 text-red-500 dark:text-red-400 font-bold whitespace-nowrap">
-                                                        <ExclamationTriangleIcon className="w-3.5 h-3.5" /> {batch.delay_days}d
-                                                    </span>
-                                                ) : <span className="text-slate-400">—</span>}
-                                            </td>
-                                            <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-300 whitespace-nowrap">{batch.carrier || <span className="italic text-slate-400">No carrier</span>}</td>
-                                            <td className="px-4 py-3 text-xs font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">{batch.tracking_number || <span className="italic">No tracking</span>}</td>
-                                            <td className="px-4 py-3 text-right text-sm text-slate-700 dark:text-slate-300">{batch.total_vendors}</td>
-                                            <td className="px-4 py-3 text-right text-sm text-slate-700 dark:text-slate-300">{batch.total_cartons}</td>
-                                            <td className="px-4 py-3 text-right text-sm font-semibold text-slate-900 dark:text-slate-100">{batch.total_units}</td>
-                                            {isAdmin && (
+                                        <React.Fragment key={batch.batch_id}>
+                                            <tr
+                                                onClick={() => handleRowClick(batch.batch_id)}
+                                                className={`hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors cursor-pointer ${isOpen ? 'bg-blue-50/60 dark:bg-blue-500/5' : ''}`}
+                                            >
+                                                <td className="px-4 py-3 font-mono font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                                                    <span className={`inline-block w-3 text-slate-400 transition-transform ${isOpen ? 'rotate-90' : ''}`}>▶</span> {batch.batch_id}
+                                                </td>
+                                                <td className="px-4 py-3"><ModeIcon className="w-4 h-4 text-slate-400 dark:text-slate-500" /></td>
                                                 <td className="px-4 py-3">
-                                                    <span
-                                                        title={settlement && settlement.status !== 'Not Invoiced'
-                                                            ? `Invoiced RMB ${settlement.invoicedRmb.toLocaleString()} · Outstanding RMB ${settlement.outstandingRmb.toLocaleString()}`
-                                                            : undefined}
-                                                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${PAYMENT_STATUS_BADGE[settlement?.status || 'Not Invoiced']}`}
-                                                    >
-                                                        {settlement?.status || 'Not Invoiced'}
-                                                    </span>
+                                                    <span className={`inline-block px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${sc.badge}`}>{sc.label}</span>
                                                 </td>
-                                            )}
-                                            {isAdmin && (
-                                                <td className="px-4 py-3 text-right text-sm text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                                                    {batch.total_currency} {batch.total_amount?.toLocaleString()}
+                                                <td className="px-4 py-3">
+                                                    {batch.ee_status === 'FAILED' ? (
+                                                        <span
+                                                            title={batch.ee_push_error || 'EasyEcom PO push failed'}
+                                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-400/10"
+                                                        >
+                                                            <ExclamationTriangleIcon className="w-3 h-3" /> Failed
+                                                        </span>
+                                                    ) : batch.ee_status === 'PUSHED' ? (
+                                                        <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap text-emerald-600 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-400/10">
+                                                            Pushed
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-slate-400 dark:text-slate-600 text-xs">—</span>
+                                                    )}
                                                 </td>
-                                            )}
-                                            {isAdmin && (
-                                                <td className="px-4 py-3 text-right text-sm font-semibold whitespace-nowrap">
-                                                    {settlement && settlement.invoicedInr > 0
-                                                        ? <span className="text-blue-600 dark:text-blue-400">₹{Math.round(settlement.invoicedInr).toLocaleString()}</span>
-                                                        : <span className="text-amber-600 dark:text-amber-500 text-xs">Not invoiced</span>}
+                                                <td className={`px-4 py-3 text-sm whitespace-nowrap ${batch.is_delayed ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-slate-700 dark:text-slate-300'}`}>
+                                                    {formatDate(batch.expected_delivery)}
                                                 </td>
-                                            )}
-                                            {isAdmin && (
-                                                <td className="px-4 py-3 text-center">
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); setEditingBatch(batch); }}
-                                                        className="p-1.5 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-colors"
-                                                        title="Edit tracking details"
-                                                    >
-                                                        <PencilIcon className="w-4 h-4" />
-                                                    </button>
+                                                <td className="px-4 py-3 text-sm">
+                                                    {batch.is_delayed ? (
+                                                        <span className="flex items-center gap-1 text-red-500 dark:text-red-400 font-bold whitespace-nowrap">
+                                                            <ExclamationTriangleIcon className="w-3.5 h-3.5" /> {batch.delay_days}d
+                                                        </span>
+                                                    ) : <span className="text-slate-400">—</span>}
                                                 </td>
+                                                <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-300 whitespace-nowrap">{batch.carrier || <span className="italic text-slate-400">No carrier</span>}</td>
+                                                <td className="px-4 py-3 text-xs font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">{batch.tracking_number || <span className="italic">No tracking</span>}</td>
+                                                <td className="px-4 py-3 text-right text-sm text-slate-700 dark:text-slate-300">{batch.total_vendors}</td>
+                                                <td className="px-4 py-3 text-right text-sm text-slate-700 dark:text-slate-300">{batch.total_cartons}</td>
+                                                <td className="px-4 py-3 text-right text-sm font-semibold text-slate-900 dark:text-slate-100">{batch.total_units}</td>
+                                                {isAdmin && (
+                                                    <td className="px-4 py-3 text-center">
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); setEditingBatch(batch); }}
+                                                            className="p-1.5 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-colors"
+                                                            title="Edit tracking details"
+                                                        >
+                                                            <PencilIcon className="w-4 h-4" />
+                                                        </button>
+                                                    </td>
+                                                )}
+                                            </tr>
+                                            {isOpen && (
+                                                <tr>
+                                                    <td colSpan={isAdmin ? 12 : 11} className="p-0 border-t-0">
+                                                        <div className="bg-slate-100/70 dark:bg-slate-900/40 border-t border-b-2 border-blue-500/60 px-4 py-4 space-y-2">
+                                                            {(batch.vendor_shipments || []).length === 0 ? (
+                                                                <p className="text-sm text-slate-500 dark:text-slate-400 italic px-2">
+                                                                    This batch is still OPEN — no vendor shipments added yet.
+                                                                </p>
+                                                            ) : batch.vendor_shipments!.map(vendorShipment => (
+                                                                <ShipmentRow
+                                                                    key={vendorShipment.shipment_id}
+                                                                    vendor={vendorShipment}
+                                                                    batchId={batch.batch_id}
+                                                                    isExpanded={openShipmentId === vendorShipment.shipment_id}
+                                                                    onToggle={() => handleToggleShipment(vendorShipment.shipment_id)}
+                                                                    isAdmin={isAdmin}
+                                                                    savingKey={savingFlagKey}
+                                                                    onToggleFlag={(lineId, flag, value) => handleToggleFlag(batch.batch_id, lineId, flag, value)}
+                                                                    onUpload={() => setUploadTarget({ batchId: batch.batch_id, vendor: vendorShipment })}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    </td>
+                                                </tr>
                                             )}
-                                        </tr>
+                                        </React.Fragment>
                                     );
                                 })}
                             </tbody>
@@ -684,6 +865,16 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ onNavigateToBa
                     batch={editingBatch}
                     onClose={() => setEditingBatch(null)}
                     onSaved={handleTrackingSaved}
+                />
+            )}
+
+            {uploadTarget && (
+                <UploadShipmentDocsModal
+                    batchId={uploadTarget.batchId}
+                    shipmentId={uploadTarget.vendor.shipment_id}
+                    vendorCode={uploadTarget.vendor.vendor_code}
+                    onClose={() => setUploadTarget(null)}
+                    onUploaded={() => fetchData(true)}
                 />
             )}
 

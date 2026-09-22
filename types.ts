@@ -491,18 +491,16 @@ export interface Batch {
   // failed, PUSHED if all that have a status succeeded, '' if none pushed yet.
   ee_status?: 'PUSHED' | 'FAILED' | '';
   ee_push_error?: string;
+  // Always populated by getBatches now (single-request model — the tracker
+  // no longer makes a second get_batch_details call to expand a row). Also
+  // still populated by get_batch_details for the unrelated Batch Detail page
+  // (AccountsView / SKU search deep links), which additionally attaches the
+  // finance fields below for those callers.
   vendor_shipments?: BatchVendorShipment[];
-  vendor_summary?: BatchVendorSummary[];
 
-  // Financial reconciliation fields
-  original_amount_rmb?: number;
-  duty_charges_inr?: number;
-  landing_charges_inr?: number;
-  final_total_inr?: number;
-
-  // ── Finance fields — present ONLY when the request resolved to Admin
-  // server-side (see getBatches/getBatchDetails in PO+Shipment Codes.js).
-  // Genuinely absent for non-admins, never present-but-null.
+  // ── Finance fields — only ever attached by get_batch_details (Batch Detail
+  // page), never by get_batches (Shipment Tracker). Genuinely absent here,
+  // never present-but-null.
   total_amount?: number;
   total_currency?: 'RMB' | 'USD';
   amount_inr?: number | null;
@@ -511,15 +509,6 @@ export interface Batch {
   payment_status?: 'Unpaid' | 'Partial' | 'Paid';
   paid_inr?: number;
   payments?: BatchPayment[];
-}
-
-export interface BatchVendorSummary {
-  vendor_code: string;
-  shipment_id: string;
-  carton_count: number;
-  invoice_no: string;
-  invoice_date: string;
-  total_units: number;
 }
 
 export interface BatchPayment {
@@ -537,7 +526,8 @@ export interface BatchPayment {
   shipment_id?: string;
 }
 
-export type BatchStatus = 
+export type BatchStatus =
+  | 'OPEN'
   | 'Shipped'
   | 'In-Transit China'
   | 'At Port China'
@@ -593,9 +583,12 @@ export interface BatchLineItem {
   current_stock: number | null;
   future_stock: number | null;
 
-  // Product specs — sourced from Purchase_Order_Lines, "first PO match wins"
-  // when a line was fulfilled from more than one PO (see
-  // buildVendorShipmentsForBatch_ in PO+Shipment Codes.js)
+  // Product specs. get_batch_details (Batch Detail page) still sources these
+  // from Purchase_Order_Lines, "first PO match wins" when a line was
+  // fulfilled from more than one PO (see buildVendorShipmentsForBatch_ in
+  // PO+Shipment Codes.js). get_batches (Shipment Tracker) instead reads them
+  // as real, independently-editable columns on Vendor_Shipment_Lines itself
+  // — always a real boolean there (default false), never null.
   has_logo: boolean | null;
   has_packaging: boolean | null;
   has_manual: boolean | null;
@@ -612,8 +605,12 @@ export interface BatchFilters {
   dateFrom: string; // shipped_at lower bound, yyyy-mm-dd, or ''
   dateTo: string; // shipped_at upper bound, yyyy-mm-dd, or ''
   itemTypePrefix: string; // a SKU_Config prefix (possibly shared by >1 category), or 'All'
-  sortBy: 'expected_delivery' | 'batch_id' | 'shipped_at' | 'total_value';
-  paymentStatus?: 'All' | 'Unpaid' | 'Partial' | 'Paid'; // Admin-only column, ignored for non-admins
+  showDelivered: boolean; // Delivered batches are hidden by default — this is an explicit opt-in
+  // Click-to-sort on any table header, so this covers every sortable column
+  // (all of them), not a fixed shortlist — direction is separate so the same
+  // column can be clicked again to flip it.
+  sortBy: 'batch_id' | 'mode' | 'status' | 'ee_status' | 'expected_delivery' | 'delay' | 'carrier' | 'tracking_number' | 'vendors' | 'cartons' | 'units';
+  sortDir: 'asc' | 'desc';
 }
 
 // Dashboard metrics
