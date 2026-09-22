@@ -194,61 +194,32 @@ const FilterBar: React.FC<{
     itemTypeOptions: { prefix: string; label: string }[];
 }> = ({ filters, setFilters, vendorOptions, carrierOptions, itemTypeOptions }) => {
     return (
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 mb-6 shadow-sm space-y-3">
-            <div className="flex flex-col lg:flex-row lg:flex-wrap gap-3">
-                <div className="flex-1 min-w-[220px]">
-                    <div className="relative">
-                        <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
-                        <input
-                            type="text"
-                            placeholder="Search by Batch ID, Tracking, SKU, or Item Name..."
-                            value={filters.search}
-                            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                            className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                    </div>
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 mb-6 shadow-sm">
+            <div className="flex flex-wrap items-center gap-3">
+                <div className="flex-1 min-w-[200px] relative">
+                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
+                    <input
+                        type="text"
+                        placeholder="Search by Batch ID, Tracking, SKU, or Item Name..."
+                        value={filters.search}
+                        onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                        className="w-full pl-10 pr-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
                 </div>
 
                 <select
                     value={filters.status}
                     onChange={(e) => setFilters({ ...filters, status: e.target.value as any })}
-                    className="px-3 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="px-2.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[168px]"
                 >
-                    <option value="All">All Statuses (excl. Delivered)</option>
+                    <option value="All">All Status</option>
                     {Object.keys(STATUS_CONFIG).map(s => <option key={s} value={s}>{getStatusConfig(s).label}</option>)}
                 </select>
 
-                <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700">
-                    {(['All', 'sea', 'air'] as const).map(mode => (
-                        <button
-                            key={mode}
-                            onClick={() => setFilters({ ...filters, mode })}
-                            className={`px-4 py-1.5 rounded-md font-bold text-xs transition-all uppercase ${filters.mode === mode
-                                ? 'bg-blue-600 text-white shadow-sm'
-                                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-                                }`}
-                        >
-                            {mode === 'All' ? 'ALL' : mode === 'sea' ? '🚢 SEA' : '✈️ AIR'}
-                        </button>
-                    ))}
-                </div>
-
-                <label className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-500 dark:text-slate-400 cursor-pointer select-none">
-                    <input
-                        type="checkbox"
-                        checked={filters.showDelivered}
-                        onChange={(e) => setFilters({ ...filters, showDelivered: e.target.checked })}
-                        className="w-3.5 h-3.5 accent-blue-600"
-                    />
-                    Show Delivered
-                </label>
-            </div>
-
-            <div className="flex flex-col lg:flex-row lg:flex-wrap gap-3">
                 <select
                     value={filters.vendor}
                     onChange={(e) => setFilters({ ...filters, vendor: e.target.value })}
-                    className="flex-1 min-w-[140px] px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="px-2.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[130px]"
                 >
                     <option value="All">All Vendors</option>
                     {vendorOptions.map(v => <option key={v} value={v}>{v}</option>)}
@@ -257,7 +228,7 @@ const FilterBar: React.FC<{
                 <select
                     value={filters.carrier}
                     onChange={(e) => setFilters({ ...filters, carrier: e.target.value })}
-                    className="flex-1 min-w-[140px] px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="px-2.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[130px]"
                 >
                     <option value="All">All Carriers</option>
                     {carrierOptions.map(c => <option key={c} value={c}>{c}</option>)}
@@ -266,29 +237,37 @@ const FilterBar: React.FC<{
                 <select
                     value={filters.itemTypePrefix}
                     onChange={(e) => setFilters({ ...filters, itemTypePrefix: e.target.value })}
-                    className="flex-1 min-w-[140px] px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="px-2.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[140px]"
                 >
                     <option value="All">All Item Types</option>
                     {itemTypeOptions.map(o => <option key={o.prefix} value={o.prefix}>{o.label}</option>)}
                 </select>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                    <input
-                        type="date"
-                        value={filters.dateFrom}
-                        onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
-                        className="px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        title="Shipped from"
-                    />
-                    <span className="text-slate-400 text-xs">to</span>
-                    <input
-                        type="date"
-                        value={filters.dateTo}
-                        onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
-                        className="px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        title="Shipped to"
-                    />
+                <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shrink-0">
+                    {(['All', 'sea', 'air'] as const).map(mode => (
+                        <button
+                            key={mode}
+                            onClick={() => setFilters({ ...filters, mode })}
+                            title={mode === 'All' ? 'All modes' : mode === 'sea' ? 'Sea' : 'Air'}
+                            className={`px-3 py-1.5 rounded-md font-bold text-xs transition-all uppercase ${filters.mode === mode
+                                ? 'bg-blue-600 text-white shadow-sm'
+                                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                                }`}
+                        >
+                            {mode === 'All' ? 'ALL' : mode === 'sea' ? '🚢' : '✈️'}
+                        </button>
+                    ))}
                 </div>
+
+                <label className="flex items-center gap-1.5 px-1 text-xs font-bold text-slate-500 dark:text-slate-400 cursor-pointer select-none shrink-0 whitespace-nowrap">
+                    <input
+                        type="checkbox"
+                        checked={filters.showDelivered}
+                        onChange={(e) => setFilters({ ...filters, showDelivered: e.target.checked })}
+                        className="w-3.5 h-3.5 accent-blue-600"
+                    />
+                    Delivered
+                </label>
             </div>
         </div>
     );
@@ -467,8 +446,6 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
     const [mode, setMode] = useQueryParam<string>('mode', 'All');
     const [vendor, setVendor] = useQueryParam<string>('vendor', 'All');
     const [carrier, setCarrier] = useQueryParam<string>('carrier', 'All');
-    const [dateFrom, setDateFrom] = useQueryParam<string>('dateFrom', '');
-    const [dateTo, setDateTo] = useQueryParam<string>('dateTo', '');
     const [itemTypePrefix, setItemTypePrefix] = useQueryParam<string>('itemType', 'All');
     const [showDeliveredStr, setShowDeliveredStr] = useQueryParam<string>('delivered', '0');
     // Column + direction share one query param ("expected_delivery-asc") rather
@@ -491,7 +468,7 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
 
     const filters: BatchFilters = {
         search, status: status as any, mode: mode as any, vendor, carrier,
-        dateFrom, dateTo, itemTypePrefix, showDelivered: showDeliveredStr === '1', sortBy, sortDir
+        itemTypePrefix, showDelivered: showDeliveredStr === '1', sortBy, sortDir
     };
     const setFilters = useCallback((next: BatchFilters) => {
         if (next.search !== search) setSearch(next.search);
@@ -499,13 +476,11 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
         if (next.mode !== mode) setMode(next.mode as any);
         if (next.vendor !== vendor) setVendor(next.vendor);
         if (next.carrier !== carrier) setCarrier(next.carrier);
-        if (next.dateFrom !== dateFrom) setDateFrom(next.dateFrom);
-        if (next.dateTo !== dateTo) setDateTo(next.dateTo);
         if (next.itemTypePrefix !== itemTypePrefix) setItemTypePrefix(next.itemTypePrefix);
         const nextDeliveredStr = next.showDelivered ? '1' : '0';
         if (nextDeliveredStr !== showDeliveredStr) setShowDeliveredStr(nextDeliveredStr);
-    }, [search, status, mode, vendor, carrier, dateFrom, dateTo, itemTypePrefix, showDeliveredStr,
-        setSearch, setStatus, setMode, setVendor, setCarrier, setDateFrom, setDateTo, setItemTypePrefix, setShowDeliveredStr]);
+    }, [search, status, mode, vendor, carrier, itemTypePrefix, showDeliveredStr,
+        setSearch, setStatus, setMode, setVendor, setCarrier, setItemTypePrefix, setShowDeliveredStr]);
 
     const handleSort = useCallback((column: SortColumn) => {
         if (sortBy === column) {
@@ -608,8 +583,6 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
         if (filters.vendor !== 'All') filtered = filtered.filter(b => (b.vendor_shipments || []).some(v => v.vendor_code === filters.vendor));
         if (filters.carrier !== 'All') filtered = filtered.filter(b => b.carrier === filters.carrier);
         if (filters.itemTypePrefix !== 'All') filtered = filtered.filter(b => (b.item_type_prefixes || []).includes(filters.itemTypePrefix));
-        if (filters.dateFrom) filtered = filtered.filter(b => b.shipped_at && b.shipped_at.slice(0, 10) >= filters.dateFrom);
-        if (filters.dateTo) filtered = filtered.filter(b => b.shipped_at && b.shipped_at.slice(0, 10) <= filters.dateTo);
 
         const cmp = COLUMN_COMPARATORS[filters.sortBy] || COLUMN_COMPARATORS.expected_delivery;
         const dir = filters.sortDir === 'asc' ? 1 : -1;
@@ -702,7 +675,7 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
         setSearch('');
         setSearchParamsRaw(prev => {
             const params = new URLSearchParams(prev);
-            ['status', 'mode', 'vendor', 'carrier', 'dateFrom', 'dateTo', 'itemType', 'delivered', 'sort'].forEach(k => params.delete(k));
+            ['status', 'mode', 'vendor', 'carrier', 'itemType', 'delivered', 'sort'].forEach(k => params.delete(k));
             return params;
         }, { replace: true });
     };

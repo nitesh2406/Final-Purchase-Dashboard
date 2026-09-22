@@ -602,8 +602,6 @@ export interface BatchFilters {
   mode: 'All' | 'sea' | 'air';
   vendor: string; // vendor_code, or 'All'
   carrier: string; // exact carrier string, or 'All'
-  dateFrom: string; // shipped_at lower bound, yyyy-mm-dd, or ''
-  dateTo: string; // shipped_at upper bound, yyyy-mm-dd, or ''
   itemTypePrefix: string; // a SKU_Config prefix (possibly shared by >1 category), or 'All'
   showDelivered: boolean; // Delivered batches are hidden by default — this is an explicit opt-in
   // Click-to-sort on any table header, so this covers every sortable column
