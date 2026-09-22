@@ -35,9 +35,10 @@ const navItems: { name: ViewType; label?: string; icon: React.ReactNode; wip?: b
   { name: 'Vendor Shipments', icon: <CloudArrowUpIcon className="w-6 h-6" />, group: 'Procurement' },
   { name: 'Create SKU', icon: <CubeIcon className="w-6 h-6" />, group: 'Procurement' },
   { name: 'Update SKU', icon: <PencilSquareIcon className="w-6 h-6" />, group: 'Procurement' },
-  { name: 'Shipment Tracker', icon: <TruckIcon className="w-6 h-6" />, group: 'Procurement' },
+
+  { name: 'Shipment Tracker', icon: <TruckIcon className="w-6 h-6" />, group: 'Logistics' },
   // Placeholder tab — real screen not built yet, see App.tsx's 'Receive Shipment' case.
-  { name: 'Receive Shipment', icon: <CheckBadgeIcon className="w-6 h-6" />, group: 'Procurement', wip: true },
+  { name: 'Receive Shipment', icon: <CheckBadgeIcon className="w-6 h-6" />, group: 'Logistics', wip: true },
 
   { name: 'CNF Agent Accounting', label: 'CNF Agent', icon: <CurrencyDollarIcon className="w-6 h-6" />, group: 'Finance' },
   { name: 'Payment Ledger', icon: <CreditCardIcon className="w-6 h-6" />, group: 'Finance', wip: true },
@@ -49,7 +50,7 @@ const navItems: { name: ViewType; label?: string; icon: React.ReactNode; wip?: b
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, isCollapsed, setIsCollapsed, user }) => {
-  const groups = ['Main', 'Forecasting', 'Procurement', 'Finance', 'Other'];
+  const groups = ['Main', 'Forecasting', 'Procurement', 'Logistics', 'Finance', 'Other'];
 
   const checkAllowed = (name: string, group: string) => {
     if (!user) return false;
