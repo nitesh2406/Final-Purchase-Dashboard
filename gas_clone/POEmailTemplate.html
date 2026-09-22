@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<body style="margin:0; padding:0; background:#f8fafc;
+             font-family: Arial, sans-serif;">
+
+  <div style="width: 100%; background: #ffffff;">
+
+    <!-- Header -->
+    <div style="background: #1e293b; padding: 24px 32px;">
+      <div style="font-size: 22px; font-weight: 700; color: #ffffff;
+                  letter-spacing: 0.5px;">
+        Cubelelo
+      </div>
+      <div style="font-size: 13px; color: #94a3b8; margin-top: 4px;">
+        Purchase Order Confirmation
+      </div>
+    </div>
+
+    <!-- PO Info -->
+    <div style="padding: 20px 32px; background: #f1f5f9;
+                border-bottom: 1px solid #e2e8f0;">
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 4px 8px 4px 0;">
+            <div style="font-size: 11px; color: #64748b;
+                        text-transform: uppercase; letter-spacing: 0.5px;">
+              PO Number
+            </div>
+            <div style="font-size: 16px; font-weight: 700; color: #1e293b;
+                        margin-top: 2px;">
+              <?= PO_ID ?>
+            </div>
+          </td>
+          <td style="padding: 4px 8px;">
+            <div style="font-size: 11px; color: #64748b;
+                        text-transform: uppercase; letter-spacing: 0.5px;">
+              Date
+            </div>
+            <div style="font-size: 14px; font-weight: 600; color: #1e293b;
+                        margin-top: 2px;">
+              <?= PO_DATE ?>
+            </div>
+          </td>
+          <td style="padding: 4px 8px;">
+            <div style="font-size: 11px; color: #64748b;
+                        text-transform: uppercase; letter-spacing: 0.5px;">
+              Vendor
+            </div>
+            <div style="font-size: 14px; font-weight: 600; color: #1e293b;
+                        margin-top: 2px;">
+              <?= VENDOR_NAME ?>
+            </div>
+          </td>
+          <td style="padding: 4px 0 4px 8px; text-align: right;">
+            <div style="font-size: 11px; color: #64748b;
+                        text-transform: uppercase; letter-spacing: 0.5px;">
+              Total Units
+            </div>
+            <div style="font-size: 14px; font-weight: 600; color: #1e293b;
+                        margin-top: 2px;">
+              <?= TOTAL_QTY ?> units
+            </div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Greeting -->
+    <div style="padding: 24px 32px 16px 32px;">
+      <p style="font-size: 14px; color: #1e293b; margin: 0 0 8px 0;">
+        Dear <?= VENDOR_NAME ?>,
+      </p>
+      <p style="font-size: 14px; color: #1e293b; margin: 0;">
+        Please find below the details of your confirmed purchase order
+        from Cubelelo. Kindly process the same at the earliest.
+      </p>
+    </div>
+
+    <!-- SKU Table — scrollable wrapper for mobile -->
+    <div style="padding: 0 32px 24px 32px; overflow-x: auto;">
+      <table style="border-collapse: collapse; border: 1px solid #e2e8f0;
+                    min-width: 900px; width: 100%;">
+        <thead>
+          <tr style="background: #f8fafc;">
+            <th style="padding: 10px 12px; text-align: left;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       border-right: 1px solid #e2e8f0;
+                       white-space: nowrap;">
+              PO ID
+            </th>
+            <th style="padding: 10px 12px; text-align: left;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       border-right: 1px solid #e2e8f0;
+                       white-space: nowrap;">
+              SKU
+            </th>
+            <th style="padding: 10px 12px; text-align: left;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       border-right: 1px solid #e2e8f0;
+                       white-space: nowrap;">
+              Article No.
+            </th>
+            <th style="padding: 10px 12px; text-align: left;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       border-right: 1px solid #e2e8f0;
+                       min-width: 200px;">
+              Item Name
+            </th>
+            <th style="padding: 10px 12px; text-align: center;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       border-right: 1px solid #e2e8f0;
+                       white-space: nowrap;">
+              Qty
+            </th>
+            <th style="padding: 10px 12px; text-align: center;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       border-right: 1px solid #e2e8f0;
+                       white-space: nowrap;">
+              Logo
+            </th>
+            <th style="padding: 10px 12px; text-align: center;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       border-right: 1px solid #e2e8f0;
+                       white-space: nowrap;">
+              Packaging
+            </th>
+            <th style="padding: 10px 12px; text-align: center;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       border-right: 1px solid #e2e8f0;
+                       white-space: nowrap;">
+              Manual
+            </th>
+            <th style="padding: 10px 12px; text-align: center;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       border-right: 1px solid #e2e8f0;
+                       white-space: nowrap;">
+              OPP Wrap
+            </th>
+            <th style="padding: 10px 12px; text-align: center;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       border-right: 1px solid #e2e8f0;
+                       white-space: nowrap;">
+              Remarks
+            </th>
+            <th style="padding: 10px 12px; text-align: left;
+                       font-size: 11px; color: #64748b; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       border-bottom: 2px solid #e2e8f0;
+                       min-width: 180px;">
+              Customization Files
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <?!= SKU_ROWS ?>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Sign off -->
+    <div style="padding: 0 32px 32px 32px;">
+      <p style="font-size: 14px; color: #1e293b; margin: 0 0 4px 0;">
+        Regards,
+      </p>
+      <p style="font-size: 14px; font-weight: 600; color: #1e293b;
+                margin: 0;">
+        Team Cubelelo
+      </p>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding: 16px 32px; background: #f8fafc;
+                border-top: 1px solid #e2e8f0; text-align: center;">
+      <div style="font-size: 12px; color: #94a3b8;">
+        This is an automated Purchase Order from Cubelelo Procurement System.
+      </div>
+      <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">
+        Please confirm receipt of this order by replying to this email.
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

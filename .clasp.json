@@ -1,0 +1,16 @@
+{
+  "scriptId": "1ka1yl6VAPTb5DJraxfB6RpP7d19GnYY6MZzbyMacT_VWlfTO4dXN4TCm",
+  "rootDir": "gas_clone",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [],
+  "skipSubdirectories": false
+}
