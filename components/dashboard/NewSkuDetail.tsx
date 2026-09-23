@@ -1276,6 +1276,12 @@ export const NewSkuDetail: React.FC<{
       if (result.success) {
         setPlatformStatus(p => ({ ...p, ee_po: true }));
         noteStepError('ee_po', null);
+        if (result.split_po) {
+          alert(
+            `Original PO ${result.original_po_ref} already had a receipt (GRN) against it, so this SKU was added ` +
+            `to a new PO instead: ${result.ee_po_ref}`
+          );
+        }
         return true;
       } else {
         noteStepError('ee_po', result.error || 'EE PO update failed');

@@ -2665,16 +2665,79 @@ function apiUpdateEePurchaseOrder(payload) {
     if (resJson.code !== 200) {
       const eeMsg = resJson.message || response.getContentText();
       logAuditEvent_('EASYECOM', 'UPDATE_PO', eePoRef, eeMsg || 'EE PO update failed', 'FAILED', payload.updated_by, payload.request_id);
+
       // EasyEcom locks a PO from further line edits once any GRN has been
-      // posted against it (e.g. earlier partial receipt) — that's not
-      // something retrying will fix. The SKU itself is already live on EE at
-      // this point; point at "Mark as Complete" instead of a bare EE error.
+      // posted against it (e.g. an earlier partial receipt). EasyEcom's own
+      // documented behavior for this case (editing a PO after partial GRN
+      // via their UI) is to leave the original PO as-is and auto-create a
+      // new, linked PO for what's still outstanding — mirror that here:
+      // start a standalone PO carrying just this SKU's own line, instead of
+      // failing outright.
       if (/grn/i.test(eeMsg)) {
-        return errResult_(
-          `EasyEcom already has a GRN (receipt) against this PO, so it can no longer be edited via the API: ${eeMsg} ` +
-          `The SKU is already live on EasyEcom — use "Mark as Complete" on this request instead of retrying.`
+        const ownLine = allItems.find(i => i.sku === eeSkuKey);
+        if (!ownLine) {
+          return errResult_(
+            `EasyEcom already has a GRN against PO ${eePoRef}, so it can't be edited, and this SKU's own line ` +
+            `could not be found to start a new PO for it: ${eeMsg}`
+          );
+        }
+
+        const newPoRef  = `${obj.shipment_id}-ADD-${eeSkuKey}`;
+        const expDate    = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000);
+        const newPoPayload = {
+          vendorId:        obj.vendor_code,
+          referenceCode:   newPoRef,
+          expDeliveryDate: Utilities.formatDate(expDate, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+          shippingCost:    0,
+          createOrUpdate:  'I',
+          isCancel:        0,
+          items:           [ownLine],
+        };
+
+        Logger.log('EE split-PO payload (original locked by GRN): ' + JSON.stringify(newPoPayload));
+
+        const splitResponse = UrlFetchApp.fetch(
+          'https://api.easyecom.io/WMS/Cart/CreatePurchaseOrder',
+          {
+            method:             'POST',
+            headers,
+            payload:            JSON.stringify(newPoPayload),
+            muteHttpExceptions: true,
+          }
         );
+        const splitResJson = JSON.parse(splitResponse.getContentText());
+        Logger.log('EE split-PO response: ' + splitResponse.getContentText());
+
+        if (splitResJson.code !== 200) {
+          const splitMsg = splitResJson.message || splitResponse.getContentText();
+          logAuditEvent_('EASYECOM', 'CREATE_PO', newPoRef, splitMsg || 'Split PO creation failed', 'FAILED', payload.updated_by, payload.request_id);
+          return errResult_(
+            `Original PO ${eePoRef} already has a GRN against it (${eeMsg}), and creating a new PO (${newPoRef}) ` +
+            `for this SKU also failed: ${splitMsg}`
+          );
+        }
+
+        const splitNow = new Date();
+        sheet.getRange(sheetRow, NSR_COL.status + 1).setValue('CREATED');
+        sheet.getRange(sheetRow, NSR_COL.resolved_at + 1).setValue(splitNow);
+        sheet.getRange(sheetRow, NSR_COL.resolved_by + 1).setValue(payload.updated_by || '');
+        sheet.getRange(sheetRow, NSR_COL.last_edited_at + 1).setValue(splitNow);
+        SpreadsheetApp.flush();
+
+        logAuditEvent_('EASYECOM', 'CREATE_PO', newPoRef, `1 line sent to new split PO (original ${eePoRef} locked by GRN)`, 'SUCCESS', payload.updated_by, payload.request_id);
+
+        return okResult_({
+          request_id:      payload.request_id,
+          ee_po_ref:       newPoRef,
+          original_po_ref: eePoRef,
+          split_po:        true,
+          lines_sent:      1,
+          new_sku_found:   true,
+          status:          'CREATED',
+          resolved_at:     splitNow.toISOString(),
+        });
       }
+
       return errResult_(
         `EE PO update failed: ${eeMsg}`
       );
