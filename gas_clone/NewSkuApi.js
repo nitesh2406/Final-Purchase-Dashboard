@@ -2663,9 +2663,20 @@ function apiUpdateEePurchaseOrder(payload) {
     Logger.log('UpdateEEPO response: ' + response.getContentText());
 
     if (resJson.code !== 200) {
-      logAuditEvent_('EASYECOM', 'UPDATE_PO', eePoRef, resJson.message || 'EE PO update failed', 'FAILED', payload.updated_by, payload.request_id);
+      const eeMsg = resJson.message || response.getContentText();
+      logAuditEvent_('EASYECOM', 'UPDATE_PO', eePoRef, eeMsg || 'EE PO update failed', 'FAILED', payload.updated_by, payload.request_id);
+      // EasyEcom locks a PO from further line edits once any GRN has been
+      // posted against it (e.g. earlier partial receipt) — that's not
+      // something retrying will fix. The SKU itself is already live on EE at
+      // this point; point at "Mark as Complete" instead of a bare EE error.
+      if (/grn/i.test(eeMsg)) {
+        return errResult_(
+          `EasyEcom already has a GRN (receipt) against this PO, so it can no longer be edited via the API: ${eeMsg} ` +
+          `The SKU is already live on EasyEcom — use "Mark as Complete" on this request instead of retrying.`
+        );
+      }
       return errResult_(
-        `EE PO update failed: ${resJson.message || response.getContentText()}`
+        `EE PO update failed: ${eeMsg}`
       );
     }
 
