@@ -71,34 +71,41 @@ export const CnfAgentAccounting: React.FC = () => {
   const [igstPct, setIgstPct] = useState<number>(5);
   const [invoiceBatches, setInvoiceBatches] = useState<CnfInvoiceBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
   const [isBillModalOpen, setIsBillModalOpen] = useState(false);
 
   const loadAll = async () => {
     setIsLoading(true);
-    const [batches, batchesResult, invoices, settlements, entries, rates, igst, invoiceBatchList] = await Promise.all([
-      fetchCnfEligibleBatches(),
-      callGasAuthed('get_batches'),
-      fetchPurchaseInvoices(),
-      fetchSettlementRecords(),
-      fetchCnfLedgerEntries(),
-      fetchCnfCommissionRates(),
-      fetchIgstRate(),
-      fetchCnfInvoiceBatches()
-    ]);
-    setEligibleBatches(batches);
-    // get_batches already returns paid_amount_inr/blended_settlement_rate
-    // straight off the Batches sheet (see accounting_logger.js's
-    // syncBatchSettlementAggregate_) — no join/recompute needed here.
-    setAllBatches(batchesResult.status === 'success' ? (batchesResult.batches || []) : []);
-    setPurchaseInvoices(invoices);
-    setSettlementRecords(settlements);
-    setLedgerEntries(entries);
-    setCommissionRates(rates);
-    setIgstPct(igst);
-    setInvoiceBatches(invoiceBatchList);
-    setIsLoading(false);
+    setLoadError(null);
+    try {
+      const [batches, batchesResult, invoices, settlements, entries, rates, igst, invoiceBatchList] = await Promise.all([
+        fetchCnfEligibleBatches(),
+        callGasAuthed('get_batches', {}, 1),
+        fetchPurchaseInvoices(),
+        fetchSettlementRecords(),
+        fetchCnfLedgerEntries(),
+        fetchCnfCommissionRates(),
+        fetchIgstRate(),
+        fetchCnfInvoiceBatches()
+      ]);
+      setEligibleBatches(batches);
+      // get_batches already returns paid_amount_inr/blended_settlement_rate
+      // straight off the Batches sheet (see accounting_logger.js's
+      // syncBatchSettlementAggregate_) — no join/recompute needed here.
+      setAllBatches(batchesResult.status === 'success' ? (batchesResult.batches || []) : []);
+      setPurchaseInvoices(invoices);
+      setSettlementRecords(settlements);
+      setLedgerEntries(entries);
+      setCommissionRates(rates);
+      setIgstPct(igst);
+      setInvoiceBatches(invoiceBatchList);
+    } catch (err: any) {
+      setLoadError(err.message || 'Failed to load CNF Agent data.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => { loadAll(); }, []);
@@ -370,6 +377,13 @@ export const CnfAgentAccounting: React.FC = () => {
           {pendingBatches.length} shipment{pendingBatches.length === 1 ? '' : 's'} eligible and not yet logged
         </p>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg px-4 py-3">
+          <span className="text-sm text-red-600 dark:text-red-400">{loadError}</span>
+          <Button variant="secondary" className="text-xs !py-1 !px-2.5" onClick={() => loadAll()}>Retry</Button>
+        </div>
+      )}
 
       <div className="flex border-b border-gray-200 dark:border-gray-750 bg-slate-100/50 dark:bg-slate-900/50 p-1.5 rounded-xl gap-1 max-w-full overflow-x-auto shadow-sm">
         <button onClick={() => setActiveTab('overview')} className={tabButtonClass('overview')}>
