@@ -655,7 +655,7 @@ export interface CnfLedgerEntry {
   qty: number;
   cartons: number;
   invoiceRmbTotal: number;
-  mode: 'sea';
+  mode: 'sea' | 'air';
   edd: string;
   carrier: string;
   waybill: string;
@@ -671,12 +671,14 @@ export interface CnfLedgerEntry {
   total: number;
   totalPayable: number;
   invoiceBatchId?: string;
+  billRequestedAt?: string;
+  billRequestedBy?: string;
 }
 
 export interface CnfEligibleBatch {
   batch_id: string;
   status: string;
-  batch_type: 'sea';
+  batch_type: 'sea' | 'air';
   created_at: string;
   carrier: string;
   waybill: string;
