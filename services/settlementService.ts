@@ -1,5 +1,6 @@
 import { APPS_SCRIPT_URL } from '../constants.ts';
 import { SyncQueueManager } from './syncQueue.ts';
+import { callGas } from './gasApi';
 import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch, CnfInvoiceBatch } from '../types';
 export type { VendorMaster } from '../types';
 
@@ -535,26 +536,19 @@ export async function saveCnfCommissionRates(rates: CnfCommissionRate[]): Promis
 
 /**
  * Fetches all CNF-eligible batches (batches that have completed vendor shipments and are
- * candidates for a CNF ledger entry). Mirrors ShipmentTracker.tsx's plain-fetch pattern for
- * get_batches/get_batch_details, keeping this new action consistent with its sibling actions
- * rather than the executeAppsScriptProxy style used elsewhere in this file.
+ * candidates for a CNF ledger entry). Uses gasApi's callGas (parseGasResponse_ + retry)
+ * rather than a raw fetch+response.json(), and throws on failure instead of swallowing it —
+ * a silent [] here used to zero out "N shipments eligible" and hide every row's Log Entry
+ * button with no indication anything had gone wrong. The caller (CnfAgentAccounting's
+ * loadAll) is responsible for catching this and surfacing/retrying.
  */
 export async function fetchCnfEligibleBatches(): Promise<CnfEligibleBatch[]> {
   if (!appsScriptUrl) return [];
-  try {
-    const response = await fetch(appsScriptUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'get_cnf_eligible_batches' })
-    });
-    const result = await response.json();
-    if (result.status === 'success' && Array.isArray(result.batches)) {
-      return result.batches;
-    }
-  } catch (err) {
-    console.error('Failed to fetch CNF-eligible batches:', err);
+  const result = await callGas('get_cnf_eligible_batches', {}, 1);
+  if (result.status === 'success' && Array.isArray(result.batches)) {
+    return result.batches;
   }
-  return [];
+  throw new Error(result.message || 'Failed to fetch CNF-eligible batches');
 }
 
 /**
