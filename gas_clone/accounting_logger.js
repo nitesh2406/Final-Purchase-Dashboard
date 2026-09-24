@@ -2343,7 +2343,7 @@ function fixVendorAccountsSheet() {
 
 function getCnfLedgerEntries_() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CNF_Ledger');
-  if (!sheet) throw new Error("Sheet 'CNF_Ledger' not found. Create it with header row: ID | Batch ID | Created At | Qty | Cartons | Invoice RMB Total | Mode | EDD | Carrier | Waybill | Rate | Category | Charges Pct | Goods Value | Charges | Shipping Amount | Taxable Amount | IGST Pct | IGST | Total | Total Payable | Invoice Batch ID");
+  if (!sheet) throw new Error("Sheet 'CNF_Ledger' not found. Create it with header row: ID | Batch ID | Created At | Qty | Cartons | Invoice RMB Total | Mode | EDD | Carrier | Waybill | Rate | Category | Charges Pct | Goods Value | Charges | Shipping Amount | Taxable Amount | IGST Pct | IGST | Total | Total Payable | Invoice Batch ID | Bill Requested At | Bill Requested By");
   var data = sheet.getDataRange().getValues();
   var rows = [];
   for (var i = 1; i < data.length; i++) {
@@ -2359,7 +2359,9 @@ function getCnfLedgerEntries_() {
       taxableAmount: Number(data[i][16]) || 0, igstPct: Number(data[i][17]) || 0,
       igst: Number(data[i][18]) || 0, total: Number(data[i][19]) || 0,
       totalPayable: Number(data[i][20]) || 0,
-      invoiceBatchId: data[i][21] ? String(data[i][21]) : undefined
+      invoiceBatchId: data[i][21] ? String(data[i][21]) : undefined,
+      billRequestedAt: data[i][22] ? String(data[i][22]) : undefined,
+      billRequestedBy: data[i][23] ? String(data[i][23]) : undefined
     });
   }
   return { status: 'success', entries: rows };
@@ -2367,7 +2369,7 @@ function getCnfLedgerEntries_() {
 
 function addCnfLedgerEntry_(payload) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CNF_Ledger');
-  if (!sheet) throw new Error("Sheet 'CNF_Ledger' not found. Create it with header row: ID | Batch ID | Created At | Qty | Cartons | Invoice RMB Total | Mode | EDD | Carrier | Waybill | Rate | Category | Charges Pct | Goods Value | Charges | Shipping Amount | Taxable Amount | IGST Pct | IGST | Total | Total Payable | Invoice Batch ID");
+  if (!sheet) throw new Error("Sheet 'CNF_Ledger' not found. Create it with header row: ID | Batch ID | Created At | Qty | Cartons | Invoice RMB Total | Mode | EDD | Carrier | Waybill | Rate | Category | Charges Pct | Goods Value | Charges | Shipping Amount | Taxable Amount | IGST Pct | IGST | Total | Total Payable | Invoice Batch ID | Bill Requested At | Bill Requested By");
   var entry = payload.entry;
   if (!entry || !entry.batchId) throw new Error("payload.entry.batchId is required");
 
@@ -2389,9 +2391,50 @@ function addCnfLedgerEntry_(payload) {
       id, entry.batchId, entry.createdAt, entry.qty, entry.cartons, entry.invoiceRmbTotal,
       entry.mode, entry.edd, entry.carrier, entry.waybill, entry.rate, entry.category,
       entry.chargesPct, entry.goodsValue, entry.charges, entry.shippingAmount,
-      entry.taxableAmount, entry.igstPct, entry.igst, entry.total, entry.totalPayable, ''
+      entry.taxableAmount, entry.igstPct, entry.igst, entry.total, entry.totalPayable, '', '', ''
     ]);
     return { status: 'success', id: id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Marks a CNF_Ledger row as "bill requested" — the ask has gone out to the
+// agent (tracked internally only, no email/notification this round). Column
+// 22 = Bill Requested At, column 23 = Bill Requested By (0-indexed, appended
+// after Invoice Batch ID at column 21).
+function requestCnfBill_(payload) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CNF_Ledger');
+  if (!sheet) throw new Error("Sheet 'CNF_Ledger' not found");
+  var entryId = String(payload.entryId || '').trim();
+  var requestedBy = String(payload.requestedBy || '').trim();
+  if (!entryId) throw new Error('payload.entryId is required');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    throw new Error('Another CNF request is in progress. Please try again in a moment.');
+  }
+
+  try {
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === entryId) {
+        var existingRequestedAt = data[i][22];
+        if (existingRequestedAt) {
+          // Idempotent: a retried click just returns what's already there.
+          return {
+            status: 'success',
+            billRequestedAt: String(existingRequestedAt),
+            billRequestedBy: data[i][23] ? String(data[i][23]) : ''
+          };
+        }
+        var now = new Date();
+        sheet.getRange(i + 1, 23).setValue(now); // column 23 = 1-indexed "Bill Requested At"
+        sheet.getRange(i + 1, 24).setValue(requestedBy); // column 24 = 1-indexed "Bill Requested By"
+        return { status: 'success', billRequestedAt: now.toISOString(), billRequestedBy: requestedBy };
+      }
+    }
+    throw new Error('CNF ledger entry not found: ' + entryId);
   } finally {
     lock.releaseLock();
   }
