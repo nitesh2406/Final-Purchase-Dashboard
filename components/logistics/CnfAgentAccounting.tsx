@@ -12,7 +12,6 @@ import {
   addCnfLedgerEntry,
   fetchCnfCommissionRates,
   fetchIgstRate,
-  isBatchFullySettled,
   computeCnfBatchRate,
   computeBatchSettlementStatus,
   createCnfInvoiceBatch,
@@ -120,14 +119,30 @@ export const CnfAgentAccounting: React.FC = () => {
     return map;
   }, [invoiceBatches]);
 
+  // Payment Status is persisted server-side at settlement time (see
+  // syncBatchSettlementAggregate_ in accounting_logger.js) — this falls back
+  // to the live computeBatchSettlementStatus join only for a batch that
+  // hasn't synced yet (payment_status still null, e.g. before the one-time
+  // backfill has run), so correctness never depends on backfill timing.
+  const resolvePaymentStatus = (
+    persisted: PaymentStatus | null | undefined,
+    linkedInvoiceIds: string[]
+  ): PaymentStatus => {
+    if (persisted) return persisted;
+    return computeBatchSettlementStatus(linkedInvoiceIds, purchaseInvoices, settlementRecords).status;
+  };
+
   // Pending queue: Delivered+settled batches with no CNF entry yet. Also used
   // to gate the per-row "Log Entry" action on Tab 1.
   const loggedBatchIds = useMemo(() => new Set(ledgerEntries.map(e => e.batchId)), [ledgerEntries]);
 
   const pendingBatches = useMemo(() => {
-    return eligibleBatches.filter(
-      b => !loggedBatchIds.has(b.batch_id) && isBatchFullySettled(b, purchaseInvoices, settlementRecords)
-    );
+    return eligibleBatches.filter(b => {
+      if (loggedBatchIds.has(b.batch_id)) return false;
+      const linkedInvoiceIds = b.vendor_shipments.map(vs => vs.invoiceId || '');
+      return resolvePaymentStatus(b.payment_status, linkedInvoiceIds) === 'Paid';
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleBatches, loggedBatchIds, purchaseInvoices, settlementRecords]);
 
   const pendingBatchIds = useMemo(() => new Set(pendingBatches.map(b => b.batch_id)), [pendingBatches]);
@@ -135,7 +150,7 @@ export const CnfAgentAccounting: React.FC = () => {
   const batchOverviewRows = useMemo(() => {
     return allBatches.map(b => {
       const linkedInvoiceIds = (b.vendor_shipments || []).map(vs => vs.invoiceId || '');
-      const paymentStatus = computeBatchSettlementStatus(linkedInvoiceIds, purchaseInvoices, settlementRecords).status;
+      const paymentStatus = resolvePaymentStatus(b.payment_status, linkedInvoiceIds);
       const ledgerEntry = ledgerEntryByBatchId.get(b.batch_id) || null;
       return {
         batch: b,
@@ -145,6 +160,7 @@ export const CnfAgentAccounting: React.FC = () => {
         canLog: !ledgerEntry && pendingBatchIds.has(b.batch_id),
       };
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allBatches, ledgerEntryByBatchId, purchaseInvoices, settlementRecords, invoiceBatchById, pendingBatchIds]);
 
   // Reconciliation funnel (Tab 2) — three mutually exclusive buckets derived
