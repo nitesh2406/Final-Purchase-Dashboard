@@ -1479,6 +1479,7 @@ function syncBatchSettlementAggregate_(batchId) {
   const shipmentsSheet = ss.getSheetByName('Vendor_Shipments');
   const ledgerSheet = ss.getSheetByName('SettlementLedger');
   const batchesSheet = ss.getSheetByName('Batches');
+  const invoicesSheet = ss.getSheetByName('PurchaseInvoices');
   if (!shipmentsSheet || !ledgerSheet || !batchesSheet) return;
 
   const shipValues = shipmentsSheet.getDataRange().getValues();
@@ -1494,28 +1495,6 @@ function syncBatchSettlementAggregate_(batchId) {
       if (inv) invoiceIds[inv] = true;
     }
   }
-  if (!Object.keys(invoiceIds).length) return;
-
-  const ledgerValues = ledgerSheet.getDataRange().getValues();
-  const ledgerHeaders = ledgerValues[0];
-  const colInvoiceId = findHeaderIndex_(ledgerHeaders, 'Invoice ID');
-  const colRmb = ledgerHeaders.indexOf('RMB');
-  const colEr2 = ledgerHeaders.indexOf('ER2');
-  if (colInvoiceId === -1 || colRmb === -1 || colEr2 === -1) return;
-
-  let totalRmb = 0, totalInr = 0;
-  for (let j = 1; j < ledgerValues.length; j++) {
-    const invId = String(ledgerValues[j][colInvoiceId] || '').trim();
-    if (!invoiceIds[invId]) continue;
-    const rmb = Math.abs(Number(ledgerValues[j][colRmb]) || 0);
-    const er2 = Number(ledgerValues[j][colEr2]) || 0;
-    if (!rmb || !er2) continue;
-    totalRmb += rmb;
-    totalInr += rmb * er2;
-  }
-
-  const round2 = v => Math.round(v * 100) / 100;
-  const blendedRate = totalRmb > 0 ? totalInr / totalRmb : 0;
 
   const batchValues = batchesSheet.getDataRange().getValues();
   const batchHeaders = batchValues[0];
@@ -1527,6 +1506,66 @@ function syncBatchSettlementAggregate_(batchId) {
   }
   if (rowIndex === -1) return;
 
+  const paymentStatusCol = ensureHeaderColumn_(batchesSheet, 'payment_status');
+
+  if (!Object.keys(invoiceIds).length) {
+    batchesSheet.getRange(rowIndex, paymentStatusCol + 1).setValue('Not Invoiced');
+    invalidateSheetCache_('Batches');
+    return;
+  }
+
+  const ledgerValues = ledgerSheet.getDataRange().getValues();
+  const ledgerHeaders = ledgerValues[0];
+  const colInvoiceId = findHeaderIndex_(ledgerHeaders, 'Invoice ID');
+  const colRmb = ledgerHeaders.indexOf('RMB');
+  const colEr2 = ledgerHeaders.indexOf('ER2');
+  if (colInvoiceId === -1 || colRmb === -1 || colEr2 === -1) return;
+
+  let totalRmb = 0, totalInr = 0;
+  const settledRmbByInvoice = {};
+  for (let j = 1; j < ledgerValues.length; j++) {
+    const invId = String(ledgerValues[j][colInvoiceId] || '').trim();
+    if (!invoiceIds[invId]) continue;
+    const rmb = Math.abs(Number(ledgerValues[j][colRmb]) || 0);
+    const er2 = Number(ledgerValues[j][colEr2]) || 0;
+    settledRmbByInvoice[invId] = (settledRmbByInvoice[invId] || 0) + rmb;
+    if (!rmb || !er2) continue;
+    totalRmb += rmb;
+    totalInr += rmb * er2;
+  }
+
+  // Payment Status — same per-invoice clamped-outstanding algorithm as
+  // computeBatchSettlementStatus (services/settlementService.ts), kept in
+  // lockstep deliberately so this persisted status never disagrees with
+  // what that live function would compute.
+  let paymentStatus = 'Not Invoiced';
+  if (invoicesSheet) {
+    const invValues = invoicesSheet.getDataRange().getValues();
+    const invHeaders = invValues[0];
+    const invIdCol = findHeaderIndex_(invHeaders, 'Invoice ID');
+    const invRmbCol = findHeaderIndex_(invHeaders, 'RMB');
+    if (invIdCol !== -1 && invRmbCol !== -1) {
+      let invoicedRmbTotal = 0, outstandingRmb = 0, anyMatched = false;
+      for (let m = 1; m < invValues.length; m++) {
+        const id = String(invValues[m][invIdCol] || '').trim();
+        if (!invoiceIds[id]) continue;
+        anyMatched = true;
+        const invoicedRmb = Number(invValues[m][invRmbCol]) || 0;
+        const settledRmb = settledRmbByInvoice[id] || 0;
+        invoicedRmbTotal += invoicedRmb;
+        outstandingRmb += Math.max(0, invoicedRmb - settledRmb);
+      }
+      if (anyMatched) {
+        paymentStatus = outstandingRmb < 0.01 ? 'Paid'
+          : outstandingRmb < invoicedRmbTotal - 0.01 ? 'Partial'
+          : 'Unpaid';
+      }
+    }
+  }
+
+  const round2 = v => Math.round(v * 100) / 100;
+  const blendedRate = totalRmb > 0 ? totalInr / totalRmb : 0;
+
   const paidInrCol = ensureHeaderColumn_(batchesSheet, 'paid_amount_inr');
   const blendedRateCol = ensureHeaderColumn_(batchesSheet, 'blended_settlement_rate');
   const syncedAtCol = ensureHeaderColumn_(batchesSheet, 'settlement_synced_at');
@@ -1534,7 +1573,128 @@ function syncBatchSettlementAggregate_(batchId) {
   batchesSheet.getRange(rowIndex, paidInrCol + 1).setValue(round2(totalInr));
   batchesSheet.getRange(rowIndex, blendedRateCol + 1).setValue(totalRmb > 0 ? Math.round(blendedRate * 10000) / 10000 : '');
   batchesSheet.getRange(rowIndex, syncedAtCol + 1).setValue(new Date().toISOString());
+  batchesSheet.getRange(rowIndex, paymentStatusCol + 1).setValue(paymentStatus);
   invalidateSheetCache_('Batches');
+}
+
+// One-pass backfill for every batch's paid_amount_inr / blended_settlement_rate
+// / payment_status. Reads Vendor_Shipments, PurchaseInvoices, SettlementLedger
+// and Batches exactly ONCE and builds in-memory lookup maps, unlike calling
+// syncBatchSettlementAggregate_ in a loop (which re-reads all of those sheets
+// per batch — fine for one batch at real settlement time, far too slow across
+// every batch at once). Same algorithm as syncBatchSettlementAggregate_ —
+// kept in lockstep deliberately.
+function backfillBatchSettlementAggregates_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const shipmentsSheet = ss.getSheetByName('Vendor_Shipments');
+  const ledgerSheet = ss.getSheetByName('SettlementLedger');
+  const batchesSheet = ss.getSheetByName('Batches');
+  const invoicesSheet = ss.getSheetByName('PurchaseInvoices');
+  if (!shipmentsSheet || !ledgerSheet || !batchesSheet || !invoicesSheet) {
+    throw new Error('One or more required sheets not found (Vendor_Shipments / SettlementLedger / Batches / PurchaseInvoices)');
+  }
+
+  const shipValues = shipmentsSheet.getDataRange().getValues();
+  const shipHeaders = shipValues[0];
+  const shipBatchCol = shipHeaders.indexOf('batch_id');
+  const shipInvCol = shipHeaders.indexOf('invoice_no');
+  if (shipBatchCol === -1 || shipInvCol === -1) throw new Error('Vendor_Shipments missing batch_id/invoice_no column');
+
+  const invoiceIdsByBatch = {};
+  for (let i = 1; i < shipValues.length; i++) {
+    const bId = String(shipValues[i][shipBatchCol] || '').trim();
+    const invId = String(shipValues[i][shipInvCol] || '').trim();
+    if (!bId || !invId) continue;
+    if (!invoiceIdsByBatch[bId]) invoiceIdsByBatch[bId] = {};
+    invoiceIdsByBatch[bId][invId] = true;
+  }
+
+  const invValues = invoicesSheet.getDataRange().getValues();
+  const invHeaders = invValues[0];
+  const invIdCol = findHeaderIndex_(invHeaders, 'Invoice ID');
+  const invRmbCol = findHeaderIndex_(invHeaders, 'RMB');
+  const invoicedRmbByInvoice = {};
+  if (invIdCol !== -1 && invRmbCol !== -1) {
+    for (let m = 1; m < invValues.length; m++) {
+      const id = String(invValues[m][invIdCol] || '').trim();
+      if (id) invoicedRmbByInvoice[id] = Number(invValues[m][invRmbCol]) || 0;
+    }
+  }
+
+  const ledgerValues = ledgerSheet.getDataRange().getValues();
+  const ledgerHeaders = ledgerValues[0];
+  const colInvoiceId = findHeaderIndex_(ledgerHeaders, 'Invoice ID');
+  const colRmb = ledgerHeaders.indexOf('RMB');
+  const colEr2 = ledgerHeaders.indexOf('ER2');
+  const settledRmbByInvoice = {};
+  const settledInrByInvoice = {};
+  if (colInvoiceId !== -1 && colRmb !== -1 && colEr2 !== -1) {
+    for (let j = 1; j < ledgerValues.length; j++) {
+      const lInvId = String(ledgerValues[j][colInvoiceId] || '').trim();
+      if (!lInvId) continue;
+      const rmb = Math.abs(Number(ledgerValues[j][colRmb]) || 0);
+      const er2 = Number(ledgerValues[j][colEr2]) || 0;
+      settledRmbByInvoice[lInvId] = (settledRmbByInvoice[lInvId] || 0) + rmb;
+      if (rmb && er2) settledInrByInvoice[lInvId] = (settledInrByInvoice[lInvId] || 0) + rmb * er2;
+    }
+  }
+
+  const batchValues = batchesSheet.getDataRange().getValues();
+  const batchHeaders = batchValues[0];
+  const batchIdCol = batchHeaders.indexOf('batch_id');
+  if (batchIdCol === -1) throw new Error('Batches sheet missing batch_id column');
+
+  const paidInrCol = ensureHeaderColumn_(batchesSheet, 'paid_amount_inr');
+  const blendedRateCol = ensureHeaderColumn_(batchesSheet, 'blended_settlement_rate');
+  const syncedAtCol = ensureHeaderColumn_(batchesSheet, 'settlement_synced_at');
+  const paymentStatusCol = ensureHeaderColumn_(batchesSheet, 'payment_status');
+
+  const round2 = v => Math.round(v * 100) / 100;
+  const now = new Date().toISOString();
+  let updated = 0, skippedNoInvoices = 0;
+
+  for (let k = 1; k < batchValues.length; k++) {
+    const batchId = String(batchValues[k][batchIdCol] || '').trim();
+    if (!batchId) continue;
+    const invIds = invoiceIdsByBatch[batchId];
+    const rowIndex = k + 1;
+
+    if (!invIds || !Object.keys(invIds).length) {
+      batchesSheet.getRange(rowIndex, paymentStatusCol + 1).setValue('Not Invoiced');
+      skippedNoInvoices++;
+      continue;
+    }
+
+    let totalRmb = 0, totalInr = 0, invoicedRmbTotal = 0, outstandingRmb = 0, anyMatched = false;
+    Object.keys(invIds).forEach(function (invId) {
+      const settledRmb = settledRmbByInvoice[invId] || 0;
+      const settledInr = settledInrByInvoice[invId] || 0;
+      totalRmb += settledRmb;
+      totalInr += settledInr;
+      if (invId in invoicedRmbByInvoice) {
+        anyMatched = true;
+        const invoicedRmb = invoicedRmbByInvoice[invId] || 0;
+        invoicedRmbTotal += invoicedRmb;
+        outstandingRmb += Math.max(0, invoicedRmb - settledRmb);
+      }
+    });
+
+    const paymentStatus = !anyMatched ? 'Not Invoiced'
+      : outstandingRmb < 0.01 ? 'Paid'
+      : outstandingRmb < invoicedRmbTotal - 0.01 ? 'Partial'
+      : 'Unpaid';
+
+    const blendedRate = totalRmb > 0 ? totalInr / totalRmb : 0;
+
+    batchesSheet.getRange(rowIndex, paidInrCol + 1).setValue(round2(totalInr));
+    batchesSheet.getRange(rowIndex, blendedRateCol + 1).setValue(totalRmb > 0 ? Math.round(blendedRate * 10000) / 10000 : '');
+    batchesSheet.getRange(rowIndex, syncedAtCol + 1).setValue(now);
+    batchesSheet.getRange(rowIndex, paymentStatusCol + 1).setValue(paymentStatus);
+    updated++;
+  }
+
+  invalidateSheetCache_('Batches');
+  return { status: 'success', updated: updated, skippedNoInvoices: skippedNoInvoices, totalBatches: batchValues.length - 1 };
 }
 
 function logToVendorLedger_(vendorCode, date, particulars, refId, rmb) {

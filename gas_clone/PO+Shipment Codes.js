@@ -2367,6 +2367,11 @@ function getBatches() {
     // settled against this batch, handled as null below.
     var paidAmountInrCol = batchHeaders.indexOf('paid_amount_inr');
     var blendedSettlementRateCol = batchHeaders.indexOf('blended_settlement_rate');
+    // Same sync point as the two columns above — Payment Status (Paid/Partial/
+    // Unpaid/Not Invoiced) is now persisted there too instead of being
+    // recomputed client-side on every load (see computeBatchSettlementStatus
+    // in settlementService.ts, which this is kept in lockstep with).
+    var paymentStatusCol = batchHeaders.indexOf('payment_status');
 
     var shipBatchIdCol = shipmentHeaders.indexOf('batch_id');
     var shipmentIdCol = shipmentHeaders.indexOf('shipment_id');
@@ -2648,6 +2653,8 @@ function getBatches() {
           ? (Number(batchesData[i][paidAmountInrCol]) || 0) : null,
         blended_settlement_rate: blendedSettlementRateCol >= 0 && batchesData[i][blendedSettlementRateCol] !== ''
           ? (Number(batchesData[i][blendedSettlementRateCol]) || null) : null,
+        payment_status: paymentStatusCol >= 0 && batchesData[i][paymentStatusCol] !== ''
+          ? String(batchesData[i][paymentStatusCol]) : null,
         vendor_shipments: vendorShipments
       });
     }
@@ -3177,6 +3184,9 @@ function getCnfEligibleBatches() {
     var carrierCol = batchHeaders.indexOf('carrier');
     var trackingCol = batchHeaders.indexOf('tracking_number');
     var expectedDeliveryCol = batchHeaders.indexOf('expected_delivery');
+    // Same persisted-at-settlement-time column getBatches() reads — see
+    // syncBatchSettlementAggregate_ in accounting_logger.js.
+    var paymentStatusCol = batchHeaders.indexOf('payment_status');
 
     var ctx = buildBatchAssemblyContext_();
     var result = [];
@@ -3202,13 +3212,15 @@ function getCnfEligibleBatches() {
 
       var createdAt = row[createdAtCol];
       var expectedDelivery = row[expectedDeliveryCol];
+      var paymentStatus = paymentStatusCol >= 0 && row[paymentStatusCol] !== ''
+        ? String(row[paymentStatusCol]) : null;
 
       result.push({
         batch_id: batchId, status: status, batch_type: normalizedBatchType,
         created_at: createdAt ? createdAt.toISOString() : null,
         carrier: row[carrierCol] || '', waybill: row[trackingCol] || '',
         expected_delivery: expectedDelivery ? expectedDelivery.toISOString() : null,
-        qty: qty, cartons: cartons, vendor_shipments: vendorShipments
+        qty: qty, cartons: cartons, payment_status: paymentStatus, vendor_shipments: vendorShipments
       });
     }
 

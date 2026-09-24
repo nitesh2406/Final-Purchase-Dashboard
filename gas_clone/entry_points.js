@@ -251,6 +251,10 @@ function doPost(e) {
         result = getCnfEligibleBatches();
         break;
 
+      case 'backfill_batch_settlement_aggregates':
+        result = backfillBatchSettlementAggregates_();
+        break;
+
       case 'get_sku_categories':
         return apiGetSkuCategories();
 
