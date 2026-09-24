@@ -683,6 +683,19 @@ export async function addCnfLedgerEntry(entry: Omit<CnfLedgerEntry, 'id'>): Prom
   return { ...entry, id: response.id };
 }
 
+/**
+ * Marks a CNF ledger entry as "bill requested" — internal tracking only
+ * (no agent notification this round). Idempotent server-side: a retried
+ * call on an already-requested entry just returns the existing timestamp.
+ */
+export async function requestCnfBill(entryId: string, requestedBy: string): Promise<{ billRequestedAt: string; billRequestedBy: string }> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'request_cnf_bill', 'CNF_Ledger', 'POST', { entryId, requestedBy });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to request bill');
+  }
+  return { billRequestedAt: response.billRequestedAt, billRequestedBy: response.billRequestedBy };
+}
+
 function generateCnfInvoiceBatchId(): string {
   return 'CNFBATCH-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
 }
