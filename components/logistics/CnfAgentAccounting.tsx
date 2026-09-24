@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { getSessionAuthHeaders } from '../../services/authToken';
+import { useQueryParam } from '../../hooks/useQueryParam';
+import { ListBulletIcon, DocumentTextIcon } from '../icons/Icons';
 import {
   fetchCnfEligibleBatches,
   fetchPurchaseInvoices,
@@ -12,10 +14,12 @@ import {
   fetchIgstRate,
   isBatchFullySettled,
   computeCnfBatchRate,
+  computeBatchSettlementStatus,
   createCnfInvoiceBatch,
   fetchCnfInvoiceBatches,
   approveCnfInvoiceBatch,
   rejectCnfInvoiceBatch,
+  requestCnfBill,
   PurchaseInvoice,
   SettlementRecord
 } from '../../services/settlementService';
@@ -24,7 +28,41 @@ import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate, CnfInvoiceBatch, B
 import { useSubmissionLock } from '../../hooks/useSubmissionLock';
 import { callGasAuthed } from '../../services/gasApi';
 
+type CnfTab = 'overview' | 'reconciliation';
+
+// Derived (never stored) bill lifecycle for a batch's CNF ledger entry.
+type CnfLifecycle = 'Not Logged' | 'Logged' | 'Bill Requested' | 'Bill Received' | 'Approved';
+
+function cnfLifecycle(entry: CnfLedgerEntry | null, invoiceBatchById: Map<string, CnfInvoiceBatch>): CnfLifecycle {
+  if (!entry) return 'Not Logged';
+  if (!entry.invoiceBatchId) return entry.billRequestedAt ? 'Bill Requested' : 'Logged';
+  const invBatch = invoiceBatchById.get(entry.invoiceBatchId);
+  return invBatch?.status === 'Approved' ? 'Approved' : 'Bill Received';
+}
+
+const LIFECYCLE_BADGE_CLASS: Record<CnfLifecycle, string> = {
+  'Not Logged': 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 italic',
+  'Logged': 'bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400',
+  'Bill Requested': 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+  'Bill Received': 'bg-purple-100 text-purple-700 dark:bg-purple-500/10 dark:text-purple-400',
+  'Approved': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
+};
+
+type PaymentStatus = 'Paid' | 'Partial' | 'Unpaid' | 'Not Invoiced';
+
+const PAYMENT_BADGE_CLASS: Record<PaymentStatus, string> = {
+  'Paid': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
+  'Partial': 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+  'Unpaid': 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400',
+  'Not Invoiced': 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
+};
+
+const fmtInr = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtRmb = (n: number) => `¥${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 export const CnfAgentAccounting: React.FC = () => {
+  const [activeTab, setActiveTab] = useQueryParam<CnfTab>('cnfTab', 'overview');
+
   const [eligibleBatches, setEligibleBatches] = useState<CnfEligibleBatch[]>([]);
   const [allBatches, setAllBatches] = useState<Batch[]>([]);
   const [purchaseInvoices, setPurchaseInvoices] = useState<PurchaseInvoice[]>([]);
@@ -76,14 +114,14 @@ export const CnfAgentAccounting: React.FC = () => {
     return map;
   }, [ledgerEntries]);
 
-  const batchOverviewRows = useMemo(() => {
-    return allBatches.map(b => ({
-      batch: b,
-      ledgerEntry: ledgerEntryByBatchId.get(b.batch_id) || null,
-    }));
-  }, [allBatches, ledgerEntryByBatchId]);
+  const invoiceBatchById = useMemo(() => {
+    const map = new Map<string, CnfInvoiceBatch>();
+    invoiceBatches.forEach(b => map.set(b.id, b));
+    return map;
+  }, [invoiceBatches]);
 
-  // Pending queue: Delivered+settled batches with no CNF entry yet.
+  // Pending queue: Delivered+settled batches with no CNF entry yet. Also used
+  // to gate the per-row "Log Entry" action on Tab 1.
   const loggedBatchIds = useMemo(() => new Set(ledgerEntries.map(e => e.batchId)), [ledgerEntries]);
 
   const pendingBatches = useMemo(() => {
@@ -92,11 +130,41 @@ export const CnfAgentAccounting: React.FC = () => {
     );
   }, [eligibleBatches, loggedBatchIds, purchaseInvoices, settlementRecords]);
 
-  const unbilledEntries = useMemo(() => ledgerEntries.filter(e => !e.invoiceBatchId), [ledgerEntries]);
+  const pendingBatchIds = useMemo(() => new Set(pendingBatches.map(b => b.batch_id)), [pendingBatches]);
+
+  const batchOverviewRows = useMemo(() => {
+    return allBatches.map(b => {
+      const linkedInvoiceIds = (b.vendor_shipments || []).map(vs => vs.invoiceId || '');
+      const paymentStatus = computeBatchSettlementStatus(linkedInvoiceIds, purchaseInvoices, settlementRecords).status;
+      const ledgerEntry = ledgerEntryByBatchId.get(b.batch_id) || null;
+      return {
+        batch: b,
+        ledgerEntry,
+        paymentStatus,
+        lifecycle: cnfLifecycle(ledgerEntry, invoiceBatchById),
+        canLog: !ledgerEntry && pendingBatchIds.has(b.batch_id),
+      };
+    });
+  }, [allBatches, ledgerEntryByBatchId, purchaseInvoices, settlementRecords, invoiceBatchById, pendingBatchIds]);
+
+  // Reconciliation funnel (Tab 2) — three mutually exclusive buckets derived
+  // from billRequestedAt / invoiceBatchId, plus a combined "pending" view.
+  const eligibleEntries = useMemo(() => ledgerEntries.filter(e => !e.billRequestedAt && !e.invoiceBatchId), [ledgerEntries]);
+  const generatedEntries = useMemo(() => ledgerEntries.filter(e => e.billRequestedAt && !e.invoiceBatchId), [ledgerEntries]);
+  const receivedEntries = useMemo(() => ledgerEntries.filter(e => !!e.invoiceBatchId), [ledgerEntries]);
+  const sumPayable = (list: CnfLedgerEntry[]) => list.reduce((sum, e) => sum + e.totalPayable, 0);
+  const totalPendingCount = eligibleEntries.length + generatedEntries.length;
+  const totalPendingValue = sumPayable(eligibleEntries) + sumPayable(generatedEntries);
+
+  // Entries visible in Tab 2's table — anything past "Logged" (i.e. a bill
+  // has at least been requested). Checkbox selection (for Generate Bill) is
+  // further scoped to "Bill Generated" only, since a bill can't be uploaded
+  // before it's been requested.
+  const postRequestEntries = useMemo(() => ledgerEntries.filter(e => !!e.billRequestedAt), [ledgerEntries]);
 
   const selectedEntries = useMemo(
-    () => unbilledEntries.filter(e => selectedEntryIds.has(e.id)),
-    [unbilledEntries, selectedEntryIds]
+    () => generatedEntries.filter(e => selectedEntryIds.has(e.id)),
+    [generatedEntries, selectedEntryIds]
   );
 
   const selectedTotalPayable = useMemo(
@@ -164,6 +232,22 @@ export const CnfAgentAccounting: React.FC = () => {
     });
   };
 
+  const [requestingBillFor, setRequestingBillFor] = useState<string | null>(null);
+  const [requestBillError, setRequestBillError] = useState<string | null>(null);
+
+  const handleRequestBill = async (entryId: string) => {
+    setRequestingBillFor(entryId);
+    setRequestBillError(null);
+    try {
+      await requestCnfBill(entryId, 'internal-admin');
+      await loadAll();
+    } catch (err: any) {
+      setRequestBillError(err.message || 'Failed to request bill');
+    } finally {
+      setRequestingBillFor(null);
+    }
+  };
+
   const [selectedBatchId, setSelectedBatchId] = useState<string>('');
   const [categoryId, setCategoryId] = useState<string>('');
   const [chargesPctOverride, setChargesPctOverride] = useState<string>('');
@@ -208,6 +292,13 @@ export const CnfAgentAccounting: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const openLogEntryForm = (batchId: string) => {
+    setActiveTab('overview');
+    setSelectedBatchId(batchId);
+    setIsFormOpen(true);
+    setSubmitError(null);
+  };
+
   const handleSubmit = async () => {
     if (!selectedBatch || !selectedCategory || isSubmitting) return;
     setIsSubmitting(true);
@@ -219,7 +310,7 @@ export const CnfAgentAccounting: React.FC = () => {
         qty: selectedBatch.qty,
         cartons: selectedBatch.cartons,
         invoiceRmbTotal,
-        mode: 'sea',
+        mode: selectedBatch.batch_type,
         edd: selectedBatch.expected_delivery,
         carrier: selectedBatch.carrier,
         waybill: selectedBatch.waybill,
@@ -248,285 +339,380 @@ export const CnfAgentAccounting: React.FC = () => {
     }
   };
 
+  const tabButtonClass = (tab: CnfTab) =>
+    `flex-1 md:flex-initial min-w-[200px] px-5 py-3 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2.5 ${
+      activeTab === tab
+        ? 'bg-primary-600 text-white shadow-md font-black'
+        : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-800/40'
+    }`;
+
   return (
     <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-800 dark:text-white">CNF Agent Accounting</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            {pendingBatches.length} shipment{pendingBatches.length === 1 ? '' : 's'} eligible and not yet logged
-          </p>
-        </div>
-        <Button onClick={() => { setIsFormOpen(true); setSubmitError(null); }} disabled={pendingBatches.length === 0}>
-          Log CNF Entry
-        </Button>
+      <div>
+        <h2 className="text-xl font-semibold text-slate-800 dark:text-white">CNF Agent Accounting</h2>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          {pendingBatches.length} shipment{pendingBatches.length === 1 ? '' : 's'} eligible and not yet logged
+        </p>
       </div>
 
-      <Card className="p-0 overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-          <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">
-            All Shipments ({batchOverviewRows.length})
-          </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            INR value and ER are only ever synced when a vendor payment settles — never recalculated on load.
-          </p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm border-collapse">
-            <thead>
-              <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 text-[11px] uppercase tracking-wider border-b">
-                <th className="px-4 py-3">Batch ID</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Value (RMB)</th>
-                <th className="px-4 py-3 text-right">Value (INR)</th>
-                <th className="px-4 py-3 text-right">ER</th>
-                <th className="px-4 py-3">CNF Category</th>
-                <th className="px-4 py-3 text-right">CNF Total Payable</th>
-                <th className="px-4 py-3">CNF Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {isLoading ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
-              ) : batchOverviewRows.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No shipments found.</td></tr>
-              ) : batchOverviewRows.map(({ batch, ledgerEntry }) => (
-                <tr key={batch.batch_id}>
-                  <td className="px-4 py-3 font-mono">{batch.batch_id}</td>
-                  <td className="px-4 py-3">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                      batch.status === 'Delivered'
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-                        : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
-                    }`}>
-                      {batch.status === 'Delivered' ? 'Delivered' : 'Open'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono">
-                    ¥{(batch.total_value_rmb || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono">
-                    {batch.paid_amount_inr != null
-                      ? `₹${batch.paid_amount_inr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                      : <span className="text-slate-300 dark:text-slate-600">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono">
-                    {batch.blended_settlement_rate != null ? batch.blended_settlement_rate.toFixed(4) : <span className="text-slate-300 dark:text-slate-600">—</span>}
-                  </td>
-                  <td className="px-4 py-3">{ledgerEntry?.category || <span className="text-slate-300 dark:text-slate-600">—</span>}</td>
-                  <td className="px-4 py-3 text-right font-mono">
-                    {ledgerEntry ? `₹${ledgerEntry.totalPayable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : <span className="text-slate-300 dark:text-slate-600">—</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    {ledgerEntry ? (ledgerEntry.invoiceBatchId ? 'Billed' : 'Unbilled') : <span className="text-slate-400 italic">Not logged</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <div className="flex border-b border-gray-200 dark:border-gray-750 bg-slate-100/50 dark:bg-slate-900/50 p-1.5 rounded-xl gap-1 max-w-full overflow-x-auto shadow-sm">
+        <button onClick={() => setActiveTab('overview')} className={tabButtonClass('overview')}>
+          <ListBulletIcon className="w-4 h-4" />
+          <span>Batch Overview</span>
+        </button>
+        <button onClick={() => setActiveTab('reconciliation')} className={tabButtonClass('reconciliation')}>
+          <DocumentTextIcon className="w-4 h-4" />
+          <span>Bill Reconciliation</span>
+          {(eligibleEntries.length + generatedEntries.length) > 0 && (
+            <span className={`px-2 py-0.5 text-[10px] font-black font-mono rounded-full ${
+              activeTab === 'reconciliation' ? 'bg-primary-700 text-white' : 'bg-gray-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+            }`}>
+              {eligibleEntries.length + generatedEntries.length}
+            </span>
+          )}
+        </button>
+      </div>
 
-      {pendingApprovalBatches.length > 0 && (
-        <Card className="p-4 space-y-3">
-          <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">
-            Pending Approval ({pendingApprovalBatches.length})
-          </h3>
-          {approvalError && <p className="text-sm text-red-500">{approvalError}</p>}
-          {pendingApprovalBatches.map(batch => {
-            const isApprovingThis = activeApprovalAction?.batchId === batch.id && activeApprovalAction.type === 'approve';
-            const isRejectingThis = activeApprovalAction?.batchId === batch.id && activeApprovalAction.type === 'reject';
-            const isBatchBusy = activeApprovalAction !== null;
-            return (
-              <div key={batch.id} className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 space-y-2">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="font-semibold">{batch.billNo} — ₹{batch.billedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                    <p className="text-xs text-slate-400">
-                      {batch.entryIds.length} shipment{batch.entryIds.length === 1 ? '' : 's'} · Submitted by {batch.submittedBy}
-                      {batch.overrideReason && <span className="text-amber-500"> · Override: {batch.overrideReason}</span>}
-                    </p>
-                    {batch.fileUrl && <a href={batch.fileUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-500 underline">View uploaded invoice</a>}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={() => handleApprove(batch.id)}
-                      disabled={isBatchBusy}
-                      className="bg-emerald-600 hover:bg-emerald-700"
-                    >
-                      {isApprovingThis ? 'Approving…' : 'Approve'}
-                    </Button>
-                  </div>
-                </div>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    placeholder="Rejection reason"
-                    value={rejectReasonDraft[batch.id] || ''}
-                    onChange={e => setRejectReasonDraft(prev => ({ ...prev, [batch.id]: e.target.value }))}
-                    disabled={isBatchBusy}
-                    className="flex-1 px-3 py-1.5 border rounded-lg text-xs"
-                  />
-                  <button
-                    onClick={() => handleReject(batch.id)}
-                    disabled={isBatchBusy}
-                    className="text-red-500 hover:text-red-600 text-xs font-bold px-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isRejectingThis ? 'Rejecting…' : 'Reject'}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </Card>
-      )}
-
-      {isFormOpen && (
-        <Card className="p-6 space-y-4">
-          <div>
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Shipment</label>
-            <select
-              value={selectedBatchId}
-              onChange={e => setSelectedBatchId(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-sm"
-            >
-              <option value="">-- Select an eligible shipment --</option>
-              {pendingBatches.map(b => (
-                <option key={b.batch_id} value={b.batch_id}>{b.batch_id}</option>
-              ))}
-            </select>
+      {activeTab === 'overview' && (
+        <div className="space-y-6 animate-in fade-in duration-300">
+          <div className="flex justify-end">
+            <Button onClick={() => { setIsFormOpen(true); setSubmitError(null); }} disabled={pendingBatches.length === 0}>
+              Log CNF Entry
+            </Button>
           </div>
 
-          {selectedBatch && (
-            <>
-              <div className="grid grid-cols-4 gap-4 text-sm">
-                <div><span className="text-slate-400 block text-xs">Created At</span>{selectedBatch.created_at}</div>
-                <div><span className="text-slate-400 block text-xs">EDD</span>{selectedBatch.expected_delivery}</div>
-                <div><span className="text-slate-400 block text-xs">Carrier</span>{selectedBatch.carrier}</div>
-                <div><span className="text-slate-400 block text-xs">Waybill</span>{selectedBatch.waybill}</div>
-                <div><span className="text-slate-400 block text-xs">Invoice (RMB)</span>¥{invoiceRmbTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div><span className="text-slate-400 block text-xs">Rate</span>{rate.toFixed(4)}</div>
-                <div><span className="text-slate-400 block text-xs">Goods Value</span>₹{goodsValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-              </div>
+          <Card className="p-0 overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">
+                All Shipments ({batchOverviewRows.length})
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                INR value and ER are only ever synced when a vendor payment settles — never recalculated on load.
+              </p>
+            </div>
+            {requestBillError && <p className="text-sm text-red-500 px-4 pt-3">{requestBillError}</p>}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 text-[11px] uppercase tracking-wider border-b">
+                    <th className="px-4 py-3">Batch ID</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Value (RMB)</th>
+                    <th className="px-4 py-3 text-right">Value (INR)</th>
+                    <th className="px-4 py-3 text-right">ER</th>
+                    <th className="px-4 py-3">Payment Status</th>
+                    <th className="px-4 py-3">CNF Category</th>
+                    <th className="px-4 py-3 text-right">CNF Total Payable</th>
+                    <th className="px-4 py-3">Bill Status</th>
+                    <th className="px-4 py-3">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {isLoading ? (
+                    <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+                  ) : batchOverviewRows.length === 0 ? (
+                    <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-400">No shipments found.</td></tr>
+                  ) : batchOverviewRows.map(({ batch, ledgerEntry, paymentStatus, lifecycle, canLog }) => (
+                    <tr key={batch.batch_id}>
+                      <td className="px-4 py-3 font-mono">{batch.batch_id}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                          batch.status === 'Delivered'
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                            : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                        }`}>
+                          {batch.status === 'Delivered' ? 'Delivered' : 'Open'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono">{fmtRmb(batch.total_value_rmb || 0)}</td>
+                      <td className="px-4 py-3 text-right font-mono">
+                        {batch.paid_amount_inr != null ? fmtInr(batch.paid_amount_inr) : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono">
+                        {batch.blended_settlement_rate != null ? batch.blended_settlement_rate.toFixed(4) : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${PAYMENT_BADGE_CLASS[paymentStatus]}`}>
+                          {paymentStatus}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">{ledgerEntry?.category || <span className="text-slate-300 dark:text-slate-600">—</span>}</td>
+                      <td className="px-4 py-3 text-right font-mono">
+                        {ledgerEntry ? fmtInr(ledgerEntry.totalPayable) : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${LIFECYCLE_BADGE_CLASS[lifecycle]}`}>
+                          {lifecycle}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {canLog && (
+                          <Button variant="secondary" className="text-xs !py-1 !px-2.5" onClick={() => openLogEntryForm(batch.batch_id)}>
+                            Log Entry
+                          </Button>
+                        )}
+                        {ledgerEntry && !ledgerEntry.billRequestedAt && (
+                          <Button
+                            variant="secondary"
+                            className="text-xs !py-1 !px-2.5"
+                            disabled={requestingBillFor === ledgerEntry.id}
+                            onClick={() => handleRequestBill(ledgerEntry.id)}
+                          >
+                            {requestingBillFor === ledgerEntry.id ? 'Requesting…' : 'Request Bill'}
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
 
+          {isFormOpen && (
+            <Card className="p-6 space-y-4">
               <div>
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Category</label>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Shipment</label>
                 <select
-                  value={categoryId}
-                  onChange={e => { setCategoryId(e.target.value); setChargesPctOverride(''); }}
+                  value={selectedBatchId}
+                  onChange={e => setSelectedBatchId(e.target.value)}
                   className="w-full px-3 py-2 border rounded-lg text-sm"
                 >
-                  <option value="">-- Select category --</option>
-                  {commissionRates.map(r => (
-                    <option key={r.id} value={r.id}>{r.label} ({r.ratePct}%)</option>
+                  <option value="">-- Select an eligible shipment --</option>
+                  {pendingBatches.map(b => (
+                    <option key={b.batch_id} value={b.batch_id}>{b.batch_id} ({b.batch_type.toUpperCase()})</option>
                   ))}
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Charges % (override)</label>
-                  <input
-                    type="number" step="0.01"
-                    placeholder={selectedCategory ? String(selectedCategory.ratePct) : '0'}
-                    value={chargesPctOverride}
-                    onChange={e => setChargesPctOverride(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-lg text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Shipping Amount</label>
-                  <input
-                    type="number" step="0.01"
-                    value={shippingAmount}
-                    onChange={e => setShippingAmount(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-lg text-sm"
-                  />
-                </div>
-              </div>
+              {selectedBatch && (
+                <>
+                  <div className="grid grid-cols-4 gap-4 text-sm">
+                    <div><span className="text-slate-400 block text-xs">Created At</span>{selectedBatch.created_at}</div>
+                    <div><span className="text-slate-400 block text-xs">EDD</span>{selectedBatch.expected_delivery}</div>
+                    <div><span className="text-slate-400 block text-xs">Carrier</span>{selectedBatch.carrier}</div>
+                    <div><span className="text-slate-400 block text-xs">Waybill</span>{selectedBatch.waybill}</div>
+                    <div><span className="text-slate-400 block text-xs">Invoice (RMB)</span>{fmtRmb(invoiceRmbTotal)}</div>
+                    <div><span className="text-slate-400 block text-xs">Rate</span>{rate.toFixed(4)}</div>
+                    <div><span className="text-slate-400 block text-xs">Goods Value</span>{fmtInr(goodsValue)}</div>
+                  </div>
 
-              <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 grid grid-cols-3 gap-3 text-sm">
-                <div><span className="text-slate-400 block text-xs">Charges</span>₹{charges.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div><span className="text-slate-400 block text-xs">Taxable Amount</span>₹{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div><span className="text-slate-400 block text-xs">IGST ({igstPct}%)</span>₹{igst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div><span className="text-slate-400 block text-xs">Total</span>₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div className="col-span-2"><span className="text-slate-400 block text-xs">Total Payable</span><span className="font-bold text-emerald-600">₹{totalPayable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
-              </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Category</label>
+                    <select
+                      value={categoryId}
+                      onChange={e => { setCategoryId(e.target.value); setChargesPctOverride(''); }}
+                      className="w-full px-3 py-2 border rounded-lg text-sm"
+                    >
+                      <option value="">-- Select category --</option>
+                      {commissionRates.map(r => (
+                        <option key={r.id} value={r.id}>{r.label} ({r.ratePct}%)</option>
+                      ))}
+                    </select>
+                  </div>
 
-              {submitError && <p className="text-sm text-red-500">{submitError}</p>}
-
-              <div className="flex gap-3">
-                <Button variant="secondary" onClick={() => { setIsFormOpen(false); setSubmitError(null); }}>Cancel</Button>
-                <Button onClick={handleSubmit} disabled={!categoryId || isSubmitting}>
-                  {isSubmitting ? 'Logging…' : 'Log Entry'}
-                </Button>
-              </div>
-            </>
-          )}
-        </Card>
-      )}
-
-      {isBillModalOpen && (
-        <GenerateBillModal
-          selectedEntries={selectedEntries}
-          computedTotal={selectedTotalPayable}
-          submittedBy="internal-admin"
-          onClose={() => setIsBillModalOpen(false)}
-          onSuccess={() => { setIsBillModalOpen(false); setSelectedEntryIds(new Set()); loadAll(); }}
-        />
-      )}
-
-      {selectedEntryIds.size > 0 && (
-        <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-lg px-4 py-3">
-          <span className="text-sm">
-            {selectedEntryIds.size} entr{selectedEntryIds.size === 1 ? 'y' : 'ies'} selected — running total ₹{selectedTotalPayable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-          <Button onClick={() => setIsBillModalOpen(true)}>Generate Bill</Button>
-        </div>
-      )}
-
-      <Card className="p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm border-collapse">
-            <thead>
-              <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 text-[11px] uppercase tracking-wider border-b">
-                <th className="px-4 py-3 w-8"></th>
-                <th className="px-4 py-3">Shipment</th>
-                <th className="px-4 py-3">Created At</th>
-                <th className="px-4 py-3 text-right">Rate</th>
-                <th className="px-4 py-3 text-right">Goods Value</th>
-                <th className="px-4 py-3 text-right">Total Payable</th>
-                <th className="px-4 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {isLoading ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
-              ) : ledgerEntries.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No CNF entries logged yet.</td></tr>
-              ) : ledgerEntries.map(entry => (
-                <tr key={entry.id}>
-                  <td className="px-4 py-3">
-                    {!entry.invoiceBatchId && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Charges % (override)</label>
                       <input
-                        type="checkbox"
-                        checked={selectedEntryIds.has(entry.id)}
-                        onChange={() => toggleEntrySelection(entry.id)}
+                        type="number" step="0.01"
+                        placeholder={selectedCategory ? String(selectedCategory.ratePct) : '0'}
+                        value={chargesPctOverride}
+                        onChange={e => setChargesPctOverride(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
                       />
-                    )}
-                  </td>
-                  <td className="px-4 py-3 font-mono">{entry.batchId}</td>
-                  <td className="px-4 py-3">{entry.createdAt}</td>
-                  <td className="px-4 py-3 text-right">{entry.rate.toFixed(4)}</td>
-                  <td className="px-4 py-3 text-right">₹{entry.goodsValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-3 text-right font-semibold">₹{entry.totalPayable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-3">{entry.invoiceBatchId ? 'Billed' : 'Unbilled'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Shipping Amount</label>
+                      <input
+                        type="number" step="0.01"
+                        value={shippingAmount}
+                        onChange={e => setShippingAmount(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 grid grid-cols-3 gap-3 text-sm">
+                    <div><span className="text-slate-400 block text-xs">Charges</span>{fmtInr(charges)}</div>
+                    <div><span className="text-slate-400 block text-xs">Taxable Amount</span>{fmtInr(taxableAmount)}</div>
+                    <div><span className="text-slate-400 block text-xs">IGST ({igstPct}%)</span>{fmtInr(igst)}</div>
+                    <div><span className="text-slate-400 block text-xs">Total</span>{fmtInr(total)}</div>
+                    <div className="col-span-2"><span className="text-slate-400 block text-xs">Total Payable</span><span className="font-bold text-emerald-600">{fmtInr(totalPayable)}</span></div>
+                  </div>
+
+                  {submitError && <p className="text-sm text-red-500">{submitError}</p>}
+
+                  <div className="flex gap-3">
+                    <Button variant="secondary" onClick={() => { setIsFormOpen(false); setSubmitError(null); }}>Cancel</Button>
+                    <Button onClick={handleSubmit} disabled={!categoryId || isSubmitting}>
+                      {isSubmitting ? 'Logging…' : 'Log Entry'}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
         </div>
-      </Card>
+      )}
+
+      {activeTab === 'reconciliation' && (
+        <div className="space-y-6 animate-in fade-in duration-300">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card className="p-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Total Pending</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{totalPendingCount}</p>
+              <p className="text-sm text-slate-500 mt-1">{fmtInr(totalPendingValue)}</p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Eligible</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{eligibleEntries.length}</p>
+              <p className="text-sm text-slate-500 mt-1">{fmtInr(sumPayable(eligibleEntries))}</p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Bill Generated</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{generatedEntries.length}</p>
+              <p className="text-sm text-slate-500 mt-1">{fmtInr(sumPayable(generatedEntries))}</p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Bill Received</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{receivedEntries.length}</p>
+              <p className="text-sm text-slate-500 mt-1">{fmtInr(sumPayable(receivedEntries))}</p>
+            </Card>
+          </div>
+
+          {pendingApprovalBatches.length > 0 && (
+            <Card className="p-4 space-y-3">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">
+                Pending Approval ({pendingApprovalBatches.length})
+              </h3>
+              {approvalError && <p className="text-sm text-red-500">{approvalError}</p>}
+              {pendingApprovalBatches.map(batch => {
+                const isApprovingThis = activeApprovalAction?.batchId === batch.id && activeApprovalAction.type === 'approve';
+                const isRejectingThis = activeApprovalAction?.batchId === batch.id && activeApprovalAction.type === 'reject';
+                const isBatchBusy = activeApprovalAction !== null;
+                return (
+                  <div key={batch.id} className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 space-y-2">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-semibold">{batch.billNo} — {fmtInr(batch.billedAmount)}</p>
+                        <p className="text-xs text-slate-400">
+                          {batch.entryIds.length} shipment{batch.entryIds.length === 1 ? '' : 's'} · Submitted by {batch.submittedBy}
+                          {batch.overrideReason && <span className="text-amber-500"> · Override: {batch.overrideReason}</span>}
+                        </p>
+                        {batch.fileUrl && <a href={batch.fileUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-500 underline">View uploaded invoice</a>}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => handleApprove(batch.id)}
+                          disabled={isBatchBusy}
+                          className="bg-emerald-600 hover:bg-emerald-700"
+                        >
+                          {isApprovingThis ? 'Approving…' : 'Approve'}
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="text"
+                        placeholder="Rejection reason"
+                        value={rejectReasonDraft[batch.id] || ''}
+                        onChange={e => setRejectReasonDraft(prev => ({ ...prev, [batch.id]: e.target.value }))}
+                        disabled={isBatchBusy}
+                        className="flex-1 px-3 py-1.5 border rounded-lg text-xs"
+                      />
+                      <button
+                        onClick={() => handleReject(batch.id)}
+                        disabled={isBatchBusy}
+                        className="text-red-500 hover:text-red-600 text-xs font-bold px-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isRejectingThis ? 'Rejecting…' : 'Reject'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+
+          {isBillModalOpen && (
+            <GenerateBillModal
+              selectedEntries={selectedEntries}
+              computedTotal={selectedTotalPayable}
+              submittedBy="internal-admin"
+              onClose={() => setIsBillModalOpen(false)}
+              onSuccess={() => { setIsBillModalOpen(false); setSelectedEntryIds(new Set()); loadAll(); }}
+            />
+          )}
+
+          {selectedEntryIds.size > 0 && (
+            <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-lg px-4 py-3">
+              <span className="text-sm">
+                {selectedEntryIds.size} entr{selectedEntryIds.size === 1 ? 'y' : 'ies'} selected — running total {fmtInr(selectedTotalPayable)}
+              </span>
+              <Button onClick={() => setIsBillModalOpen(true)}>Generate Bill</Button>
+            </div>
+          )}
+
+          <Card className="p-0 overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">
+                Requested / Received Entries ({postRequestEntries.length})
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Only entries a bill has already been requested for. Logged-but-not-yet-requested entries live on the Batch Overview tab.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 text-[11px] uppercase tracking-wider border-b">
+                    <th className="px-4 py-3 w-8"></th>
+                    <th className="px-4 py-3">Shipment</th>
+                    <th className="px-4 py-3">Created At</th>
+                    <th className="px-4 py-3 text-right">Rate</th>
+                    <th className="px-4 py-3 text-right">Goods Value</th>
+                    <th className="px-4 py-3 text-right">Total Payable</th>
+                    <th className="px-4 py-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {isLoading ? (
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+                  ) : postRequestEntries.length === 0 ? (
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No bills requested yet.</td></tr>
+                  ) : postRequestEntries.map(entry => {
+                    const lifecycle = cnfLifecycle(entry, invoiceBatchById);
+                    return (
+                      <tr key={entry.id}>
+                        <td className="px-4 py-3">
+                          {!entry.invoiceBatchId && (
+                            <input
+                              type="checkbox"
+                              checked={selectedEntryIds.has(entry.id)}
+                              onChange={() => toggleEntrySelection(entry.id)}
+                            />
+                          )}
+                        </td>
+                        <td className="px-4 py-3 font-mono">{entry.batchId}</td>
+                        <td className="px-4 py-3">{entry.createdAt}</td>
+                        <td className="px-4 py-3 text-right">{entry.rate.toFixed(4)}</td>
+                        <td className="px-4 py-3 text-right">{fmtInr(entry.goodsValue)}</td>
+                        <td className="px-4 py-3 text-right font-semibold">{fmtInr(entry.totalPayable)}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${LIFECYCLE_BADGE_CLASS[lifecycle]}`}>
+                            {lifecycle}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 };
@@ -633,7 +819,7 @@ export const GenerateBillModal: React.FC<{
       <div className="bg-white dark:bg-slate-800 rounded-lg shadow-2xl w-full max-w-lg p-6 space-y-4">
         <h3 className="text-lg font-semibold">Generate Consolidated Bill</h3>
         <p className="text-sm text-slate-500">
-          {selectedEntries.length} shipment{selectedEntries.length === 1 ? '' : 's'} — computed total ₹{computedTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {selectedEntries.length} shipment{selectedEntries.length === 1 ? '' : 's'} — computed total {fmtInr(computedTotal)}
         </p>
 
         <div>
@@ -664,7 +850,7 @@ export const GenerateBillModal: React.FC<{
         {billedAmount && !withinTolerance && (
           <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 rounded-lg p-3 space-y-2">
             <p className="text-sm text-amber-700 dark:text-amber-400">
-              Billed amount ₹{parsedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} doesn't match computed total ₹{computedTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.
+              Billed amount {fmtInr(parsedAmount)} doesn't match computed total {fmtInr(computedTotal)}.
             </p>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={overrideChecked} onChange={e => setOverrideChecked(e.target.checked)} />
