@@ -3190,8 +3190,7 @@ function getCnfEligibleBatches() {
       if (status !== 'Delivered') continue;
 
       var batchTypeRaw = String(row[batchTypeCol] || 'sea').toLowerCase();
-      var looksLikeSea = batchTypeRaw.indexOf('sea') !== -1 || String(batchId).indexOf('S-') === 0;
-      if (!looksLikeSea) continue;
+      var normalizedBatchType = batchTypeRaw.indexOf('air') !== -1 ? 'air' : 'sea';
 
       var vendorShipments = buildVendorShipmentsForBatch_(batchId, ctx);
 
@@ -3205,7 +3204,7 @@ function getCnfEligibleBatches() {
       var expectedDelivery = row[expectedDeliveryCol];
 
       result.push({
-        batch_id: batchId, status: status, batch_type: 'sea',
+        batch_id: batchId, status: status, batch_type: normalizedBatchType,
         created_at: createdAt ? createdAt.toISOString() : null,
         carrier: row[carrierCol] || '', waybill: row[trackingCol] || '',
         expected_delivery: expectedDelivery ? expectedDelivery.toISOString() : null,
