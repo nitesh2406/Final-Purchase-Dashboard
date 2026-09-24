@@ -501,10 +501,12 @@ export interface Batch {
   // Persisted by the backend (syncBatchSettlementAggregate_ in
   // accounting_logger.js) the moment a vendor payment settles an invoice
   // under this batch — never computed/joined on read. null until at least
-  // one payment has settled. Attached by get_batches (unlike the Finance
-  // fields below, which remain get_batch_details/admin-only).
+  // one payment has settled (or, for payment_status, until a backfill has
+  // run — see backfillBatchSettlementAggregates_). Attached by get_batches
+  // (unlike the Finance fields below, which remain get_batch_details/admin-only).
   paid_amount_inr?: number | null;
   blended_settlement_rate?: number | null;
+  payment_status?: 'Unpaid' | 'Partial' | 'Paid' | 'Not Invoiced' | null;
 
   // ── Finance fields — only ever attached by get_batch_details (Batch Detail
   // page), never by get_batches (Shipment Tracker). Genuinely absent here,
@@ -514,7 +516,6 @@ export interface Batch {
   amount_inr?: number | null;
   blended_rate?: number | null;
   rate_period?: string | null;
-  payment_status?: 'Unpaid' | 'Partial' | 'Paid';
   paid_inr?: number;
   payments?: BatchPayment[];
 }
@@ -683,6 +684,9 @@ export interface CnfEligibleBatch {
   carrier: string;
   waybill: string;
   expected_delivery: string;
+  // Persisted at settlement time (see Batch.payment_status) — null until a
+  // payment has settled or a backfill has run.
+  payment_status?: 'Unpaid' | 'Partial' | 'Paid' | 'Not Invoiced' | null;
   qty: number;
   cartons: number;
   vendor_shipments: BatchVendorShipment[];
