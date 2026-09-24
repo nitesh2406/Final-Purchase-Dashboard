@@ -3,7 +3,7 @@ import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { getSessionAuthHeaders } from '../../services/authToken';
 import { useQueryParam } from '../../hooks/useQueryParam';
-import { ListBulletIcon, DocumentTextIcon } from '../icons/Icons';
+import { ListBulletIcon, DocumentTextIcon, ArrowPathIcon } from '../icons/Icons';
 import {
   fetchCnfEligibleBatches,
   fetchPurchaseInvoices,
@@ -59,25 +59,55 @@ const PAYMENT_BADGE_CLASS: Record<PaymentStatus, string> = {
 const fmtInr = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtRmb = (n: number) => `¥${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+// Module-level cache (same pattern as ShipmentTracker.tsx's batchListCache /
+// ReceiveShipment.tsx's batchListCache) — survives this component unmounting
+// when the user switches sidebar tabs and back, so returning to this screen
+// doesn't re-run all 8 loadAll() round trips against Apps Script every time.
+// Only a forced refresh (post-write, the Retry banner, or the Refresh button)
+// bypasses it.
+let cnfDataCache: {
+  eligibleBatches: CnfEligibleBatch[];
+  allBatches: Batch[];
+  purchaseInvoices: PurchaseInvoice[];
+  settlementRecords: SettlementRecord[];
+  ledgerEntries: CnfLedgerEntry[];
+  commissionRates: CnfCommissionRate[];
+  igstPct: number;
+  invoiceBatches: CnfInvoiceBatch[];
+  timestamp: number;
+} | null = null;
+
 export const CnfAgentAccounting: React.FC = () => {
   const [activeTab, setActiveTab] = useQueryParam<CnfTab>('cnfTab', 'overview');
 
-  const [eligibleBatches, setEligibleBatches] = useState<CnfEligibleBatch[]>([]);
-  const [allBatches, setAllBatches] = useState<Batch[]>([]);
-  const [purchaseInvoices, setPurchaseInvoices] = useState<PurchaseInvoice[]>([]);
-  const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>([]);
-  const [ledgerEntries, setLedgerEntries] = useState<CnfLedgerEntry[]>([]);
-  const [commissionRates, setCommissionRates] = useState<CnfCommissionRate[]>([]);
-  const [igstPct, setIgstPct] = useState<number>(5);
-  const [invoiceBatches, setInvoiceBatches] = useState<CnfInvoiceBatch[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [eligibleBatches, setEligibleBatches] = useState<CnfEligibleBatch[]>(cnfDataCache?.eligibleBatches || []);
+  const [allBatches, setAllBatches] = useState<Batch[]>(cnfDataCache?.allBatches || []);
+  const [purchaseInvoices, setPurchaseInvoices] = useState<PurchaseInvoice[]>(cnfDataCache?.purchaseInvoices || []);
+  const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>(cnfDataCache?.settlementRecords || []);
+  const [ledgerEntries, setLedgerEntries] = useState<CnfLedgerEntry[]>(cnfDataCache?.ledgerEntries || []);
+  const [commissionRates, setCommissionRates] = useState<CnfCommissionRate[]>(cnfDataCache?.commissionRates || []);
+  const [igstPct, setIgstPct] = useState<number>(cnfDataCache?.igstPct ?? 5);
+  const [invoiceBatches, setInvoiceBatches] = useState<CnfInvoiceBatch[]>(cnfDataCache?.invoiceBatches || []);
+  const [isLoading, setIsLoading] = useState(!cnfDataCache);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
   const [isBillModalOpen, setIsBillModalOpen] = useState(false);
   const [overviewFilter, setOverviewFilter] = useState<'all' | 'unbilled' | 'paidDelivered'>('all');
 
-  const loadAll = async () => {
+  const loadAll = async (forceRefresh = false) => {
+    if (!forceRefresh && cnfDataCache) {
+      setEligibleBatches(cnfDataCache.eligibleBatches);
+      setAllBatches(cnfDataCache.allBatches);
+      setPurchaseInvoices(cnfDataCache.purchaseInvoices);
+      setSettlementRecords(cnfDataCache.settlementRecords);
+      setLedgerEntries(cnfDataCache.ledgerEntries);
+      setCommissionRates(cnfDataCache.commissionRates);
+      setIgstPct(cnfDataCache.igstPct);
+      setInvoiceBatches(cnfDataCache.invoiceBatches);
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     setLoadError(null);
     try {
@@ -91,17 +121,29 @@ export const CnfAgentAccounting: React.FC = () => {
         fetchIgstRate(),
         fetchCnfInvoiceBatches()
       ]);
-      setEligibleBatches(batches);
       // get_batches already returns paid_amount_inr/blended_settlement_rate
       // straight off the Batches sheet (see accounting_logger.js's
       // syncBatchSettlementAggregate_) — no join/recompute needed here.
-      setAllBatches(batchesResult.status === 'success' ? (batchesResult.batches || []) : []);
+      const resolvedAllBatches = batchesResult.status === 'success' ? (batchesResult.batches || []) : [];
+      setEligibleBatches(batches);
+      setAllBatches(resolvedAllBatches);
       setPurchaseInvoices(invoices);
       setSettlementRecords(settlements);
       setLedgerEntries(entries);
       setCommissionRates(rates);
       setIgstPct(igst);
       setInvoiceBatches(invoiceBatchList);
+      cnfDataCache = {
+        eligibleBatches: batches,
+        allBatches: resolvedAllBatches,
+        purchaseInvoices: invoices,
+        settlementRecords: settlements,
+        ledgerEntries: entries,
+        commissionRates: rates,
+        igstPct: igst,
+        invoiceBatches: invoiceBatchList,
+        timestamp: Date.now()
+      };
     } catch (err: any) {
       setLoadError(err.message || 'Failed to load CNF Agent data.');
     } finally {
@@ -231,7 +273,7 @@ export const CnfAgentAccounting: React.FC = () => {
         // Phase 6 note: agent-submitted batches are still approved by staff here, using the
         // real logged-in admin's email once this component has access to it (see Task 4).
         await approveCnfInvoiceBatch(batchId, 'internal-admin');
-        await loadAll();
+        await loadAll(true);
       } catch (err: any) {
         setApprovalError(err.message || 'Failed to approve');
       } finally {
@@ -256,7 +298,7 @@ export const CnfAgentAccounting: React.FC = () => {
           delete next[batchId];
           return next;
         });
-        await loadAll();
+        await loadAll(true);
       } catch (err: any) {
         setApprovalError(err.message || 'Failed to reject');
       } finally {
@@ -273,7 +315,7 @@ export const CnfAgentAccounting: React.FC = () => {
     setRequestBillError(null);
     try {
       await requestCnfBill(entryId, 'internal-admin');
-      await loadAll();
+      await loadAll(true);
     } catch (err: any) {
       setRequestBillError(err.message || 'Failed to request bill');
     } finally {
@@ -364,7 +406,7 @@ export const CnfAgentAccounting: React.FC = () => {
       setCategoryId('');
       setChargesPctOverride('');
       setShippingAmount('0');
-      await loadAll();
+      await loadAll(true);
     } catch (err: any) {
       setSubmitError(err.message || 'Failed to log CNF entry.');
     } finally {
@@ -381,17 +423,32 @@ export const CnfAgentAccounting: React.FC = () => {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-slate-800 dark:text-white">CNF Agent Accounting</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          {pendingBatches.length} shipment{pendingBatches.length === 1 ? '' : 's'} eligible and not yet logged
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-800 dark:text-white">CNF Agent Accounting</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+            {pendingBatches.length} shipment{pendingBatches.length === 1 ? '' : 's'} eligible and not yet logged
+          </p>
+          {cnfDataCache && (
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 italic mt-0.5">
+              Last synced: {new Date(cnfDataCache.timestamp).toLocaleTimeString()}
+            </p>
+          )}
+        </div>
+        <Button
+          variant="secondary"
+          onClick={() => loadAll(true)}
+          disabled={isLoading}
+          icon={<ArrowPathIcon className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />}
+        >
+          Refresh Data
+        </Button>
       </div>
 
       {loadError && (
         <div className="flex items-center justify-between bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg px-4 py-3">
           <span className="text-sm text-red-600 dark:text-red-400">{loadError}</span>
-          <Button variant="secondary" className="text-xs !py-1 !px-2.5" onClick={() => loadAll()}>Retry</Button>
+          <Button variant="secondary" className="text-xs !py-1 !px-2.5" onClick={() => loadAll(true)}>Retry</Button>
         </div>
       )}
 
@@ -698,7 +755,7 @@ export const CnfAgentAccounting: React.FC = () => {
               computedTotal={selectedTotalPayable}
               submittedBy="internal-admin"
               onClose={() => setIsBillModalOpen(false)}
-              onSuccess={() => { setIsBillModalOpen(false); setSelectedEntryIds(new Set()); loadAll(); }}
+              onSuccess={() => { setIsBillModalOpen(false); setSelectedEntryIds(new Set()); loadAll(true); }}
             />
           )}
 
