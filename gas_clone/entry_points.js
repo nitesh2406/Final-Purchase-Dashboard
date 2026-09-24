@@ -445,6 +445,10 @@ function doPost(e) {
         result = addCnfLedgerEntry_(payload);
         break;
 
+      case 'request_cnf_bill':
+        result = requestCnfBill_(payload);
+        break;
+
       case 'get_cnf_invoice_batches':
         result = getCnfInvoiceBatches_();
         break;
