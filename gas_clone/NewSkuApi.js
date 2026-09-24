@@ -2521,7 +2521,16 @@ function updateShopifyProduct_(productId, variantId, productFields, variantField
 // Skipped entirely if shipment_id is blank.
 // Status → CREATED on success.
 
+// Wrapped in runCreateStepOnce_ (an in-flight lock keyed on this request_id)
+// so a double-click or an impatient retry-while-still-running can't race two
+// executions at once — this step can now create a brand-new PO in EasyEcom
+// (see the GRN-lock branch below), so a duplicate run means a duplicate real
+// purchase order, not just a harmless resend.
 function apiUpdateEePurchaseOrder(payload) {
+  return runCreateStepOnce_('ee_po', payload, updateEePurchaseOrder_);
+}
+
+function updateEePurchaseOrder_(payload) {
   try {
     const sheet  = getNsrSheet_();
     const data   = sheet.getDataRange().getValues();
@@ -2534,6 +2543,19 @@ function apiUpdateEePurchaseOrder(payload) {
     const row      = rows[rowIdx];
     const sheetRow = rowIdx + 2;
     const obj      = nsrRowToObject_(row);
+
+    // ── Already resolved — a retry after a success the client failed to
+    // report cleanly (e.g. a dropped response) must NOT run the EE calls
+    // again, since the GRN-lock branch below creates a real new PO each
+    // time it runs. ──
+    if (obj.status === 'CREATED') {
+      return okResult_({
+        request_id:   payload.request_id,
+        status:       'CREATED',
+        already_done: true,
+        message:      'This request was already marked CREATED — no EE PO action taken.',
+      });
+    }
 
     // ── Skip if no shipment — manual entry, no PO to update ──
     if (!obj.shipment_id) {
@@ -2682,7 +2704,15 @@ function apiUpdateEePurchaseOrder(payload) {
           );
         }
 
-        const newPoRef  = `${obj.shipment_id}-ADD-${eeSkuKey}`;
+        // Match the "{shipmentId}|{batchId}" suffix convention every other
+        // PO reference in EasyEcom carries (see pushShipmentToEasyEcom_) —
+        // without it, this split PO's batch can't be identified from its
+        // reference code the way every other PO's can.
+        const vsBatchCol = vsHeaders.indexOf('batch_id');
+        const batchId    = vsBatchCol !== -1 ? String(vsRow[vsBatchCol] || '').trim() : '';
+        const newPoRef   = batchId
+          ? `${obj.shipment_id}-ADD-${eeSkuKey}|${batchId}`
+          : `${obj.shipment_id}-ADD-${eeSkuKey}`;
         const expDate    = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000);
         const newPoPayload = {
           vendorId:        obj.vendor_code,
@@ -2765,9 +2795,13 @@ function apiUpdateEePurchaseOrder(payload) {
     });
 
   } catch(e) {
-    Logger.log('apiUpdateEePurchaseOrder error: ' + e.message);
-    logAuditEvent_('EASYECOM', 'UPDATE_PO', payload.request_id, e.message, 'FAILED', payload.updated_by, payload.request_id);
-    return errResult_(e.message);
+    // A thrown value without a .message (e.g. a raw object/string) used to
+    // reach the client as a bare "undefined" — always fall back to
+    // something displayable so a real failure is never silently swallowed.
+    const msg = (e && e.message) ? e.message : String(e);
+    Logger.log('apiUpdateEePurchaseOrder error: ' + msg);
+    logAuditEvent_('EASYECOM', 'UPDATE_PO', payload.request_id, msg, 'FAILED', payload.updated_by, payload.request_id);
+    return errResult_(msg);
   }
 }
 
