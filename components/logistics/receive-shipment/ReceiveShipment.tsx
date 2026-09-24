@@ -313,6 +313,80 @@ export const ReceiveShipment: React.FC<ReceiveShipmentProps> = ({ isAdmin = fals
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
+    // Printable pre-receiving checklist for a shipment — opened in a new tab
+    // (not window.print() in this tab) so it gets its own document and isn't
+    // affected by the barcode-label @page rule in index.css (fixed at
+    // 50mm x 30mm for that flow). The print dialog's "Save as PDF" is what
+    // makes this a "downloadable PDF" without adding a PDF library.
+    const escapeHtml = (s: string) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+
+    const handleDownloadReceivingSheet = (batch: Batch, shipment: BatchVendorShipment) => {
+        const totalUnits = shipment.line_items.reduce((sum, li) => sum + li.incoming_qty, 0);
+        const rows = shipment.line_items.map(li => `
+            <tr>
+                <td>${escapeHtml(li.sku)}</td>
+                <td>${escapeHtml(li.item_name)}</td>
+                <td class="num">${li.incoming_qty}</td>
+                <td class="blank"></td>
+                <td class="blank"></td>
+            </tr>`).join('');
+
+        const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Receiving Sheet - ${escapeHtml(shipment.shipment_id)}</title>
+<style>
+  @page { size: A4; margin: 16mm; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #111; margin: 0; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { font-size: 11px; color: #666; margin-bottom: 18px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 22px; margin-bottom: 20px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
+  .meta div { min-width: 130px; font-size: 12px; font-weight: bold; }
+  .meta span { display: block; font-size: 9px; font-weight: normal; text-transform: uppercase; letter-spacing: 0.05em; color: #888; margin-bottom: 1px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th, td { border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; }
+  th { background: #f1f5f9; font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: bold; }
+  td.blank { min-width: 70px; }
+  .sign { margin-top: 44px; display: flex; gap: 50px; font-size: 11px; }
+  .sign div { flex: 1; border-top: 1px solid #333; padding-top: 4px; }
+</style>
+</head>
+<body>
+  <h1>Receiving Sheet</h1>
+  <div class="sub">Generated ${new Date().toLocaleString()}</div>
+  <div class="meta">
+    <div><span>Batch ID</span>${escapeHtml(batch.batch_id)}</div>
+    <div><span>Shipment ID</span>${escapeHtml(shipment.shipment_id)}</div>
+    <div><span>Vendor</span>${escapeHtml(shipment.vendor_code)} - ${escapeHtml(shipment.vendor_name)}</div>
+    <div><span>Mode</span>${batch.batch_type === 'air' ? 'AIR' : 'SEA'}</div>
+    <div><span>Cartons</span>${shipment.carton_count}</div>
+    <div><span>Total Units</span>${totalUnits}</div>
+  </div>
+  <table>
+    <thead>
+      <tr><th>SKU</th><th>Item Name</th><th>Expected Qty</th><th>Received Qty</th><th>Notes</th></tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="sign">
+    <div>Received By</div>
+    <div>Checked By</div>
+    <div>Date</div>
+  </div>
+</body>
+</html>`;
+
+        const w = window.open('', '_blank');
+        if (!w) { alert('Please allow pop-ups for this site to download the receiving sheet.'); return; }
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+        w.onload = () => { w.focus(); w.print(); };
+    };
+
     const handleExportWmsReport = () => {
         const rows: string[][] = [['Section', 'SKU', 'Product Name', 'Expected Qty', 'Received Qty', 'Excess Qty', 'Notes']];
         for (const line of activeLines) {
@@ -435,6 +509,15 @@ export const ReceiveShipment: React.FC<ReceiveShipmentProps> = ({ isAdmin = fals
                                                                 <span className="text-xs text-slate-600 dark:text-slate-300">{shipment.vendor_name}</span>
                                                                 <span className="text-xs text-slate-400 ml-2">{shipment.carton_count} ctn · {receivedTotal} units</span>
                                                             </button>
+                                                            <Button
+                                                                variant="secondary"
+                                                                onClick={() => handleDownloadReceivingSheet(batch, shipment)}
+                                                                icon={<DocumentArrowDownIcon className="w-4 h-4" />}
+                                                                className="text-xs !py-1.5 !px-3"
+                                                                title="Download a printable receiving sheet for this shipment"
+                                                            >
+                                                                Sheet
+                                                            </Button>
                                                             <Button
                                                                 onClick={() => startScanning(batch, shipment)}
                                                                 disabled={startingShipmentId === shipment.shipment_id}
