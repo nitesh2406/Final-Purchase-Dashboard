@@ -1,7 +1,7 @@
 import { APPS_SCRIPT_URL } from '../constants.ts';
 import { SyncQueueManager } from './syncQueue.ts';
 import { callGas } from './gasApi';
-import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch, CnfInvoiceBatch, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentBillStatus } from '../types';
+import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch, CnfInvoiceBatch, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentBillStatus, CnfAdvance, CnfGoodsInvoice } from '../types';
 export type { VendorMaster } from '../types';
 
 export const IS_DEVELOPMENT_MODE = true;
@@ -853,6 +853,88 @@ export async function rejectCnfInvoiceBatch(batchId: string, rejectionReason: st
   });
   if (!response || response.status !== 'success') {
     throw new Error((response && response.message) || 'Failed to reject invoice batch');
+  }
+}
+
+/**
+ * Fetches the CNF Advances ledger — one row per amount that's actually
+ * settled an overseas/RMB vendor's payable (paid "via CNF"), drawn down as
+ * CNF Goods Invoices match against it. See design doc:
+ * docs/superpowers/specs/2026-09-25-cnf-advances-invoice-matching-design.md.
+ */
+export async function fetchCnfAdvances(): Promise<CnfAdvance[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_advances', 'CNF_Advances', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.advances)) {
+      return response.advances;
+    }
+  } catch (err) {
+    console.error('Failed to fetch CNF advances:', err);
+  }
+  return [];
+}
+
+/**
+ * Fetches all logged CNF Goods Invoices.
+ */
+export async function fetchCnfGoodsInvoices(): Promise<CnfGoodsInvoice[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_goods_invoices', 'CNF_Goods_Invoices', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.invoices)) {
+      return response.invoices;
+    }
+  } catch (err) {
+    console.error('Failed to fetch CNF goods invoices:', err);
+  }
+  return [];
+}
+
+/**
+ * Logs a new CNF Goods Invoice — the real tax invoice CNF issues, matched
+ * against outstanding CNF_Advances. Server validates matched advances have
+ * sufficient balance and reserves (draws down) it immediately, before
+ * approval.
+ */
+export async function logCnfGoodsInvoice(entry: {
+  lineItems: { batchId: string; shipmentIds: string[] }[];
+  matchedAdvances: { advanceId: string; amountMatched: number }[];
+  fileUrl?: string;
+  statedBaseAmount: number;
+  gst: number;
+  total: number;
+  overrideReason?: string;
+  submittedBy: string;
+}): Promise<{ id: string; expectedGoodsValue: number; serviceCharge: number; residualLiability: number }> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'log_cnf_goods_invoice', 'CNF_Goods_Invoices', 'POST', { entry });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to log CNF goods invoice');
+  }
+  return {
+    id: response.id,
+    expectedGoodsValue: response.expectedGoodsValue,
+    serviceCharge: response.serviceCharge,
+    residualLiability: response.residualLiability
+  };
+}
+
+/**
+ * Approves a logged CNF Goods Invoice.
+ */
+export async function approveCnfGoodsInvoice(id: string, approvedBy: string): Promise<void> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'approve_cnf_goods_invoice', 'CNF_Goods_Invoices', 'POST', { id, approvedBy });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to approve CNF goods invoice');
+  }
+}
+
+/**
+ * Rejects a logged CNF Goods Invoice, restoring the advance balances it had
+ * reserved.
+ */
+export async function rejectCnfGoodsInvoice(id: string, rejectionReason: string): Promise<void> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'reject_cnf_goods_invoice', 'CNF_Goods_Invoices', 'POST', { id, rejectionReason });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to reject CNF goods invoice');
   }
 }
 
