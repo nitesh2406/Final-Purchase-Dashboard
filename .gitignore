@@ -30,3 +30,4 @@ AppBuilding/
 .vercel
 .env*
 docs/superpowers/plans/
+.superpowers/
