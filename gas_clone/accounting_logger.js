@@ -1489,6 +1489,14 @@ function fifoLiquidate_(vendorCode, date, paymentId, amountRmb, er2) {
     }
   }
 
+  // CNF Advances (see docs/superpowers/specs/2026-09-25-cnf-advances-invoice-matching-design.md):
+  // mirror the applied amount into CNF_Advances for overseas/RMB vendors —
+  // this is the "paid CNF to settle a vendor's balance" event. Skipped for
+  // INR (domestic) vendors, who are paid directly with no CNF involved.
+  if (appliedAmount > 0.01 && getVendorCurrency_(vendorCode) !== 'INR') {
+    createCnfAdvance_(vendorCode, paymentId, round2(appliedAmount * er2), date);
+  }
+
   // getSheetData_('PurchaseInvoices') is cached for 5 minutes (see
   // entry_points.js), but this function writes directly to Settled Amount /
   // Balance via setValue() above without ever invalidating that cache. Two
@@ -3455,5 +3463,62 @@ function rejectCnfInvoiceBatch(payload) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// CNF ADVANCES — money paid to CNF to settle an overseas/RMB vendor's
+// balance, tracked as an advance until CNF's own tax invoice matches
+// against it. See docs/superpowers/specs/2026-09-25-cnf-advances-invoice-matching-design.md.
+// Purely additive — does not read or write CNF_Ledger, CNF_Invoice_Batches,
+// or CNF_Shipment_Bill_Status.
+// ─────────────────────────────────────────────────────────────
+
+function getCnfAdvancesSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('CNF_Advances');
+  if (!sheet) {
+    sheet = ss.insertSheet('CNF_Advances');
+    sheet.appendRow(['ID', 'Date', 'Vendor Code', 'Linked Payment ID', 'Amount', 'Balance']);
+  }
+  return sheet;
+}
+
+function getCnfAdvances_() {
+  var sheet = getCnfAdvancesSheet_();
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var idCol = findHeaderIndex_(headers, 'ID');
+  var dateCol = findHeaderIndex_(headers, 'Date');
+  var vendorCodeCol = findHeaderIndex_(headers, 'Vendor Code');
+  var linkedPaymentIdCol = findHeaderIndex_(headers, 'Linked Payment ID');
+  var amountCol = findHeaderIndex_(headers, 'Amount');
+  var balanceCol = findHeaderIndex_(headers, 'Balance');
+  var rows = [];
+  for (var i = 1; i < data.length; i++) {
+    if (!data[i][idCol]) continue;
+    var rawDate = data[i][dateCol];
+    rows.push({
+      id: String(data[i][idCol]),
+      date: rawDate instanceof Date ? rawDate.toISOString() : String(rawDate || ''),
+      vendorCode: String(data[i][vendorCodeCol] || ''),
+      linkedPaymentId: String(data[i][linkedPaymentIdCol] || ''),
+      amount: Number(data[i][amountCol]) || 0,
+      balance: Number(data[i][balanceCol]) || 0
+    });
+  }
+  return rows;
+}
+
+// Called from fifoLiquidate_ whenever money actually settles a non-INR
+// (overseas/RMB) vendor's payable. One row per fifoLiquidate_ call, for
+// the INR value of whatever portion of that call's payment actually
+// applied against an open invoice (never the unspent leftover, which
+// stays as ordinary PaymentLogs wallet balance, untouched by this).
+function createCnfAdvance_(vendorCode, linkedPaymentId, amountInr, dateStr) {
+  if (amountInr <= 0.01) return;
+  var sheet = getCnfAdvancesSheet_();
+  var id = 'ADV-' + new Date().getTime();
+  var round2 = function (v) { return Math.round(v * 100) / 100; };
+  sheet.appendRow([id, dateStr, vendorCode, linkedPaymentId, round2(amountInr), round2(amountInr)]);
 }
 
