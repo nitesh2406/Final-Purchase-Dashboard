@@ -40,6 +40,7 @@ const navItems: { name: ViewType; label?: string; icon: React.ReactNode; wip?: b
   { name: 'Receive Shipment', icon: <CheckBadgeIcon className="w-6 h-6" />, group: 'Logistics' },
 
   { name: 'CNF Agent Accounting', label: 'CNF Agent', icon: <CurrencyDollarIcon className="w-6 h-6" />, group: 'Finance' },
+  { name: 'CNF Advances', icon: <BuildingLibraryIcon className="w-6 h-6" />, group: 'Finance' },
   { name: 'Payment Ledger', icon: <CreditCardIcon className="w-6 h-6" />, group: 'Finance', wip: true },
   { name: 'Settlement Ledger', icon: <BuildingLibraryIcon className="w-6 h-6" />, group: 'Finance', wip: true },
   { name: 'Accounts View', icon: <DocumentTextIcon className="w-6 h-6" />, group: 'Finance', wip: true },

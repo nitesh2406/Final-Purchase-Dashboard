@@ -24,6 +24,7 @@ import { ShipmentTracker } from './components/logistics/ShipmentTracker.tsx';
 import { ReceiveShipment } from './components/logistics/receive-shipment/ReceiveShipment.tsx';
 import { BatchDetail } from './components/logistics/BatchDetail.tsx';
 import { CnfAgentAccounting } from './components/logistics/CnfAgentAccounting.tsx';
+import { CnfAdvances } from './components/logistics/CnfAdvances.tsx';
 import { CnfAgentPortal } from './components/logistics/CnfAgentPortal.tsx';
 import { Logistics } from './components/logistics/Logistics.tsx';
 import { Finance } from './components/finance/Finance.tsx';
@@ -782,6 +783,8 @@ const App: React.FC = () => {
                 return <ReceiveShipment isAdmin={user?.role === 'ADMIN'} />;
             case 'CNF Agent Accounting':
                 return <CnfAgentAccounting />;
+            case 'CNF Advances':
+                return <CnfAdvances />;
             case 'Batch Detail':
                 return selectedBatchId ? (
                     <BatchDetail
