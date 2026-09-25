@@ -234,10 +234,28 @@ function bsUpdateShipmentRow_(shipmentId, fields) {
 }
 
 function bsUpdateShipmentWeights_(p) {
-  return bsUpdateShipmentRow_(p.shipment_id, {
+  var result = bsUpdateShipmentRow_(p.shipment_id, {
     listed_weight: Number(p.listed_weight),
     actual_weight: Number(p.actual_weight),
   });
+  // Keep the batch's aggregated weight (CNF Agent Accounting's Air tab) in
+  // sync at the moment a shipment's weight is actually confirmed, rather
+  // than recomputed on every read — see syncBatchWeightAggregate_ in
+  // accounting_logger.js. Guarded by typeof: this file is also pasted into
+  // the separate Master Barcode Suite project, which has no
+  // accounting_logger.js and never receives shipment-weight writes anyway.
+  if (typeof syncBatchWeightAggregate_ === 'function') {
+    try {
+      var sheet = bsFindSheet_(BS_TABS.shipments);
+      var map = bsHeaderMap_(sheet);
+      var batchCol = map[bsNorm_('batch_id')];
+      var row = bsFindRow_(sheet, map, { shipment_id: p.shipment_id });
+      if (row !== -1 && batchCol) {
+        syncBatchWeightAggregate_(String(sheet.getRange(row, batchCol).getValue() || '').trim());
+      }
+    } catch (e) {}
+  }
+  return result;
 }
 
 function bsUpdateShipmentDriveLink_(p) {

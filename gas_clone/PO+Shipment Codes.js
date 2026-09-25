@@ -2372,6 +2372,11 @@ function getBatches() {
     // recomputed client-side on every load (see computeBatchSettlementStatus
     // in settlementService.ts, which this is kept in lockstep with).
     var paymentStatusCol = batchHeaders.indexOf('payment_status');
+    // Written by syncBatchWeightAggregate_ (accounting_logger.js) when a
+    // shipment's weight is confirmed at receiving — CNF Agent Accounting's
+    // Air tab bills by weight, not computed here. -1/blank means no shipment
+    // under this batch has had its weight confirmed yet.
+    var totalWeightKgCol = batchHeaders.indexOf('total_weight_kg');
 
     var shipBatchIdCol = shipmentHeaders.indexOf('batch_id');
     var shipmentIdCol = shipmentHeaders.indexOf('shipment_id');
@@ -2655,6 +2660,8 @@ function getBatches() {
           ? (Number(batchesData[i][blendedSettlementRateCol]) || null) : null,
         payment_status: paymentStatusCol >= 0 && batchesData[i][paymentStatusCol] !== ''
           ? String(batchesData[i][paymentStatusCol]) : null,
+        total_weight_kg: totalWeightKgCol >= 0 && batchesData[i][totalWeightKgCol] !== ''
+          ? (Number(batchesData[i][totalWeightKgCol]) || 0) : null,
         vendor_shipments: vendorShipments
       });
     }
@@ -3187,6 +3194,9 @@ function getCnfEligibleBatches() {
     // Same persisted-at-settlement-time column getBatches() reads — see
     // syncBatchSettlementAggregate_ in accounting_logger.js.
     var paymentStatusCol = batchHeaders.indexOf('payment_status');
+    // Same persisted-at-receiving-time column getBatches() reads — see
+    // syncBatchWeightAggregate_ in accounting_logger.js.
+    var totalWeightKgCol = batchHeaders.indexOf('total_weight_kg');
 
     var ctx = buildBatchAssemblyContext_();
     var result = [];
@@ -3214,13 +3224,16 @@ function getCnfEligibleBatches() {
       var expectedDelivery = row[expectedDeliveryCol];
       var paymentStatus = paymentStatusCol >= 0 && row[paymentStatusCol] !== ''
         ? String(row[paymentStatusCol]) : null;
+      var totalWeightKg = totalWeightKgCol >= 0 && row[totalWeightKgCol] !== ''
+        ? (Number(row[totalWeightKgCol]) || 0) : null;
 
       result.push({
         batch_id: batchId, status: status, batch_type: normalizedBatchType,
         created_at: createdAt ? createdAt.toISOString() : null,
         carrier: row[carrierCol] || '', waybill: row[trackingCol] || '',
         expected_delivery: expectedDelivery ? expectedDelivery.toISOString() : null,
-        qty: qty, cartons: cartons, payment_status: paymentStatus, vendor_shipments: vendorShipments
+        qty: qty, cartons: cartons, payment_status: paymentStatus,
+        total_weight_kg: totalWeightKg, vendor_shipments: vendorShipments
       });
     }
 

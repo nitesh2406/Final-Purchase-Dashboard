@@ -1697,6 +1697,99 @@ function backfillBatchSettlementAggregates_() {
   return { status: 'success', updated: updated, skippedNoInvoices: skippedNoInvoices, totalBatches: batchValues.length - 1 };
 }
 
+// Recomputes a batch's total weight (kg) — for CNF Agent Accounting's Air
+// tab, which bills by weight rather than % of goods value — from
+// Vendor_Shipments' actual_weight per shipment (falling back to
+// listed_weight when a shipment's weight hasn't been confirmed at receiving
+// yet), and writes it onto the batch's own Batches row (total_weight_kg).
+// Called at the moment a shipment's weight is actually confirmed (see
+// bsUpdateShipmentWeights_ in BarcodeAppStore.js) — same write-at-source,
+// never-recomputed-on-read pattern as syncBatchSettlementAggregate_ above.
+function syncBatchWeightAggregate_(batchId) {
+  if (!batchId) return;
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const shipmentsSheet = ss.getSheetByName('Vendor_Shipments');
+  const batchesSheet = ss.getSheetByName('Batches');
+  if (!shipmentsSheet || !batchesSheet) return;
+
+  const shipValues = shipmentsSheet.getDataRange().getValues();
+  const shipHeaders = shipValues[0];
+  const shipBatchCol = shipHeaders.indexOf('batch_id');
+  const listedWeightCol = shipHeaders.indexOf('listed_weight');
+  const actualWeightCol = shipHeaders.indexOf('actual_weight');
+  if (shipBatchCol === -1) return;
+
+  let totalWeight = 0;
+  for (let i = 1; i < shipValues.length; i++) {
+    if (String(shipValues[i][shipBatchCol] || '').trim() !== String(batchId).trim()) continue;
+    const actual = actualWeightCol !== -1 ? Number(shipValues[i][actualWeightCol]) || 0 : 0;
+    const listed = listedWeightCol !== -1 ? Number(shipValues[i][listedWeightCol]) || 0 : 0;
+    totalWeight += actual || listed;
+  }
+
+  const batchValues = batchesSheet.getDataRange().getValues();
+  const batchHeaders = batchValues[0];
+  const batchIdCol = batchHeaders.indexOf('batch_id');
+  if (batchIdCol === -1) return;
+  let rowIndex = -1;
+  for (let k = 1; k < batchValues.length; k++) {
+    if (String(batchValues[k][batchIdCol] || '').trim() === String(batchId).trim()) { rowIndex = k + 1; break; }
+  }
+  if (rowIndex === -1) return;
+
+  const weightCol = ensureHeaderColumn_(batchesSheet, 'total_weight_kg');
+  batchesSheet.getRange(rowIndex, weightCol + 1).setValue(Math.round(totalWeight * 100) / 100);
+  invalidateSheetCache_('Batches');
+}
+
+// One-pass backfill for every batch's total_weight_kg, same
+// read-everything-once-then-loop shape as backfillBatchSettlementAggregates_
+// above (a plain loop calling syncBatchWeightAggregate_ per batch would
+// re-read the whole Vendor_Shipments sheet once per batch).
+function backfillBatchWeightAggregates_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const shipmentsSheet = ss.getSheetByName('Vendor_Shipments');
+  const batchesSheet = ss.getSheetByName('Batches');
+  if (!shipmentsSheet || !batchesSheet) {
+    throw new Error('One or more required sheets not found (Vendor_Shipments / Batches)');
+  }
+
+  const shipValues = shipmentsSheet.getDataRange().getValues();
+  const shipHeaders = shipValues[0];
+  const shipBatchCol = shipHeaders.indexOf('batch_id');
+  const listedWeightCol = shipHeaders.indexOf('listed_weight');
+  const actualWeightCol = shipHeaders.indexOf('actual_weight');
+  if (shipBatchCol === -1) throw new Error('Vendor_Shipments missing batch_id column');
+
+  const weightByBatch = {};
+  for (let i = 1; i < shipValues.length; i++) {
+    const bId = String(shipValues[i][shipBatchCol] || '').trim();
+    if (!bId) continue;
+    const actual = actualWeightCol !== -1 ? Number(shipValues[i][actualWeightCol]) || 0 : 0;
+    const listed = listedWeightCol !== -1 ? Number(shipValues[i][listedWeightCol]) || 0 : 0;
+    weightByBatch[bId] = (weightByBatch[bId] || 0) + (actual || listed);
+  }
+
+  const batchValues = batchesSheet.getDataRange().getValues();
+  const batchHeaders = batchValues[0];
+  const batchIdCol = batchHeaders.indexOf('batch_id');
+  if (batchIdCol === -1) throw new Error('Batches sheet missing batch_id column');
+
+  const weightCol = ensureHeaderColumn_(batchesSheet, 'total_weight_kg');
+  const round2 = v => Math.round(v * 100) / 100;
+  let updated = 0;
+
+  for (let k = 1; k < batchValues.length; k++) {
+    const batchId = String(batchValues[k][batchIdCol] || '').trim();
+    if (!batchId || !weightByBatch[batchId]) continue;
+    batchesSheet.getRange(k + 1, weightCol + 1).setValue(round2(weightByBatch[batchId]));
+    updated++;
+  }
+
+  invalidateSheetCache_('Batches');
+  return { status: 'success', updated: updated, totalBatches: batchValues.length - 1 };
+}
+
 function logToVendorLedger_(vendorCode, date, particulars, refId, rmb) {
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName('VendorLedger');

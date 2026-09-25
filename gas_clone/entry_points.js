@@ -255,6 +255,10 @@ function doPost(e) {
         result = backfillBatchSettlementAggregates_();
         break;
 
+      case 'backfill_batch_weight_aggregates':
+        result = backfillBatchWeightAggregates_();
+        break;
+
       case 'get_sku_categories':
         return apiGetSkuCategories();
 

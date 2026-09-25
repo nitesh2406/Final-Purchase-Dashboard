@@ -94,6 +94,7 @@ export const CnfAgentAccounting: React.FC = () => {
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
   const [isBillModalOpen, setIsBillModalOpen] = useState(false);
   const [overviewFilter, setOverviewFilter] = useState<'all' | 'unbilled' | 'paidDelivered'>('all');
+  const [overviewMode, setOverviewMode] = useQueryParam<'sea' | 'air'>('cnfMode', 'sea');
 
   const loadAll = async (forceRefresh = false) => {
     if (!forceRefresh && cnfDataCache) {
@@ -213,14 +214,23 @@ export const CnfAgentAccounting: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allBatches, ledgerEntryByBatchId, purchaseInvoices, settlementRecords, invoiceBatchById, pendingBatchIds]);
 
+  // Sea/Air sub-tabs — Sea keeps today's table/form/formula untouched; Air
+  // gets its own Weight (kg) column (see design doc) on top of the same base
+  // columns. Scoped before the quick filters below so "All"/"Unbilled"/
+  // "Paid & Delivered" always operate within the selected mode's batches.
+  const modeScopedRows = useMemo(
+    () => batchOverviewRows.filter(r => r.batch.batch_type === overviewMode),
+    [batchOverviewRows, overviewMode]
+  );
+
   // Quick filters above the Batch Overview table. "Unbilled" = no CNF ledger
   // entry logged yet (lifecycle 'Not Logged'); "Paid & Delivered" = Delivered
   // batches whose payment status resolves to Paid, regardless of log state.
   const filteredOverviewRows = useMemo(() => {
-    if (overviewFilter === 'unbilled') return batchOverviewRows.filter(r => r.lifecycle === 'Not Logged');
-    if (overviewFilter === 'paidDelivered') return batchOverviewRows.filter(r => r.batch.status === 'Delivered' && r.paymentStatus === 'Paid');
-    return batchOverviewRows;
-  }, [batchOverviewRows, overviewFilter]);
+    if (overviewFilter === 'unbilled') return modeScopedRows.filter(r => r.lifecycle === 'Not Logged');
+    if (overviewFilter === 'paidDelivered') return modeScopedRows.filter(r => r.batch.status === 'Delivered' && r.paymentStatus === 'Paid');
+    return modeScopedRows;
+  }, [modeScopedRows, overviewFilter]);
 
   // Reconciliation funnel (Tab 2) — three mutually exclusive buckets derived
   // from billRequestedAt / invoiceBatchId, plus a combined "pending" view.
@@ -472,30 +482,50 @@ export const CnfAgentAccounting: React.FC = () => {
 
       {activeTab === 'overview' && (
         <div className="space-y-6 animate-in fade-in duration-300">
-          <div className="flex justify-end gap-2">
-            {([
-              { key: 'all', label: 'All' },
-              { key: 'unbilled', label: 'Unbilled' },
-              { key: 'paidDelivered', label: 'Paid & Delivered' },
-            ] as const).map(f => (
-              <button
-                key={f.key}
-                onClick={() => setOverviewFilter(f.key)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
-                  overviewFilter === f.key
-                    ? 'bg-primary-600 text-white shadow-sm'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-gray-200'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
+              {([
+                { key: 'sea', label: 'Sea' },
+                { key: 'air', label: 'Air' },
+              ] as const).map(m => (
+                <button
+                  key={m.key}
+                  onClick={() => setOverviewMode(m.key)}
+                  className={`px-4 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-all ${
+                    overviewMode === m.key
+                      ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              {([
+                { key: 'all', label: 'All' },
+                { key: 'unbilled', label: 'Unbilled' },
+                { key: 'paidDelivered', label: 'Paid & Delivered' },
+              ] as const).map(f => (
+                <button
+                  key={f.key}
+                  onClick={() => setOverviewFilter(f.key)}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                    overviewFilter === f.key
+                      ? 'bg-primary-600 text-white shadow-sm'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-gray-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <Card className="p-0 overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
               <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">
-                All Shipments ({filteredOverviewRows.length})
+                {overviewMode === 'air' ? 'Air' : 'Sea'} Shipments ({filteredOverviewRows.length})
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
                 INR value and ER are only ever synced when a vendor payment settles — never recalculated on load.
@@ -511,6 +541,7 @@ export const CnfAgentAccounting: React.FC = () => {
                     <th className="px-4 py-3 text-right">Value (RMB)</th>
                     <th className="px-4 py-3 text-right">Value (INR)</th>
                     <th className="px-4 py-3 text-right">ER</th>
+                    {overviewMode === 'air' && <th className="px-4 py-3 text-right">Weight (kg)</th>}
                     <th className="px-4 py-3">Payment Status</th>
                     <th className="px-4 py-3">CNF Category</th>
                     <th className="px-4 py-3 text-right">CNF Total Payable</th>
@@ -520,9 +551,9 @@ export const CnfAgentAccounting: React.FC = () => {
                 </thead>
                 <tbody className="divide-y">
                   {isLoading ? (
-                    <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+                    <tr><td colSpan={overviewMode === 'air' ? 11 : 10} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
                   ) : filteredOverviewRows.length === 0 ? (
-                    <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-400">No shipments found.</td></tr>
+                    <tr><td colSpan={overviewMode === 'air' ? 11 : 10} className="px-4 py-8 text-center text-slate-400">No shipments found.</td></tr>
                   ) : filteredOverviewRows.map(({ batch, ledgerEntry, paymentStatus, lifecycle, canLog }) => (
                     <tr key={batch.batch_id}>
                       <td className="px-4 py-3 font-mono">{batch.batch_id}</td>
@@ -542,6 +573,11 @@ export const CnfAgentAccounting: React.FC = () => {
                       <td className="px-4 py-3 text-right font-mono">
                         {batch.blended_settlement_rate != null ? batch.blended_settlement_rate.toFixed(4) : <span className="text-slate-300 dark:text-slate-600">—</span>}
                       </td>
+                      {overviewMode === 'air' && (
+                        <td className="px-4 py-3 text-right font-mono">
+                          {batch.total_weight_kg != null ? batch.total_weight_kg.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                        </td>
+                      )}
                       <td className="px-4 py-3">
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${PAYMENT_BADGE_CLASS[paymentStatus]}`}>
                           {paymentStatus}

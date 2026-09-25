@@ -508,6 +508,12 @@ export interface Batch {
   blended_settlement_rate?: number | null;
   payment_status?: 'Unpaid' | 'Partial' | 'Paid' | 'Not Invoiced' | null;
 
+  // Persisted by syncBatchWeightAggregate_ (accounting_logger.js) the moment
+  // a vendor shipment's weight is confirmed at receiving — for CNF Agent
+  // Accounting's Air tab, which bills by weight. null until at least one
+  // shipment under this batch has a confirmed weight.
+  total_weight_kg?: number | null;
+
   // ── Finance fields — only ever attached by get_batch_details (Batch Detail
   // page), never by get_batches (Shipment Tracker). Genuinely absent here,
   // never present-but-null.
@@ -687,6 +693,9 @@ export interface CnfEligibleBatch {
   // Persisted at settlement time (see Batch.payment_status) — null until a
   // payment has settled or a backfill has run.
   payment_status?: 'Unpaid' | 'Partial' | 'Paid' | 'Not Invoiced' | null;
+  // Persisted at receiving time (see Batch.total_weight_kg) — null until a
+  // shipment's weight has been confirmed.
+  total_weight_kg?: number | null;
   qty: number;
   cartons: number;
   vendor_shipments: BatchVendorShipment[];
