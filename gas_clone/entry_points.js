@@ -445,6 +445,44 @@ function doPost(e) {
         }
       }
 
+      case 'get_cnf_air_rate_categories': {
+        try {
+          return successResponse_({ categories: getCnfAirRateCategories_() });
+        } catch (e) {
+          return errorResponse_(e.message || String(e));
+        }
+      }
+
+      case 'save_cnf_air_rate_categories': {
+        try {
+          const saved = setCnfAirRateCategories_(payload.categories);
+          return successResponse_({ categories: saved });
+        } catch (e) {
+          return errorResponse_(e.message || String(e));
+        }
+      }
+
+      case 'get_shipment_partner_defaults': {
+        try {
+          return successResponse_({ defaults: getShipmentPartnerDefaults_() });
+        } catch (e) {
+          return errorResponse_(e.message || String(e));
+        }
+      }
+
+      case 'save_shipment_partner_defaults': {
+        try {
+          const saved = setShipmentPartnerDefaults_(payload.defaults);
+          return successResponse_({ defaults: saved });
+        } catch (e) {
+          return errorResponse_(e.message || String(e));
+        }
+      }
+
+      case 'get_shipment_partners':
+        result = apiGetShipmentPartners_(payload);
+        break;
+
       case 'get_cnf_ledger':
         result = getCnfLedgerEntries_();
         break;

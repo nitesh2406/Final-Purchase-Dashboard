@@ -197,12 +197,18 @@ function apiGetSkuCategories() {
 //   N:O   brackets     *_BRACKET_<floor> | value        (P = description)
 //                      (GST_RATE currently sits here too — both G:H and N:O
 //                       are read for scalar keys, G:H first)
+//   R     shipment_partners  a flat list of Shipment Partner names, header
+//                            row + data from row 2 down (only column read,
+//                            same one-column-block convention as K:L) — see
+//                            CNF Agent Accounting's Air Log Entry form.
+//                            Maintained directly in the sheet, not from the app.
 const SKU_CONFIG_SHEET = 'SKU_Config';
 const SKU_CONFIG_COLS = {
   catKey: 1, catPrefix: 2, catFloor: 5,
   priceKey: 7, priceVal: 8,
   variantVal: 12,
   bracketKey: 14, bracketVal: 15,
+  shipmentPartnerVal: 18,
 };
 
 function getSkuConfigSheet_() {
@@ -3294,6 +3300,34 @@ function apiGetVariants(payload) {
     return okResult_(variants);
   } catch(e) {
     Logger.log('apiGetVariants error: ' + e.message);
+    return errResult_(e.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// GET SHIPMENT PARTNERS — from the SKU_Config sheet's R column (see LAYOUT
+// comment above) — used by CNF Agent Accounting's Air Log Entry form.
+// ─────────────────────────────────────────────────────────────
+// Payload: { action }
+// Returns: { success, data: string[] }
+
+function apiGetShipmentPartners_(payload) {
+  try {
+    const sheet = getSkuConfigSheet_();
+    const last  = sheet.getLastRow();
+    if (last < 2) return okResult_([]);
+
+    const partners = sheet.getRange(2, SKU_CONFIG_COLS.shipmentPartnerVal, last - 1, 1).getValues()
+      .map(r => String(r[0]).trim())
+      .filter(v => v && v !== '')
+      .filter((v, i, arr) =>
+        arr.findIndex(x => x.toLowerCase() === v.toLowerCase()) === i
+      )
+      .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+    return okResult_(partners);
+  } catch(e) {
+    Logger.log('apiGetShipmentPartners_ error: ' + e.message);
     return errResult_(e.message);
   }
 }

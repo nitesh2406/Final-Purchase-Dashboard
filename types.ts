@@ -680,6 +680,24 @@ export interface CnfLedgerEntry {
   invoiceBatchId?: string;
   billRequestedAt?: string;
   billRequestedBy?: string;
+  // Air-only (mode === 'air') — see docs/superpowers/specs/2026-09-24-cnf-air-shipment-recon-design.md.
+  // rateBasis absent/undefined on any entry logged before this shipped means 'pct' (Sea's
+  // existing behavior) — no migration needed, same pattern as billRequestedAt/By above.
+  rateBasis?: 'pct' | 'perKg';
+  shipmentPartner?: string;
+  weightKg?: number;
+  ratePerKg?: number;
+}
+
+export interface CnfAirRateCategory {
+  id: string;
+  label: string;
+  ratePerKg: number;
+}
+
+export interface CnfShipmentPartnerDefault {
+  partner: string;
+  defaultCategoryId: string;
 }
 
 export interface CnfEligibleBatch {

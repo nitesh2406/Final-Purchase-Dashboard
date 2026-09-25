@@ -1,7 +1,7 @@
 import { APPS_SCRIPT_URL } from '../constants.ts';
 import { SyncQueueManager } from './syncQueue.ts';
 import { callGas } from './gasApi';
-import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch, CnfInvoiceBatch } from '../types';
+import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch, CnfInvoiceBatch, CnfAirRateCategory, CnfShipmentPartnerDefault } from '../types';
 export type { VendorMaster } from '../types';
 
 export const IS_DEVELOPMENT_MODE = true;
@@ -532,6 +532,75 @@ export async function saveCnfCommissionRates(rates: CnfCommissionRate[]): Promis
     throw new Error((response && response.message) || 'Failed to save commission rates');
   }
   return response.rates;
+}
+
+/**
+ * Fetches Air's weight-based (₹/kg) rate-category table (Settings > Charges & Taxes)
+ * — separate from fetchCnfCommissionRates (Sea's %-based table).
+ */
+export async function fetchCnfAirRateCategories(): Promise<CnfAirRateCategory[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_air_rate_categories', 'CNF_Air_Rate_Categories', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.categories)) {
+      return response.categories;
+    }
+  } catch (error) {
+    console.warn('Could not fetch CNF air rate categories:', error);
+  }
+  return [];
+}
+
+/**
+ * Saves the full Air rate-category table (full replace, not incremental).
+ */
+export async function saveCnfAirRateCategories(categories: CnfAirRateCategory[]): Promise<CnfAirRateCategory[]> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'save_cnf_air_rate_categories', 'CNF_Air_Rate_Categories', 'POST', { categories });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to save air rate categories');
+  }
+  return response.categories;
+}
+
+/**
+ * Fetches each Shipment Partner's default Air Rate Category (Settings > Charges & Taxes).
+ */
+export async function fetchShipmentPartnerDefaults(): Promise<CnfShipmentPartnerDefault[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_shipment_partner_defaults', 'CNF_Shipment_Partner_Defaults', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.defaults)) {
+      return response.defaults;
+    }
+  } catch (error) {
+    console.warn('Could not fetch shipment partner defaults:', error);
+  }
+  return [];
+}
+
+/**
+ * Saves the full Shipment Partner → default Category mapping (full replace, not incremental).
+ */
+export async function saveShipmentPartnerDefaults(defaults: CnfShipmentPartnerDefault[]): Promise<CnfShipmentPartnerDefault[]> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'save_shipment_partner_defaults', 'CNF_Shipment_Partner_Defaults', 'POST', { defaults });
+  if (!response || response.status !== 'success') {
+    throw new Error((response && response.message) || 'Failed to save shipment partner defaults');
+  }
+  return response.defaults;
+}
+
+/**
+ * Fetches the flat list of Shipment Partner names from SKU_Config!R — the
+ * list itself is maintained directly in the sheet, not from the app.
+ */
+export async function fetchShipmentPartners(): Promise<string[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_shipment_partners', 'SKU_Config', 'POST');
+    if (response && response.success && Array.isArray(response.data)) {
+      return response.data;
+    }
+  } catch (error) {
+    console.warn('Could not fetch shipment partners:', error);
+  }
+  return [];
 }
 
 /**

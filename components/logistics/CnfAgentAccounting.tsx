@@ -11,6 +11,9 @@ import {
   fetchCnfLedgerEntries,
   addCnfLedgerEntry,
   fetchCnfCommissionRates,
+  fetchCnfAirRateCategories,
+  fetchShipmentPartners,
+  fetchShipmentPartnerDefaults,
   fetchIgstRate,
   computeCnfBatchRate,
   computeBatchSettlementStatus,
@@ -23,7 +26,7 @@ import {
   SettlementRecord
 } from '../../services/settlementService';
 import { extractInvoiceAmount } from '../../services/geminiService';
-import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate, CnfInvoiceBatch, Batch } from '../../types';
+import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfInvoiceBatch, Batch } from '../../types';
 import { useSubmissionLock } from '../../hooks/useSubmissionLock';
 import { callGasAuthed } from '../../services/gasApi';
 
@@ -72,6 +75,9 @@ let cnfDataCache: {
   settlementRecords: SettlementRecord[];
   ledgerEntries: CnfLedgerEntry[];
   commissionRates: CnfCommissionRate[];
+  airCategories: CnfAirRateCategory[];
+  shipmentPartners: string[];
+  partnerDefaults: CnfShipmentPartnerDefault[];
   igstPct: number;
   invoiceBatches: CnfInvoiceBatch[];
   timestamp: number;
@@ -86,6 +92,9 @@ export const CnfAgentAccounting: React.FC = () => {
   const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>(cnfDataCache?.settlementRecords || []);
   const [ledgerEntries, setLedgerEntries] = useState<CnfLedgerEntry[]>(cnfDataCache?.ledgerEntries || []);
   const [commissionRates, setCommissionRates] = useState<CnfCommissionRate[]>(cnfDataCache?.commissionRates || []);
+  const [airCategories, setAirCategories] = useState<CnfAirRateCategory[]>(cnfDataCache?.airCategories || []);
+  const [shipmentPartners, setShipmentPartners] = useState<string[]>(cnfDataCache?.shipmentPartners || []);
+  const [partnerDefaults, setPartnerDefaults] = useState<CnfShipmentPartnerDefault[]>(cnfDataCache?.partnerDefaults || []);
   const [igstPct, setIgstPct] = useState<number>(cnfDataCache?.igstPct ?? 5);
   const [invoiceBatches, setInvoiceBatches] = useState<CnfInvoiceBatch[]>(cnfDataCache?.invoiceBatches || []);
   const [isLoading, setIsLoading] = useState(!cnfDataCache);
@@ -104,6 +113,9 @@ export const CnfAgentAccounting: React.FC = () => {
       setSettlementRecords(cnfDataCache.settlementRecords);
       setLedgerEntries(cnfDataCache.ledgerEntries);
       setCommissionRates(cnfDataCache.commissionRates);
+      setAirCategories(cnfDataCache.airCategories);
+      setShipmentPartners(cnfDataCache.shipmentPartners);
+      setPartnerDefaults(cnfDataCache.partnerDefaults);
       setIgstPct(cnfDataCache.igstPct);
       setInvoiceBatches(cnfDataCache.invoiceBatches);
       setIsLoading(false);
@@ -112,13 +124,16 @@ export const CnfAgentAccounting: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [batches, batchesResult, invoices, settlements, entries, rates, igst, invoiceBatchList] = await Promise.all([
+      const [batches, batchesResult, invoices, settlements, entries, rates, airRates, partners, partnerDefaultsList, igst, invoiceBatchList] = await Promise.all([
         fetchCnfEligibleBatches(),
         callGasAuthed('get_batches', {}, 1),
         fetchPurchaseInvoices(),
         fetchSettlementRecords(),
         fetchCnfLedgerEntries(),
         fetchCnfCommissionRates(),
+        fetchCnfAirRateCategories(),
+        fetchShipmentPartners(),
+        fetchShipmentPartnerDefaults(),
         fetchIgstRate(),
         fetchCnfInvoiceBatches()
       ]);
@@ -132,6 +147,9 @@ export const CnfAgentAccounting: React.FC = () => {
       setSettlementRecords(settlements);
       setLedgerEntries(entries);
       setCommissionRates(rates);
+      setAirCategories(airRates);
+      setShipmentPartners(partners);
+      setPartnerDefaults(partnerDefaultsList);
       setIgstPct(igst);
       setInvoiceBatches(invoiceBatchList);
       cnfDataCache = {
@@ -141,6 +159,9 @@ export const CnfAgentAccounting: React.FC = () => {
         settlementRecords: settlements,
         ledgerEntries: entries,
         commissionRates: rates,
+        airCategories: airRates,
+        shipmentPartners: partners,
+        partnerDefaults: partnerDefaultsList,
         igstPct: igst,
         invoiceBatches: invoiceBatchList,
         timestamp: Date.now()
@@ -337,11 +358,26 @@ export const CnfAgentAccounting: React.FC = () => {
   const [categoryId, setCategoryId] = useState<string>('');
   const [chargesPctOverride, setChargesPctOverride] = useState<string>('');
   const [shippingAmount, setShippingAmount] = useState<string>('0');
+  // Air-only fields — see docs/superpowers/specs/2026-09-24-cnf-air-shipment-recon-design.md.
+  const [shipmentPartner, setShipmentPartner] = useState<string>('');
+  const [weightKgOverride, setWeightKgOverride] = useState<string>('');
+  const [ratePerKgOverride, setRatePerKgOverride] = useState<string>('');
+
+  const resetLogEntryForm = () => {
+    setSelectedBatchId('');
+    setCategoryId('');
+    setChargesPctOverride('');
+    setShippingAmount('0');
+    setShipmentPartner('');
+    setWeightKgOverride('');
+    setRatePerKgOverride('');
+  };
 
   const selectedBatch = useMemo(
     () => pendingBatches.find(b => b.batch_id === selectedBatchId) || null,
     [pendingBatches, selectedBatchId]
   );
+  const isAirEntry = selectedBatch?.batch_type === 'air';
 
   const invoiceRmbTotal = useMemo(() => {
     if (!selectedBatch) return 0;
@@ -356,18 +392,38 @@ export const CnfAgentAccounting: React.FC = () => {
     return computeCnfBatchRate(selectedBatch, settlementRecords);
   }, [selectedBatch, settlementRecords]);
 
-  const selectedCategory = useMemo(
+  // Sea's %-based categories and Air's ₹/kg categories are separate tables
+  // (see design doc) — categoryId is shared UI state, but which list it's
+  // resolved against depends on the selected batch's mode.
+  const selectedSeaCategory = useMemo(
     () => commissionRates.find(r => r.id === categoryId) || null,
     [commissionRates, categoryId]
+  );
+  const selectedAirCategory = useMemo(
+    () => airCategories.find(c => c.id === categoryId) || null,
+    [airCategories, categoryId]
   );
 
   const chargesPct = useMemo(() => {
     if (chargesPctOverride !== '') return parseFloat(chargesPctOverride) || 0;
-    return selectedCategory ? selectedCategory.ratePct : 0;
-  }, [chargesPctOverride, selectedCategory]);
+    return selectedSeaCategory ? selectedSeaCategory.ratePct : 0;
+  }, [chargesPctOverride, selectedSeaCategory]);
+
+  // Weight defaults from the batch's synced total_weight_kg (see
+  // syncBatchWeightAggregate_) but stays editable — same override pattern
+  // as chargesPct above.
+  const weightKg = useMemo(() => {
+    if (weightKgOverride !== '') return parseFloat(weightKgOverride) || 0;
+    return selectedBatch?.total_weight_kg || 0;
+  }, [weightKgOverride, selectedBatch]);
+
+  const ratePerKg = useMemo(() => {
+    if (ratePerKgOverride !== '') return parseFloat(ratePerKgOverride) || 0;
+    return selectedAirCategory ? selectedAirCategory.ratePerKg : 0;
+  }, [ratePerKgOverride, selectedAirCategory]);
 
   const goodsValue = invoiceRmbTotal * rate;
-  const charges = goodsValue * (chargesPct / 100);
+  const charges = isAirEntry ? weightKg * ratePerKg : goodsValue * (chargesPct / 100);
   const shippingAmt = parseFloat(shippingAmount) || 0;
   const taxableAmount = goodsValue + charges + shippingAmt;
   const igst = taxableAmount * (igstPct / 100);
@@ -384,7 +440,22 @@ export const CnfAgentAccounting: React.FC = () => {
     setSubmitError(null);
   };
 
+  // Picking a Shipment Partner pre-fills its configured default Category
+  // (on top of that Category pre-filling its own rate) — only when the
+  // partner actually has one configured (Settings > Shipment Partner
+  // Defaults), and only overwrites a category the user hasn't already
+  // picked by hand for this same partner selection.
+  const handleSelectShipmentPartner = (partner: string) => {
+    setShipmentPartner(partner);
+    const defaultCategoryId = partnerDefaults.find(d => d.partner === partner)?.defaultCategoryId;
+    if (defaultCategoryId) {
+      setCategoryId(defaultCategoryId);
+      setRatePerKgOverride('');
+    }
+  };
+
   const handleSubmit = async () => {
+    const selectedCategory = isAirEntry ? selectedAirCategory : selectedSeaCategory;
     if (!selectedBatch || !selectedCategory || isSubmitting) return;
     setIsSubmitting(true);
     setSubmitError(null);
@@ -409,13 +480,12 @@ export const CnfAgentAccounting: React.FC = () => {
         igstPct,
         igst,
         total,
-        totalPayable
+        totalPayable,
+        rateBasis: isAirEntry ? 'perKg' : 'pct',
+        ...(isAirEntry ? { shipmentPartner, weightKg, ratePerKg } : {})
       });
       setIsFormOpen(false);
-      setSelectedBatchId('');
-      setCategoryId('');
-      setChargesPctOverride('');
-      setShippingAmount('0');
+      resetLogEntryForm();
       await loadAll(true);
     } catch (err: any) {
       setSubmitError(err.message || 'Failed to log CNF entry.');
@@ -646,41 +716,95 @@ export const CnfAgentAccounting: React.FC = () => {
                     <div><span className="text-slate-400 block text-xs">Goods Value</span>{fmtInr(goodsValue)}</div>
                   </div>
 
+                  {isAirEntry && (
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Shipment Partner</label>
+                      <select
+                        value={shipmentPartner}
+                        onChange={e => handleSelectShipmentPartner(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                      >
+                        <option value="">-- Select shipment partner --</option>
+                        {shipmentPartners.map(p => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   <div>
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Category</label>
                     <select
                       value={categoryId}
-                      onChange={e => { setCategoryId(e.target.value); setChargesPctOverride(''); }}
+                      onChange={e => { setCategoryId(e.target.value); setChargesPctOverride(''); setRatePerKgOverride(''); }}
                       className="w-full px-3 py-2 border rounded-lg text-sm"
                     >
                       <option value="">-- Select category --</option>
-                      {commissionRates.map(r => (
-                        <option key={r.id} value={r.id}>{r.label} ({r.ratePct}%)</option>
-                      ))}
+                      {isAirEntry
+                        ? airCategories.map(c => (
+                            <option key={c.id} value={c.id}>{c.label} (₹{c.ratePerKg}/kg)</option>
+                          ))
+                        : commissionRates.map(r => (
+                            <option key={r.id} value={r.id}>{r.label} ({r.ratePct}%)</option>
+                          ))}
                     </select>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Charges % (override)</label>
-                      <input
-                        type="number" step="0.01"
-                        placeholder={selectedCategory ? String(selectedCategory.ratePct) : '0'}
-                        value={chargesPctOverride}
-                        onChange={e => setChargesPctOverride(e.target.value)}
-                        className="w-full px-3 py-2 border rounded-lg text-sm"
-                      />
+                  {isAirEntry ? (
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Weight (kg, override)</label>
+                        <input
+                          type="number" step="0.01"
+                          placeholder={selectedBatch.total_weight_kg != null ? String(selectedBatch.total_weight_kg) : '0'}
+                          value={weightKgOverride}
+                          onChange={e => setWeightKgOverride(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Rate ₹/kg (override)</label>
+                        <input
+                          type="number" step="0.01"
+                          placeholder={selectedAirCategory ? String(selectedAirCategory.ratePerKg) : '0'}
+                          value={ratePerKgOverride}
+                          onChange={e => setRatePerKgOverride(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Shipping Amount</label>
+                        <input
+                          type="number" step="0.01"
+                          value={shippingAmount}
+                          onChange={e => setShippingAmount(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg text-sm"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Shipping Amount</label>
-                      <input
-                        type="number" step="0.01"
-                        value={shippingAmount}
-                        onChange={e => setShippingAmount(e.target.value)}
-                        className="w-full px-3 py-2 border rounded-lg text-sm"
-                      />
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Charges % (override)</label>
+                        <input
+                          type="number" step="0.01"
+                          placeholder={selectedSeaCategory ? String(selectedSeaCategory.ratePct) : '0'}
+                          value={chargesPctOverride}
+                          onChange={e => setChargesPctOverride(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Shipping Amount</label>
+                        <input
+                          type="number" step="0.01"
+                          value={shippingAmount}
+                          onChange={e => setShippingAmount(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg text-sm"
+                        />
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 grid grid-cols-3 gap-3 text-sm">
                     <div><span className="text-slate-400 block text-xs">Charges</span>{fmtInr(charges)}</div>
@@ -693,7 +817,7 @@ export const CnfAgentAccounting: React.FC = () => {
                   {submitError && <p className="text-sm text-red-500">{submitError}</p>}
 
                   <div className="flex gap-3">
-                    <Button variant="secondary" onClick={() => { setIsFormOpen(false); setSelectedBatchId(''); setSubmitError(null); }}>Cancel</Button>
+                    <Button variant="secondary" onClick={() => { setIsFormOpen(false); resetLogEntryForm(); setSubmitError(null); }}>Cancel</Button>
                     <Button onClick={handleSubmit} disabled={!categoryId || isSubmitting}>
                       {isSubmitting ? 'Logging…' : 'Log Entry'}
                     </Button>

@@ -342,7 +342,101 @@ function setCnfCommissionRates_(rates) {
   rates.forEach(function (r) {
     sheet.appendRow([r.id, r.label, Number(r.ratePct) || 0]);
   });
-  return rates;
+  return getCnfCommissionRates_();
+}
+
+// ─────────────────────────────────────────────────────────────
+// CNF AIR RATE CATEGORIES — weight-based (₹/kg) categories for Air CNF
+// entries, kept as a separate table from CNF_Commission_Rates (Sea's %
+// categories) so the two rate bases can never be cross-selected by mistake.
+// See docs/superpowers/specs/2026-09-24-cnf-air-shipment-recon-design.md.
+// ─────────────────────────────────────────────────────────────
+
+function getCnfAirRateCategoriesSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('CNF_Air_Rate_Categories');
+  if (!sheet) {
+    sheet = ss.insertSheet('CNF_Air_Rate_Categories');
+    sheet.appendRow(['ID', 'Label', 'Rate Per Kg']);
+  }
+  return sheet;
+}
+
+function getCnfAirRateCategories_() {
+  const sheet = getCnfAirRateCategoriesSheet_();
+  const data = sheet.getDataRange().getValues();
+  const rows = [];
+  for (let i = 1; i < data.length; i++) {
+    if (!data[i][0]) continue;
+    rows.push({ id: String(data[i][0]), label: String(data[i][1]), ratePerKg: Number(data[i][2]) || 0 });
+  }
+  return rows;
+}
+
+function setCnfAirRateCategories_(categories) {
+  if (!Array.isArray(categories)) {
+    throw new Error('Invalid payload: categories must be an array.');
+  }
+  categories.forEach(function (c, i) {
+    if (!c || !c.id) {
+      throw new Error('Invalid category entry at index ' + i + ': id is required.');
+    }
+  });
+
+  const sheet = getCnfAirRateCategoriesSheet_();
+  sheet.clearContents();
+  sheet.appendRow(['ID', 'Label', 'Rate Per Kg']);
+  categories.forEach(function (c) {
+    sheet.appendRow([c.id, c.label, Number(c.ratePerKg) || 0]);
+  });
+  return getCnfAirRateCategories_();
+}
+
+// ─────────────────────────────────────────────────────────────
+// SHIPMENT PARTNER DEFAULTS — each Shipment Partner's default Air Rate
+// Category. The partner NAME list itself is not stored here — it's read
+// live from SKU_Config!R (see apiGetShipmentPartners_ in NewSkuApi.js) so a
+// name removed from the sheet naturally drops out of the dropdown.
+// ─────────────────────────────────────────────────────────────
+
+function getShipmentPartnerDefaultsSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('CNF_Shipment_Partner_Defaults');
+  if (!sheet) {
+    sheet = ss.insertSheet('CNF_Shipment_Partner_Defaults');
+    sheet.appendRow(['Partner', 'Default Category ID']);
+  }
+  return sheet;
+}
+
+function getShipmentPartnerDefaults_() {
+  const sheet = getShipmentPartnerDefaultsSheet_();
+  const data = sheet.getDataRange().getValues();
+  const rows = [];
+  for (let i = 1; i < data.length; i++) {
+    if (!data[i][0]) continue;
+    rows.push({ partner: String(data[i][0]), defaultCategoryId: String(data[i][1] || '') });
+  }
+  return rows;
+}
+
+function setShipmentPartnerDefaults_(defaults) {
+  if (!Array.isArray(defaults)) {
+    throw new Error('Invalid payload: defaults must be an array.');
+  }
+  defaults.forEach(function (d, i) {
+    if (!d || !d.partner) {
+      throw new Error('Invalid default entry at index ' + i + ': partner is required.');
+    }
+  });
+
+  const sheet = getShipmentPartnerDefaultsSheet_();
+  sheet.clearContents();
+  sheet.appendRow(['Partner', 'Default Category ID']);
+  defaults.forEach(function (d) {
+    sheet.appendRow([d.partner, d.defaultCategoryId || '']);
+  });
+  return getShipmentPartnerDefaults_();
 }
 
 // Prefers a payment row's persisted, charge-adjusted Settled ER2 (locked in at the
@@ -2594,9 +2688,16 @@ function fixVendorAccountsSheet() {
 // CNF LEDGER
 // ─────────────────────────────────────────────────────────────
 
+// Header row is documented once here — both functions below reference it in
+// their error messages. Trailing 4 columns (Rate Basis onward) are Air-only
+// (see docs/superpowers/specs/2026-09-24-cnf-air-shipment-recon-design.md);
+// absent/blank on any row logged before they existed reads back as 'pct'/
+// undefined below, matching Sea's pre-existing behavior — no migration needed.
+var CNF_LEDGER_HEADER_ROW_ = 'ID | Batch ID | Created At | Qty | Cartons | Invoice RMB Total | Mode | EDD | Carrier | Waybill | Rate | Category | Charges Pct | Goods Value | Charges | Shipping Amount | Taxable Amount | IGST Pct | IGST | Total | Total Payable | Invoice Batch ID | Bill Requested At | Bill Requested By | Rate Basis | Shipment Partner | Weight Kg | Rate Per Kg';
+
 function getCnfLedgerEntries_() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CNF_Ledger');
-  if (!sheet) throw new Error("Sheet 'CNF_Ledger' not found. Create it with header row: ID | Batch ID | Created At | Qty | Cartons | Invoice RMB Total | Mode | EDD | Carrier | Waybill | Rate | Category | Charges Pct | Goods Value | Charges | Shipping Amount | Taxable Amount | IGST Pct | IGST | Total | Total Payable | Invoice Batch ID | Bill Requested At | Bill Requested By");
+  if (!sheet) throw new Error("Sheet 'CNF_Ledger' not found. Create it with header row: " + CNF_LEDGER_HEADER_ROW_);
   var data = sheet.getDataRange().getValues();
   var rows = [];
   for (var i = 1; i < data.length; i++) {
@@ -2614,7 +2715,11 @@ function getCnfLedgerEntries_() {
       totalPayable: Number(data[i][20]) || 0,
       invoiceBatchId: data[i][21] ? String(data[i][21]) : undefined,
       billRequestedAt: data[i][22] ? String(data[i][22]) : undefined,
-      billRequestedBy: data[i][23] ? String(data[i][23]) : undefined
+      billRequestedBy: data[i][23] ? String(data[i][23]) : undefined,
+      rateBasis: data[i][24] ? String(data[i][24]) : 'pct',
+      shipmentPartner: data[i][25] ? String(data[i][25]) : undefined,
+      weightKg: data[i][26] !== '' && data[i][26] != null ? Number(data[i][26]) || 0 : undefined,
+      ratePerKg: data[i][27] !== '' && data[i][27] != null ? Number(data[i][27]) || 0 : undefined
     });
   }
   return { status: 'success', entries: rows };
@@ -2622,7 +2727,7 @@ function getCnfLedgerEntries_() {
 
 function addCnfLedgerEntry_(payload) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CNF_Ledger');
-  if (!sheet) throw new Error("Sheet 'CNF_Ledger' not found. Create it with header row: ID | Batch ID | Created At | Qty | Cartons | Invoice RMB Total | Mode | EDD | Carrier | Waybill | Rate | Category | Charges Pct | Goods Value | Charges | Shipping Amount | Taxable Amount | IGST Pct | IGST | Total | Total Payable | Invoice Batch ID | Bill Requested At | Bill Requested By");
+  if (!sheet) throw new Error("Sheet 'CNF_Ledger' not found. Create it with header row: " + CNF_LEDGER_HEADER_ROW_);
   var entry = payload.entry;
   if (!entry || !entry.batchId) throw new Error("payload.entry.batchId is required");
 
@@ -2644,7 +2749,9 @@ function addCnfLedgerEntry_(payload) {
       id, entry.batchId, entry.createdAt, entry.qty, entry.cartons, entry.invoiceRmbTotal,
       entry.mode, entry.edd, entry.carrier, entry.waybill, entry.rate, entry.category,
       entry.chargesPct, entry.goodsValue, entry.charges, entry.shippingAmount,
-      entry.taxableAmount, entry.igstPct, entry.igst, entry.total, entry.totalPayable, '', '', ''
+      entry.taxableAmount, entry.igstPct, entry.igst, entry.total, entry.totalPayable, '', '', '',
+      entry.rateBasis || 'pct', entry.shipmentPartner || '', entry.weightKg != null ? entry.weightKg : '',
+      entry.ratePerKg != null ? entry.ratePerKg : ''
     ]);
     return { status: 'success', id: id };
   } finally {
