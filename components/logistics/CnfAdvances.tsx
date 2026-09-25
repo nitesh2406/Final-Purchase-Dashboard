@@ -23,18 +23,42 @@ type CnfAdvancesTab = 'advances' | 'awaiting' | 'invoices';
 
 const fmtInr = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+// Module-level cache (same pattern as CnfAgentAccounting.tsx's cnfDataCache /
+// ShipmentTracker.tsx's batchListCache) — survives this component unmounting
+// when the user switches sidebar tabs and back, so returning to this screen
+// doesn't re-run all 5 loadAll() round trips against Apps Script every time.
+// Only a forced refresh (post-write, the Retry banner, or the Refresh button)
+// bypasses it.
+let cnfAdvDataCache: {
+  advances: CnfAdvance[];
+  invoices: CnfGoodsInvoice[];
+  eligibleBatches: CnfEligibleBatch[];
+  purchaseInvoices: PurchaseInvoice[];
+  settlementRecords: SettlementRecord[];
+  timestamp: number;
+} | null = null;
+
 export const CnfAdvances: React.FC = () => {
   const [activeTab, setActiveTab] = useQueryParam<CnfAdvancesTab>('cnfAdvTab', 'advances');
-  const [advances, setAdvances] = useState<CnfAdvance[]>([]);
-  const [invoices, setInvoices] = useState<CnfGoodsInvoice[]>([]);
-  const [eligibleBatches, setEligibleBatches] = useState<CnfEligibleBatch[]>([]);
-  const [purchaseInvoices, setPurchaseInvoices] = useState<PurchaseInvoice[]>([]);
-  const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [advances, setAdvances] = useState<CnfAdvance[]>(cnfAdvDataCache?.advances || []);
+  const [invoices, setInvoices] = useState<CnfGoodsInvoice[]>(cnfAdvDataCache?.invoices || []);
+  const [eligibleBatches, setEligibleBatches] = useState<CnfEligibleBatch[]>(cnfAdvDataCache?.eligibleBatches || []);
+  const [purchaseInvoices, setPurchaseInvoices] = useState<PurchaseInvoice[]>(cnfAdvDataCache?.purchaseInvoices || []);
+  const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>(cnfAdvDataCache?.settlementRecords || []);
+  const [isLoading, setIsLoading] = useState(!cnfAdvDataCache);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
 
-  const loadAll = async () => {
+  const loadAll = async (forceRefresh = false) => {
+    if (!forceRefresh && cnfAdvDataCache) {
+      setAdvances(cnfAdvDataCache.advances);
+      setInvoices(cnfAdvDataCache.invoices);
+      setEligibleBatches(cnfAdvDataCache.eligibleBatches);
+      setPurchaseInvoices(cnfAdvDataCache.purchaseInvoices);
+      setSettlementRecords(cnfAdvDataCache.settlementRecords);
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     setLoadError(null);
     try {
@@ -50,6 +74,14 @@ export const CnfAdvances: React.FC = () => {
       setEligibleBatches(batches);
       setPurchaseInvoices(pInvoices);
       setSettlementRecords(settlements);
+      cnfAdvDataCache = {
+        advances: advList,
+        invoices: invList,
+        eligibleBatches: batches,
+        purchaseInvoices: pInvoices,
+        settlementRecords: settlements,
+        timestamp: Date.now()
+      };
     } catch (err: any) {
       setLoadError(err.message || 'Failed to load CNF Advances data.');
     } finally {
@@ -103,7 +135,7 @@ export const CnfAdvances: React.FC = () => {
       setApprovalError(null);
       try {
         await approveCnfGoodsInvoice(id, 'internal-admin');
-        await loadAll();
+        await loadAll(true);
       } catch (err: any) {
         setApprovalError(err.message || 'Failed to approve');
       } finally {
@@ -124,7 +156,7 @@ export const CnfAdvances: React.FC = () => {
       try {
         await rejectCnfGoodsInvoice(id, reason);
         setRejectReasonDraft(prev => { const next = { ...prev }; delete next[id]; return next; });
-        await loadAll();
+        await loadAll(true);
       } catch (err: any) {
         setApprovalError(err.message || 'Failed to reject');
       } finally {
@@ -149,7 +181,7 @@ export const CnfAdvances: React.FC = () => {
             Money paid to CNF to settle overseas vendor balances, matched against CNF's own tax invoices as they arrive.
           </p>
         </div>
-        <Button variant="secondary" onClick={loadAll} disabled={isLoading} icon={<ArrowPathIcon className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />}>
+        <Button variant="secondary" onClick={() => loadAll(true)} disabled={isLoading} icon={<ArrowPathIcon className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />}>
           Refresh Data
         </Button>
       </div>
@@ -157,7 +189,7 @@ export const CnfAdvances: React.FC = () => {
       {loadError && (
         <div className="flex items-center justify-between bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg px-4 py-3">
           <span className="text-sm text-red-600 dark:text-red-400">{loadError}</span>
-          <Button variant="secondary" className="text-xs !py-1 !px-2.5" onClick={loadAll}>Retry</Button>
+          <Button variant="secondary" className="text-xs !py-1 !px-2.5" onClick={() => loadAll(true)}>Retry</Button>
         </div>
       )}
 
@@ -350,7 +382,7 @@ export const CnfAdvances: React.FC = () => {
           outstandingAdvances={outstandingAdvances}
           submittedBy="internal-admin"
           onClose={() => setIsLogModalOpen(false)}
-          onSuccess={() => { setIsLogModalOpen(false); loadAll(); }}
+          onSuccess={() => { setIsLogModalOpen(false); loadAll(true); }}
         />
       )}
     </div>
