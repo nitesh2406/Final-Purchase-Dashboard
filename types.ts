@@ -755,6 +755,41 @@ export interface CnfInvoiceBatch {
   rejectionReason?: string;
 }
 
+// See docs/superpowers/specs/2026-09-25-cnf-advances-invoice-matching-design.md.
+// CNF is a pure payment rail: ME never pays an overseas vendor directly.
+// Paying CNF to settle a vendor's balance creates an advance here; CNF's
+// own tax invoice (goods value inflated with its service markup, GST on
+// top) is matched against outstanding advances later.
+export interface CnfAdvance {
+  id: string;
+  date: string;
+  vendorCode: string;        // the vendor this advance ultimately funded
+  linkedPaymentId: string;   // -> PaymentLogs Payment ID, for traceability
+  amount: number;            // INR
+  balance: number;           // INR - drawn down as CnfGoodsInvoices match against it
+}
+
+export interface CnfGoodsInvoice {
+  id: string;
+  date: string;
+  fileUrl?: string;
+  lineItems: { batchId: string; shipmentIds: string[] }[]; // shipments this invoice covers
+  matchedAdvances: { advanceId: string; amountMatched: number }[]; // INR, many-to-many
+  statedBaseAmount: number;   // INR - CNF's stated taxable/base amount, already
+                               // inflated with their service markup, not itemized -
+                               // this is CNF's single "goods" line, as given.
+  expectedGoodsValue: number; // INR - sum of matchedAdvances.amountMatched
+  serviceCharge: number;      // INR, derived: statedBaseAmount - expectedGoodsValue
+  gst: number;                // INR, as stated on CNF's invoice
+  total: number;               // INR, as stated - statedBaseAmount + gst
+  residualLiability: number;  // INR - total - expectedGoodsValue (== serviceCharge + gst)
+  status: 'Pending Approval' | 'Approved' | 'Rejected';
+  overrideReason?: string;
+  submittedBy: string;
+  approvedBy?: string;
+  rejectionReason?: string;
+}
+
 export interface InventoryValuationRow {
   sku: string;
   name: string | null;
@@ -785,4 +820,4 @@ export type ViewType =
   | 'Inventory Analytics' | 'Inventory' | 'Settings'
   | 'Payment Ledger' | 'Accounts View' | 'Settlement Ledger' | 'Cross Vendor Settlement'
   | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU' | 'Audit Log'
-  | 'CNF Agent Accounting' | 'Receive Shipment';
+  | 'CNF Agent Accounting' | 'Receive Shipment' | 'CNF Advances';
