@@ -520,8 +520,25 @@ function doPost(e) {
       case 'reject_cnf_invoice_batch':
         result = rejectCnfInvoiceBatch(payload);
         break;
- 
-  
+
+      case 'get_cnf_advances':
+        return successResponse_({ advances: getCnfAdvances_() });
+
+      case 'get_cnf_goods_invoices':
+        return successResponse_({ invoices: getCnfGoodsInvoices_() });
+
+      case 'log_cnf_goods_invoice':
+        result = logCnfGoodsInvoice_(payload);
+        break;
+
+      case 'approve_cnf_goods_invoice':
+        result = approveCnfGoodsInvoice_(payload);
+        break;
+
+      case 'reject_cnf_goods_invoice':
+        result = rejectCnfGoodsInvoice_(payload);
+        break;
+
 
       case 'get_historical_fx_rates':
         return getHistoricalFxRates_(payload);
