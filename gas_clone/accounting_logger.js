@@ -2753,21 +2753,166 @@ function addCnfLedgerEntry_(payload) {
       entry.rateBasis || 'pct', entry.shipmentPartner || '', entry.weightKg != null ? entry.weightKg : '',
       entry.ratePerKg != null ? entry.ratePerKg : ''
     ]);
+    // Seed shipment-level bill-status tracking for this batch (see design
+    // doc) — one CNF_Shipment_Bill_Status row per vendor_shipment.
+    ensureCnfShipmentBillStatusRowsForBatch_(entry.batchId);
     return { status: 'success', id: id };
   } finally {
     lock.releaseLock();
   }
 }
 
-// Marks a CNF_Ledger row as "bill requested" — the ask has gone out to the
-// agent (tracked internally only, no email/notification this round). Column
-// 22 = Bill Requested At, column 23 = Bill Requested By (0-indexed, appended
-// after Invoice Batch ID at column 21).
+// ─────────────────────────────────────────────────────────────
+// CNF SHIPMENT BILL STATUS — shipment-level bill reconciliation (one row per
+// batch+shipment for every batch that has a CnfLedgerEntry). This is the
+// authoritative read path for bill-reconciliation status going forward.
+// CNF_Ledger's own billRequestedAt/billRequestedBy/Invoice Batch ID columns
+// are left in place as a frozen audit trail — requestCnfBill_ and
+// createCnfInvoiceBatch_ below no longer write to them.
+// See docs/superpowers/specs/2026-09-24-cnf-air-shipment-recon-design.md.
+// ─────────────────────────────────────────────────────────────
+
+function getCnfShipmentBillStatusSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('CNF_Shipment_Bill_Status');
+  if (!sheet) {
+    sheet = ss.insertSheet('CNF_Shipment_Bill_Status');
+    sheet.appendRow(['Batch ID', 'Shipment ID', 'Bill Requested At', 'Bill Requested By', 'Invoice Batch ID']);
+  }
+  return sheet;
+}
+
+function getCnfShipmentBillStatusRows_() {
+  var sheet = getCnfShipmentBillStatusSheet_();
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var batchIdCol = findHeaderIndex_(headers, 'Batch ID');
+  var shipmentIdCol = findHeaderIndex_(headers, 'Shipment ID');
+  var requestedAtCol = findHeaderIndex_(headers, 'Bill Requested At');
+  var requestedByCol = findHeaderIndex_(headers, 'Bill Requested By');
+  var invoiceBatchIdCol = findHeaderIndex_(headers, 'Invoice Batch ID');
+  var rows = [];
+  for (var i = 1; i < data.length; i++) {
+    if (!data[i][batchIdCol] || !data[i][shipmentIdCol]) continue;
+    rows.push({
+      batchId: String(data[i][batchIdCol]),
+      shipmentId: String(data[i][shipmentIdCol]),
+      billRequestedAt: data[i][requestedAtCol] ? String(data[i][requestedAtCol]) : undefined,
+      billRequestedBy: data[i][requestedByCol] ? String(data[i][requestedByCol]) : undefined,
+      invoiceBatchId: data[i][invoiceBatchIdCol] ? String(data[i][invoiceBatchIdCol]) : undefined
+    });
+  }
+  return rows;
+}
+
+// Reads Vendor_Shipments directly (not buildVendorShipmentsForBatch_, which
+// is logistics-only and doesn't carry total_amount) for the raw shipment_id
+// list and per-shipment RMB invoice value of a batch — used both to seed
+// CNF_Shipment_Bill_Status rows and to prorate a bill across shipments.
+function getVendorShipmentsRawForBatch_(batchId) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Vendor_Shipments');
+  if (!sheet) throw new Error("Sheet 'Vendor_Shipments' not found");
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var batchIdCol = findHeaderIndex_(headers, 'batch_id');
+  var shipmentIdCol = findHeaderIndex_(headers, 'shipment_id');
+  var totalAmountCol = findHeaderIndex_(headers, 'total_amount');
+  var result = [];
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][batchIdCol]).trim() === String(batchId).trim()) {
+      var shipmentId = String(data[i][shipmentIdCol] || '').trim();
+      if (!shipmentId) continue;
+      result.push({
+        shipmentId: shipmentId,
+        totalAmount: totalAmountCol !== -1 ? (Number(data[i][totalAmountCol]) || 0) : 0
+      });
+    }
+  }
+  return result;
+}
+
+// Idempotently creates a blank CNF_Shipment_Bill_Status row for every
+// vendor_shipment in batchId that doesn't already have one. Called when a
+// CnfLedgerEntry is logged — safe to call more than once for the same batch.
+function ensureCnfShipmentBillStatusRowsForBatch_(batchId) {
+  var shipments = getVendorShipmentsRawForBatch_(batchId);
+  if (shipments.length === 0) return;
+
+  var sheet = getCnfShipmentBillStatusSheet_();
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var batchIdCol = findHeaderIndex_(headers, 'Batch ID');
+  var shipmentIdCol = findHeaderIndex_(headers, 'Shipment ID');
+
+  var existing = {};
+  for (var i = 1; i < data.length; i++) {
+    existing[String(data[i][batchIdCol]) + '||' + String(data[i][shipmentIdCol])] = true;
+  }
+
+  shipments.forEach(function (s) {
+    var key = String(batchId) + '||' + s.shipmentId;
+    if (!existing[key]) {
+      sheet.appendRow([batchId, s.shipmentId, '', '', '']);
+    }
+  });
+}
+
+// ONE-TIME — run manually from the Apps Script editor before the
+// shipment-level reconciliation UI ships. Seeds CNF_Shipment_Bill_Status for
+// every batch that already has a CnfLedgerEntry, inheriting that entry's
+// existing billRequestedAt/billRequestedBy/Invoice Batch ID onto every one
+// of that batch's shipments (since nothing has been split by shipment yet).
+// Skips any (batchId, shipmentId) pair that already has a row, so it's safe
+// to re-run. DO NOT RUN without explicit user confirmation, separate from
+// code-deploy confirmation — this writes real billing-status data.
+function backfillCnfShipmentBillStatus_() {
+  var entries = getCnfLedgerEntries_().entries || [];
+
+  var sheet = getCnfShipmentBillStatusSheet_();
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var batchIdCol = findHeaderIndex_(headers, 'Batch ID');
+  var shipmentIdCol = findHeaderIndex_(headers, 'Shipment ID');
+  var existing = {};
+  for (var i = 1; i < data.length; i++) {
+    existing[String(data[i][batchIdCol]) + '||' + String(data[i][shipmentIdCol])] = true;
+  }
+
+  var seeded = 0, skipped = 0, batchesProcessed = 0;
+  entries.forEach(function (entry) {
+    var shipments = getVendorShipmentsRawForBatch_(entry.batchId);
+    if (shipments.length === 0) return;
+    batchesProcessed++;
+    shipments.forEach(function (s) {
+      var key = String(entry.batchId) + '||' + s.shipmentId;
+      if (existing[key]) { skipped++; return; }
+      existing[key] = true;
+      sheet.appendRow([
+        entry.batchId, s.shipmentId,
+        entry.billRequestedAt || '', entry.billRequestedBy || '', entry.invoiceBatchId || ''
+      ]);
+      seeded++;
+    });
+  });
+
+  var summary = 'backfillCnfShipmentBillStatus_ complete. Ledger entries: ' + entries.length +
+    ', batches with shipments: ' + batchesProcessed + ', rows seeded: ' + seeded + ', already present (skipped): ' + skipped + '.';
+  Logger.log(summary);
+  return { status: 'success', message: summary, seeded: seeded, skipped: skipped };
+}
+
+// Marks selected shipments of a logged batch as "bill requested" — the ask
+// has gone out to the agent (tracked internally only, no email/notification
+// this round). Writes CNF_Shipment_Bill_Status, not CNF_Ledger — entryId is
+// only used to resolve which batch this request is for. shipmentIds is
+// optional and defaults to every shipment in the batch (the common
+// single-shipment case is still a single click).
 function requestCnfBill_(payload) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CNF_Ledger');
-  if (!sheet) throw new Error("Sheet 'CNF_Ledger' not found");
   var entryId = String(payload.entryId || '').trim();
   var requestedBy = String(payload.requestedBy || '').trim();
+  var requestedShipmentIds = Array.isArray(payload.shipmentIds)
+    ? payload.shipmentIds.map(function (x) { return String(x).trim(); }).filter(Boolean)
+    : null;
   if (!entryId) throw new Error('payload.entryId is required');
 
   var lock = LockService.getScriptLock();
@@ -2776,25 +2921,70 @@ function requestCnfBill_(payload) {
   }
 
   try {
-    var data = sheet.getDataRange().getValues();
-    for (var i = 1; i < data.length; i++) {
-      if (String(data[i][0]).trim() === entryId) {
-        var existingRequestedAt = data[i][22];
-        if (existingRequestedAt) {
-          // Idempotent: a retried click just returns what's already there.
-          return {
-            status: 'success',
-            billRequestedAt: String(existingRequestedAt),
-            billRequestedBy: data[i][23] ? String(data[i][23]) : ''
-          };
-        }
-        var now = new Date();
-        sheet.getRange(i + 1, 23).setValue(now); // column 23 = 1-indexed "Bill Requested At"
-        sheet.getRange(i + 1, 24).setValue(requestedBy); // column 24 = 1-indexed "Bill Requested By"
-        return { status: 'success', billRequestedAt: now.toISOString(), billRequestedBy: requestedBy };
-      }
+    var ledgerSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CNF_Ledger');
+    if (!ledgerSheet) throw new Error("Sheet 'CNF_Ledger' not found");
+    var ledgerData = ledgerSheet.getDataRange().getValues();
+    var batchId = null;
+    for (var i = 1; i < ledgerData.length; i++) {
+      if (String(ledgerData[i][0]).trim() === entryId) { batchId = String(ledgerData[i][1]).trim(); break; }
     }
-    throw new Error('CNF ledger entry not found: ' + entryId);
+    if (!batchId) throw new Error('CNF ledger entry not found: ' + entryId);
+
+    // Safety net — should already exist from add_cnf_ledger_entry (or the
+    // one-time backfill), but never block a request on that ordering.
+    ensureCnfShipmentBillStatusRowsForBatch_(batchId);
+
+    var allShipmentIds = getVendorShipmentsRawForBatch_(batchId).map(function (s) { return s.shipmentId; });
+    if (allShipmentIds.length === 0) throw new Error('No vendor shipments found for batch ' + batchId);
+
+    var targetIds = requestedShipmentIds && requestedShipmentIds.length > 0 ? requestedShipmentIds : allShipmentIds;
+    var uniqueTargetIds = targetIds.filter(function (v, idx) { return targetIds.indexOf(v) === idx; });
+    var allSet = {};
+    allShipmentIds.forEach(function (id) { allSet[id] = true; });
+    uniqueTargetIds.forEach(function (id) {
+      if (!allSet[id]) throw new Error('Shipment ' + id + ' does not belong to batch ' + batchId);
+    });
+
+    var sheet = getCnfShipmentBillStatusSheet_();
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var batchIdCol = findHeaderIndex_(headers, 'Batch ID');
+    var shipmentIdCol = findHeaderIndex_(headers, 'Shipment ID');
+    var requestedAtCol = findHeaderIndex_(headers, 'Bill Requested At');
+    var requestedByCol = findHeaderIndex_(headers, 'Bill Requested By');
+
+    var now = new Date();
+    var updated = [];
+    uniqueTargetIds.forEach(function (shipmentId) {
+      for (var r = 1; r < data.length; r++) {
+        if (String(data[r][batchIdCol]).trim() === batchId && String(data[r][shipmentIdCol]).trim() === shipmentId) {
+          var existingRequestedAt = data[r][requestedAtCol];
+          if (existingRequestedAt) {
+            // Idempotent: a retried click just returns what's already there.
+            updated.push({
+              shipmentId: shipmentId,
+              billRequestedAt: String(existingRequestedAt),
+              billRequestedBy: data[r][requestedByCol] ? String(data[r][requestedByCol]) : ''
+            });
+          } else {
+            sheet.getRange(r + 1, requestedAtCol + 1).setValue(now);
+            sheet.getRange(r + 1, requestedByCol + 1).setValue(requestedBy);
+            updated.push({ shipmentId: shipmentId, billRequestedAt: now.toISOString(), billRequestedBy: requestedBy });
+          }
+          break;
+        }
+      }
+    });
+
+    return {
+      status: 'success',
+      batchId: batchId,
+      updated: updated,
+      // Back-compat for callers reading a single billRequestedAt/By off the
+      // response — still correct for the common single-shipment-batch case.
+      billRequestedAt: updated[0] ? updated[0].billRequestedAt : undefined,
+      billRequestedBy: updated[0] ? updated[0].billRequestedBy : undefined
+    };
   } finally {
     lock.releaseLock();
   }
@@ -2807,7 +2997,7 @@ function getCnfInvoiceBatches_() {
   var data = sheet.getDataRange().getValues();
   var headers = data[0];
   var idCol = headers.indexOf('ID');
-  var entryIdsCol = headers.indexOf('Entry IDs');
+  var lineItemsCol = headers.indexOf('Line Items'); // -1 on a sheet that predates Phase 3 — falls back below
   var billNoCol = headers.indexOf('Bill No');
   var billDateCol = headers.indexOf('Bill Date');
   var billedAmountCol = headers.indexOf('Billed Amount');
@@ -2818,22 +3008,44 @@ function getCnfInvoiceBatches_() {
   var submittedByCol = headers.indexOf('Submitted By');
   var approvedByCol = headers.indexOf('Approved By');
   var rejectionReasonCol = headers.indexOf('Rejection Reason');
-  if (idCol === -1 || entryIdsCol === -1 || billNoCol === -1 || billDateCol === -1 ||
+  if (idCol === -1 || billNoCol === -1 || billDateCol === -1 ||
       billedAmountCol === -1 || computedTotalCol === -1 || statusCol === -1) {
-    throw new Error("Sheet 'CNF_Invoice_Batches' is missing required column(s). Expected: ID | Entry IDs | Bill No | Bill Date | Billed Amount | Computed Total | File URL | Status | Override Reason | Submitted By | Approved By | Rejection Reason | Created At");
+    throw new Error("Sheet 'CNF_Invoice_Batches' is missing required column(s). Expected: ID | Bill No | Bill Date | Billed Amount | Computed Total | File URL | Status | Override Reason | Submitted By | Approved By | Rejection Reason | Created At");
   }
+
+  // Group every CNF_Shipment_Bill_Status row by Invoice Batch ID, so
+  // lineItems can be derived for legacy batches (created before the 'Line
+  // Items' column existed) once backfillCnfShipmentBillStatus_ has inherited
+  // their old single-batch billing state onto their shipments.
+  var shipmentsByInvoiceBatch = {}; // invoiceBatchId -> { batchId -> [shipmentId, ...] }
+  getCnfShipmentBillStatusRows_().forEach(function (row) {
+    if (!row.invoiceBatchId) return;
+    if (!shipmentsByInvoiceBatch[row.invoiceBatchId]) shipmentsByInvoiceBatch[row.invoiceBatchId] = {};
+    var byBatch = shipmentsByInvoiceBatch[row.invoiceBatchId];
+    if (!byBatch[row.batchId]) byBatch[row.batchId] = [];
+    byBatch[row.batchId].push(row.shipmentId);
+  });
 
   var batches = [];
   for (var i = 1; i < data.length; i++) {
     if (!data[i][idCol]) continue;
-    var entryIds = [];
-    try {
-      var raw = data[i][entryIdsCol];
-      entryIds = raw ? JSON.parse(raw) : [];
-    } catch (e) { entryIds = []; }
+    var id = String(data[i][idCol]);
+
+    var lineItems = [];
+    var storedRaw = lineItemsCol !== -1 ? data[i][lineItemsCol] : '';
+    if (storedRaw) {
+      try { lineItems = JSON.parse(storedRaw); } catch (e) { lineItems = []; }
+    }
+    if (lineItems.length === 0 && shipmentsByInvoiceBatch[id]) {
+      var byBatch = shipmentsByInvoiceBatch[id];
+      lineItems = Object.keys(byBatch).map(function (batchId) {
+        return { batchId: batchId, shipmentIds: byBatch[batchId] };
+      });
+    }
+
     batches.push({
-      id: String(data[i][idCol]),
-      entryIds: entryIds,
+      id: id,
+      lineItems: lineItems,
       billNo: String(data[i][billNoCol]),
       billDate: String(data[i][billDateCol]),
       billedAmount: Number(data[i][billedAmountCol]) || 0,
@@ -2849,10 +3061,16 @@ function getCnfInvoiceBatches_() {
   return { status: 'success', batches: batches };
 }
 
+// lineItems: [{batchId, shipmentIds}] — can span multiple batches. Each
+// batch's own CnfLedgerEntry.totalPayable is prorated across its selected
+// shipments by RMB invoice value (Vendor_Shipments.total_amount), summed
+// into computedTotal. Writes Invoice Batch ID onto the selected
+// CNF_Shipment_Bill_Status rows — CNF_Ledger's own Invoice Batch ID column
+// is legacy/frozen and is no longer touched here (see design doc).
 function createCnfInvoiceBatch_(payload) {
   var entry = (payload && payload.entry) || {};
   var id = String(entry.id || '').trim();
-  var entryIds = Array.isArray(entry.entryIds) ? entry.entryIds.map(function (x) { return String(x).trim(); }) : [];
+  var lineItemsInput = Array.isArray(entry.lineItems) ? entry.lineItems : [];
   var billNo = String(entry.billNo || '').trim();
   var billDate = String(entry.billDate || '').trim();
   var billedAmount = Number(entry.billedAmount);
@@ -2861,9 +3079,26 @@ function createCnfInvoiceBatch_(payload) {
   var submittedBy = String(entry.submittedBy || '').trim();
 
   if (!id) throw new Error('Missing entry.id');
-  if (entryIds.length === 0) throw new Error('entryIds must be a non-empty array');
-  var uniqueEntryIds = entryIds.filter(function (v, i) { return entryIds.indexOf(v) === i; });
-  if (uniqueEntryIds.length !== entryIds.length) throw new Error('entryIds contains duplicates');
+  if (lineItemsInput.length === 0) throw new Error('lineItems must be a non-empty array');
+
+  var lineItems = [];
+  var seenPairs = {};
+  lineItemsInput.forEach(function (li, idx) {
+    var batchId = String((li && li.batchId) || '').trim();
+    if (!batchId) throw new Error('lineItems[' + idx + '] is missing batchId');
+    var shipmentIds = Array.isArray(li && li.shipmentIds)
+      ? li.shipmentIds.map(function (x) { return String(x).trim(); }).filter(Boolean)
+      : [];
+    var uniqueShipmentIds = shipmentIds.filter(function (v, i) { return shipmentIds.indexOf(v) === i; });
+    if (uniqueShipmentIds.length === 0) throw new Error('lineItems[' + idx + '] (batch ' + batchId + ') must include at least one shipmentId');
+    uniqueShipmentIds.forEach(function (sid) {
+      var pairKey = batchId + '||' + sid;
+      if (seenPairs[pairKey]) throw new Error('Shipment ' + sid + ' (batch ' + batchId + ') is listed more than once');
+      seenPairs[pairKey] = true;
+    });
+    lineItems.push({ batchId: batchId, shipmentIds: uniqueShipmentIds });
+  });
+
   if (!billNo) throw new Error('Bill No is required');
   if (!billDate) throw new Error('Bill Date is required');
   if (isNaN(billedAmount) || billedAmount <= 0) throw new Error('Billed Amount must be a positive number');
@@ -2876,42 +3111,72 @@ function createCnfInvoiceBatch_(payload) {
   try {
     var ledgerSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CNF_Ledger');
     if (!ledgerSheet) throw new Error("Sheet 'CNF_Ledger' not found");
-
     var ledgerValues = ledgerSheet.getDataRange().getValues();
     var ledgerHeaders = ledgerValues[0];
-    var ledgerIdCol = ledgerHeaders.indexOf('ID');
-    var ledgerBatchIdCol = ledgerHeaders.indexOf('Invoice Batch ID');
+    var ledgerBatchIdCol = ledgerHeaders.indexOf('Batch ID');
     var ledgerTotalPayableCol = ledgerHeaders.indexOf('Total Payable');
-    if (ledgerIdCol === -1) throw new Error("CNF_Ledger sheet is missing an 'ID' column");
-    if (ledgerBatchIdCol === -1) throw new Error("CNF_Ledger sheet is missing an 'Invoice Batch ID' column");
+    if (ledgerBatchIdCol === -1) throw new Error("CNF_Ledger sheet is missing a 'Batch ID' column");
     if (ledgerTotalPayableCol === -1) throw new Error("CNF_Ledger sheet is missing a 'Total Payable' column");
 
-    var rowIndexByEntryId = {};
+    var billStatusSheet = getCnfShipmentBillStatusSheet_();
+    var billStatusData = billStatusSheet.getDataRange().getValues();
+    var billStatusHeaders = billStatusData[0];
+    var bsBatchIdCol = findHeaderIndex_(billStatusHeaders, 'Batch ID');
+    var bsShipmentIdCol = findHeaderIndex_(billStatusHeaders, 'Shipment ID');
+    var bsInvoiceBatchIdCol = findHeaderIndex_(billStatusHeaders, 'Invoice Batch ID');
+
     var computedTotal = 0;
-    for (var e = 0; e < entryIds.length; e++) {
-      var targetId = entryIds[e];
-      var foundRow = -1;
+    var rowsToStamp = []; // 0-indexed rows into billStatusData
+
+    lineItems.forEach(function (li) {
+      var totalPayable = null;
       for (var r = 1; r < ledgerValues.length; r++) {
-        if (String(ledgerValues[r][ledgerIdCol] || '').trim() === targetId) { foundRow = r; break; }
+        if (String(ledgerValues[r][ledgerBatchIdCol] || '').trim() === li.batchId) {
+          var payableRaw = ledgerValues[r][ledgerTotalPayableCol];
+          var payableNum = Number(payableRaw);
+          if (payableRaw === '' || payableRaw === null || isNaN(payableNum)) {
+            throw new Error('Batch ' + li.batchId + ' has a non-numeric Total Payable value: ' + payableRaw);
+          }
+          totalPayable = payableNum;
+          break;
+        }
       }
-      if (foundRow === -1) throw new Error('CNF ledger entry not found: ' + targetId);
-      var existingBatchId = String(ledgerValues[foundRow][ledgerBatchIdCol] || '').trim();
-      if (existingBatchId) {
-        throw new Error('CNF ledger entry ' + targetId + ' is already billed under invoice batch ' + existingBatchId);
-      }
-      var payableRaw = ledgerValues[foundRow][ledgerTotalPayableCol];
-      var payableNum = Number(payableRaw);
-      if (payableRaw === '' || payableRaw === null || isNaN(payableNum)) {
-        throw new Error('CNF ledger entry ' + targetId + ' has a non-numeric Total Payable value: ' + payableRaw);
-      }
-      rowIndexByEntryId[targetId] = foundRow;
-      computedTotal += payableNum;
-    }
+      if (totalPayable === null) throw new Error('No CNF ledger entry found for batch: ' + li.batchId);
+
+      var shipments = getVendorShipmentsRawForBatch_(li.batchId);
+      var batchTotalRmb = shipments.reduce(function (sum, s) { return sum + s.totalAmount; }, 0);
+      if (batchTotalRmb <= 0) throw new Error('Batch ' + li.batchId + ' has zero total invoice value — cannot prorate a bill across its shipments.');
+      var rmbByShipmentId = {};
+      shipments.forEach(function (s) { rmbByShipmentId[s.shipmentId] = s.totalAmount; });
+
+      li.shipmentIds.forEach(function (shipmentId) {
+        if (!(shipmentId in rmbByShipmentId)) {
+          throw new Error('Shipment ' + shipmentId + ' does not belong to batch ' + li.batchId);
+        }
+        var foundRow = -1;
+        for (var r2 = 1; r2 < billStatusData.length; r2++) {
+          if (String(billStatusData[r2][bsBatchIdCol]).trim() === li.batchId && String(billStatusData[r2][bsShipmentIdCol]).trim() === shipmentId) {
+            foundRow = r2;
+            break;
+          }
+        }
+        if (foundRow === -1) throw new Error('No CNF_Shipment_Bill_Status row for shipment ' + shipmentId + ' (batch ' + li.batchId + ') — log the CNF entry for this batch first.');
+        var existingInvoiceBatchId = String(billStatusData[foundRow][bsInvoiceBatchIdCol] || '').trim();
+        if (existingInvoiceBatchId) {
+          throw new Error('Shipment ' + shipmentId + ' (batch ' + li.batchId + ') is already billed under invoice batch ' + existingInvoiceBatchId);
+        }
+
+        var shipmentShare = rmbByShipmentId[shipmentId] / batchTotalRmb;
+        computedTotal += totalPayable * shipmentShare;
+        rowsToStamp.push(foundRow);
+      });
+    });
+
     computedTotal = Math.round(computedTotal * 100) / 100;
 
-    for (var eid in rowIndexByEntryId) {
-      ledgerSheet.getRange(rowIndexByEntryId[eid] + 1, ledgerBatchIdCol + 1).setValue(id);
-    }
+    rowsToStamp.forEach(function (rowIndex) {
+      billStatusSheet.getRange(rowIndex + 1, bsInvoiceBatchIdCol + 1).setValue(id);
+    });
     SpreadsheetApp.flush();
 
     var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -2922,6 +3187,7 @@ function createCnfInvoiceBatch_(payload) {
       batchSheet = ss.insertSheet('CNF_Invoice_Batches');
       batchSheet.appendRow(expectedHeaders);
     }
+    ensureHeaderColumn_(batchSheet, 'Line Items');
     var batchHeaderRow = batchSheet.getRange(1, 1, 1, Math.max(batchSheet.getLastColumn(), 1)).getValues()[0];
     var batchHeaderMap = {};
     for (var h = 0; h < batchHeaderRow.length; h++) {
@@ -2935,7 +3201,7 @@ function createCnfInvoiceBatch_(payload) {
 
     var newRow = new Array(Object.keys(batchHeaderMap).length).fill('');
     newRow[batchHeaderMap['ID']] = id;
-    newRow[batchHeaderMap['Entry IDs']] = JSON.stringify(entryIds);
+    newRow[batchHeaderMap['Line Items']] = JSON.stringify(lineItems);
     newRow[batchHeaderMap['Bill No']] = billNo;
     newRow[batchHeaderMap['Bill Date']] = billDate;
     newRow[batchHeaderMap['Billed Amount']] = billedAmount;
@@ -3158,6 +3424,26 @@ function rejectCnfInvoiceBatch(payload) {
               }
             }
           });
+        }
+      }
+    }
+
+    // Shipment-level reconciliation (see design doc) — clear Invoice Batch
+    // ID on every CNF_Shipment_Bill_Status row this batch had claimed, so
+    // those shipments become billable again. Queried by Invoice Batch ID
+    // directly rather than via entryIds, so this covers both new-style
+    // batches (which never touch CNF_Ledger's own Invoice Batch ID above)
+    // and legacy batches once backfillCnfShipmentBillStatus_ has run.
+    var billStatusSheet = getCnfShipmentBillStatusSheet_();
+    var billStatusData = billStatusSheet.getDataRange().getValues();
+    if (billStatusData.length > 1) {
+      var bsHeaders = billStatusData[0];
+      var bsInvoiceBatchIdCol = findHeaderIndex_(bsHeaders, 'Invoice Batch ID');
+      if (bsInvoiceBatchIdCol !== -1) {
+        for (var bs = 1; bs < billStatusData.length; bs++) {
+          if (String(billStatusData[bs][bsInvoiceBatchIdCol] || '').trim() === String(batchId).trim()) {
+            billStatusSheet.getRange(bs + 1, bsInvoiceBatchIdCol + 1).setValue('');
+          }
         }
       }
     }

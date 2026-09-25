@@ -491,6 +491,16 @@ function doPost(e) {
         result = addCnfLedgerEntry_(payload);
         break;
 
+      case 'get_cnf_shipment_bill_status':
+        return successResponse_({ rows: getCnfShipmentBillStatusRows_() });
+
+      // DO NOT invoke from the frontend — one-time migration, run manually
+      // and only with explicit confirmation (writes real billing-status
+      // data). See backfillCnfShipmentBillStatus_ in accounting_logger.js.
+      case 'backfill_cnf_shipment_bill_status':
+        result = backfillCnfShipmentBillStatus_();
+        break;
+
       case 'request_cnf_bill':
         result = requestCnfBill_(payload);
         break;

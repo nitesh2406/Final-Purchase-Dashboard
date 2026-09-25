@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { GenerateBillModal } from './CnfAgentAccounting';
-import { fetchCnfLedgerEntries, fetchCnfInvoiceBatches } from '../../services/settlementService';
-import { CnfLedgerEntry, CnfInvoiceBatch } from '../../types';
+import { fetchCnfLedgerEntries, fetchCnfInvoiceBatches, fetchCnfEligibleBatches } from '../../services/settlementService';
+import { CnfLedgerEntry, CnfInvoiceBatch, CnfEligibleBatch } from '../../types';
 
 interface CnfAgentPortalProps {
   user: { email: string; name: string };
@@ -13,26 +13,39 @@ interface CnfAgentPortalProps {
 export const CnfAgentPortal: React.FC<CnfAgentPortalProps> = ({ user, onLogout }) => {
   const [ledgerEntries, setLedgerEntries] = useState<CnfLedgerEntry[]>([]);
   const [invoiceBatches, setInvoiceBatches] = useState<CnfInvoiceBatch[]>([]);
+  const [eligibleBatches, setEligibleBatches] = useState<CnfEligibleBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
   const [isBillModalOpen, setIsBillModalOpen] = useState(false);
 
   const loadAll = async () => {
     setIsLoading(true);
-    const [entries, batches] = await Promise.all([
+    const [entries, batches, eligible] = await Promise.all([
       fetchCnfLedgerEntries(),
-      fetchCnfInvoiceBatches()
+      fetchCnfInvoiceBatches(),
+      fetchCnfEligibleBatches()
     ]);
     setLedgerEntries(entries);
     setInvoiceBatches(batches);
+    setEligibleBatches(eligible);
     setIsLoading(false);
   };
 
   useEffect(() => { loadAll(); }, []);
 
+  // unbilledEntries still reads CnfLedgerEntry's own (legacy) invoiceBatchId
+  // rather than CNF_Shipment_Bill_Status — acceptable here since a batch's
+  // shipments move in lockstep in this phase (see cnfLifecycle in
+  // CnfAgentAccounting.tsx); a shipment-level rework of this portal is a
+  // follow-up alongside the internal Bill Reconciliation tab's picker UI.
   const unbilledEntries = useMemo(() => ledgerEntries.filter(e => !e.invoiceBatchId), [ledgerEntries]);
   const selectedEntries = useMemo(() => unbilledEntries.filter(e => selectedEntryIds.has(e.id)), [unbilledEntries, selectedEntryIds]);
   const selectedTotalPayable = useMemo(() => selectedEntries.reduce((sum, e) => sum + e.totalPayable, 0), [selectedEntries]);
+  const shipmentIdsByBatchId = useMemo(() => {
+    const map = new Map<string, string[]>();
+    eligibleBatches.forEach(b => map.set(b.batch_id, (b.vendor_shipments || []).map(vs => vs.shipment_id)));
+    return map;
+  }, [eligibleBatches]);
 
   // Single-agent system for this round (only KREIZ) — every submission history row is
   // "the agent's own" by definition, no per-agent filtering needed yet.
@@ -145,6 +158,7 @@ export const CnfAgentPortal: React.FC<CnfAgentPortalProps> = ({ user, onLogout }
       {isBillModalOpen && (
         <GenerateBillModal
           selectedEntries={selectedEntries}
+          shipmentIdsByBatchId={shipmentIdsByBatchId}
           computedTotal={selectedTotalPayable}
           submittedBy={user.email}
           onClose={() => setIsBillModalOpen(false)}

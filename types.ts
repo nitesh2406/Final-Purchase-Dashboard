@@ -725,9 +725,24 @@ export interface CnfCommissionRate {
   ratePct: number;
 }
 
+// One row per (batch_id, shipment_id) for every batch that has a
+// CnfLedgerEntry — the authoritative source for bill-reconciliation status.
+// See docs/superpowers/specs/2026-09-24-cnf-air-shipment-recon-design.md.
+export interface CnfShipmentBillStatus {
+  batchId: string;
+  shipmentId: string;
+  billRequestedAt?: string;
+  billRequestedBy?: string;
+  invoiceBatchId?: string;
+}
+
 export interface CnfInvoiceBatch {
   id: string;
-  entryIds: string[];
+  // Replaces the old entryIds: string[] (one CNF_Ledger entry per batch) —
+  // a bill can now cover a subset of a batch's shipments, spanning multiple
+  // batches. Each batch's own CnfLedgerEntry supplies the per-shipment
+  // prorated payable amount (proration basis: RMB invoice value).
+  lineItems: { batchId: string; shipmentIds: string[] }[];
   billNo: string;
   billDate: string;
   billedAmount: number;

@@ -1,7 +1,7 @@
 import { APPS_SCRIPT_URL } from '../constants.ts';
 import { SyncQueueManager } from './syncQueue.ts';
 import { callGas } from './gasApi';
-import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch, CnfInvoiceBatch, CnfAirRateCategory, CnfShipmentPartnerDefault } from '../types';
+import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch, CnfInvoiceBatch, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentBillStatus } from '../types';
 export type { VendorMaster } from '../types';
 
 export const IS_DEVELOPMENT_MODE = true;
@@ -747,16 +747,41 @@ export async function addCnfLedgerEntry(entry: Omit<CnfLedgerEntry, 'id'>): Prom
 }
 
 /**
- * Marks a CNF ledger entry as "bill requested" — internal tracking only
- * (no agent notification this round). Idempotent server-side: a retried
- * call on an already-requested entry just returns the existing timestamp.
+ * Marks selected shipments of a logged batch as "bill requested" — internal
+ * tracking only (no agent notification this round). shipmentIds is optional
+ * and defaults server-side to every shipment in the batch (the common
+ * single-shipment case is still a single click). Idempotent per-shipment:
+ * a retried call on an already-requested shipment just returns its existing
+ * timestamp.
  */
-export async function requestCnfBill(entryId: string, requestedBy: string): Promise<{ billRequestedAt: string; billRequestedBy: string }> {
-  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'request_cnf_bill', 'CNF_Ledger', 'POST', { entryId, requestedBy });
+export async function requestCnfBill(
+  entryId: string,
+  requestedBy: string,
+  shipmentIds?: string[]
+): Promise<{ batchId: string; updated: { shipmentId: string; billRequestedAt: string; billRequestedBy: string }[] }> {
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'request_cnf_bill', 'CNF_Ledger', 'POST', { entryId, requestedBy, shipmentIds });
   if (!response || response.status !== 'success') {
     throw new Error((response && response.message) || 'Failed to request bill');
   }
-  return { billRequestedAt: response.billRequestedAt, billRequestedBy: response.billRequestedBy };
+  return { batchId: response.batchId, updated: response.updated || [] };
+}
+
+/**
+ * Fetches shipment-level bill-reconciliation status — one row per
+ * (batchId, shipmentId) for every batch that has a CnfLedgerEntry. The
+ * authoritative source for Bill Status badges/rollups and the Request
+ * Bill / Generate Bill shipment pickers (see design doc).
+ */
+export async function fetchCnfShipmentBillStatus(): Promise<CnfShipmentBillStatus[]> {
+  try {
+    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_shipment_bill_status', 'CNF_Shipment_Bill_Status', 'POST');
+    if (response && response.status === 'success' && Array.isArray(response.rows)) {
+      return response.rows;
+    }
+  } catch (err) {
+    console.error('Failed to fetch CNF shipment bill status:', err);
+  }
+  return [];
 }
 
 function generateCnfInvoiceBatchId(): string {
@@ -765,10 +790,12 @@ function generateCnfInvoiceBatchId(): string {
 
 /**
  * Creates a new CNF invoice batch, reconciling the billed amount against the
- * computed total of the selected ledger entries server-side.
+ * server-computed total of the selected shipments (prorated by each
+ * shipment's RMB invoice value against its batch's totalPayable — see
+ * design doc). lineItems can span multiple batches.
  */
 export async function createCnfInvoiceBatch(entry: {
-  entryIds: string[];
+  lineItems: { batchId: string; shipmentIds: string[] }[];
   billNo: string;
   billDate: string;
   billedAmount: number;

@@ -19,6 +19,7 @@ import {
   computeBatchSettlementStatus,
   createCnfInvoiceBatch,
   fetchCnfInvoiceBatches,
+  fetchCnfShipmentBillStatus,
   approveCnfInvoiceBatch,
   rejectCnfInvoiceBatch,
   requestCnfBill,
@@ -26,7 +27,7 @@ import {
   SettlementRecord
 } from '../../services/settlementService';
 import { extractInvoiceAmount } from '../../services/geminiService';
-import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfInvoiceBatch, Batch } from '../../types';
+import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfInvoiceBatch, CnfShipmentBillStatus, Batch } from '../../types';
 import { useSubmissionLock } from '../../hooks/useSubmissionLock';
 import { callGasAuthed } from '../../services/gasApi';
 
@@ -35,10 +36,23 @@ type CnfTab = 'overview' | 'reconciliation';
 // Derived (never stored) bill lifecycle for a batch's CNF ledger entry.
 type CnfLifecycle = 'Not Logged' | 'Logged' | 'Bill Requested' | 'Bill Received' | 'Approved';
 
-function cnfLifecycle(entry: CnfLedgerEntry | null, invoiceBatchById: Map<string, CnfInvoiceBatch>): CnfLifecycle {
-  if (!entry) return 'Not Logged';
-  if (!entry.invoiceBatchId) return entry.billRequestedAt ? 'Bill Requested' : 'Logged';
-  const invBatch = invoiceBatchById.get(entry.invoiceBatchId);
+// Authoritative source is now CNF_Shipment_Bill_Status, not CnfLedgerEntry's
+// own billRequestedAt/invoiceBatchId (frozen/legacy — see design doc). A
+// batch's shipments move in lockstep in this phase (Request Bill / Generate
+// Bill still act on "every shipment in the batch" — a shipment-level picker
+// is a follow-up), so taking the first row's state is safe; a genuinely
+// mixed batch (not reachable from this UI yet) would just show its first
+// shipment's state until the Phase 3b rollup badge ships.
+function cnfLifecycle(
+  batchId: string | null,
+  shipmentStatusByBatchId: Map<string, CnfShipmentBillStatus[]>,
+  invoiceBatchById: Map<string, CnfInvoiceBatch>
+): CnfLifecycle {
+  const rows = batchId ? shipmentStatusByBatchId.get(batchId) : undefined;
+  if (!rows || rows.length === 0) return 'Not Logged';
+  const row = rows[0];
+  if (!row.invoiceBatchId) return row.billRequestedAt ? 'Bill Requested' : 'Logged';
+  const invBatch = invoiceBatchById.get(row.invoiceBatchId);
   return invBatch?.status === 'Approved' ? 'Approved' : 'Bill Received';
 }
 
@@ -80,6 +94,7 @@ let cnfDataCache: {
   partnerDefaults: CnfShipmentPartnerDefault[];
   igstPct: number;
   invoiceBatches: CnfInvoiceBatch[];
+  shipmentBillStatus: CnfShipmentBillStatus[];
   timestamp: number;
 } | null = null;
 
@@ -97,6 +112,7 @@ export const CnfAgentAccounting: React.FC = () => {
   const [partnerDefaults, setPartnerDefaults] = useState<CnfShipmentPartnerDefault[]>(cnfDataCache?.partnerDefaults || []);
   const [igstPct, setIgstPct] = useState<number>(cnfDataCache?.igstPct ?? 5);
   const [invoiceBatches, setInvoiceBatches] = useState<CnfInvoiceBatch[]>(cnfDataCache?.invoiceBatches || []);
+  const [shipmentBillStatus, setShipmentBillStatus] = useState<CnfShipmentBillStatus[]>(cnfDataCache?.shipmentBillStatus || []);
   const [isLoading, setIsLoading] = useState(!cnfDataCache);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -118,13 +134,14 @@ export const CnfAgentAccounting: React.FC = () => {
       setPartnerDefaults(cnfDataCache.partnerDefaults);
       setIgstPct(cnfDataCache.igstPct);
       setInvoiceBatches(cnfDataCache.invoiceBatches);
+      setShipmentBillStatus(cnfDataCache.shipmentBillStatus);
       setIsLoading(false);
       return;
     }
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [batches, batchesResult, invoices, settlements, entries, rates, airRates, partners, partnerDefaultsList, igst, invoiceBatchList] = await Promise.all([
+      const [batches, batchesResult, invoices, settlements, entries, rates, airRates, partners, partnerDefaultsList, igst, invoiceBatchList, billStatusRows] = await Promise.all([
         fetchCnfEligibleBatches(),
         callGasAuthed('get_batches', {}, 1),
         fetchPurchaseInvoices(),
@@ -135,7 +152,8 @@ export const CnfAgentAccounting: React.FC = () => {
         fetchShipmentPartners(),
         fetchShipmentPartnerDefaults(),
         fetchIgstRate(),
-        fetchCnfInvoiceBatches()
+        fetchCnfInvoiceBatches(),
+        fetchCnfShipmentBillStatus()
       ]);
       // get_batches already returns paid_amount_inr/blended_settlement_rate
       // straight off the Batches sheet (see accounting_logger.js's
@@ -152,6 +170,7 @@ export const CnfAgentAccounting: React.FC = () => {
       setPartnerDefaults(partnerDefaultsList);
       setIgstPct(igst);
       setInvoiceBatches(invoiceBatchList);
+      setShipmentBillStatus(billStatusRows);
       cnfDataCache = {
         eligibleBatches: batches,
         allBatches: resolvedAllBatches,
@@ -164,6 +183,7 @@ export const CnfAgentAccounting: React.FC = () => {
         partnerDefaults: partnerDefaultsList,
         igstPct: igst,
         invoiceBatches: invoiceBatchList,
+        shipmentBillStatus: billStatusRows,
         timestamp: Date.now()
       };
     } catch (err: any) {
@@ -191,6 +211,16 @@ export const CnfAgentAccounting: React.FC = () => {
     return map;
   }, [invoiceBatches]);
 
+  // Batch ID -> every one of its shipment IDs, for building Generate Bill's
+  // lineItems (see createCnfInvoiceBatch). Full shipment-level selection UI
+  // is a follow-up — this phase still bills a whole batch's shipments at
+  // once, just via the new lineItems shape instead of a CNF_Ledger entryId.
+  const shipmentIdsByBatchId = useMemo(() => {
+    const map = new Map<string, string[]>();
+    allBatches.forEach(b => map.set(b.batch_id, (b.vendor_shipments || []).map(vs => vs.shipment_id)));
+    return map;
+  }, [allBatches]);
+
   // Payment Status is persisted server-side at settlement time (see
   // syncBatchSettlementAggregate_ in accounting_logger.js) — this falls back
   // to the live computeBatchSettlementStatus join only for a batch that
@@ -203,6 +233,18 @@ export const CnfAgentAccounting: React.FC = () => {
     if (persisted) return persisted;
     return computeBatchSettlementStatus(linkedInvoiceIds, purchaseInvoices, settlementRecords).status;
   };
+
+  // Batch ID -> its CNF_Shipment_Bill_Status rows — the authoritative source
+  // for bill-reconciliation lifecycle (see cnfLifecycle above).
+  const shipmentStatusByBatchId = useMemo(() => {
+    const map = new Map<string, CnfShipmentBillStatus[]>();
+    shipmentBillStatus.forEach(row => {
+      const list = map.get(row.batchId) || [];
+      list.push(row);
+      map.set(row.batchId, list);
+    });
+    return map;
+  }, [shipmentBillStatus]);
 
   // Pending queue: Delivered+settled batches with no CNF entry yet. Also used
   // to gate the per-row "Log Entry" action on Tab 1.
@@ -228,12 +270,12 @@ export const CnfAgentAccounting: React.FC = () => {
         batch: b,
         ledgerEntry,
         paymentStatus,
-        lifecycle: cnfLifecycle(ledgerEntry, invoiceBatchById),
+        lifecycle: cnfLifecycle(b.batch_id, shipmentStatusByBatchId, invoiceBatchById),
         canLog: !ledgerEntry && pendingBatchIds.has(b.batch_id),
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allBatches, ledgerEntryByBatchId, purchaseInvoices, settlementRecords, invoiceBatchById, pendingBatchIds]);
+  }, [allBatches, ledgerEntryByBatchId, purchaseInvoices, settlementRecords, invoiceBatchById, pendingBatchIds, shipmentStatusByBatchId]);
 
   // Sea/Air sub-tabs — Sea keeps today's table/form/formula untouched; Air
   // gets its own Weight (kg) column (see design doc) on top of the same base
@@ -254,10 +296,23 @@ export const CnfAgentAccounting: React.FC = () => {
   }, [modeScopedRows, overviewFilter]);
 
   // Reconciliation funnel (Tab 2) — three mutually exclusive buckets derived
-  // from billRequestedAt / invoiceBatchId, plus a combined "pending" view.
-  const eligibleEntries = useMemo(() => ledgerEntries.filter(e => !e.billRequestedAt && !e.invoiceBatchId), [ledgerEntries]);
-  const generatedEntries = useMemo(() => ledgerEntries.filter(e => e.billRequestedAt && !e.invoiceBatchId), [ledgerEntries]);
-  const receivedEntries = useMemo(() => ledgerEntries.filter(e => !!e.invoiceBatchId), [ledgerEntries]);
+  // from each entry's batch-level lifecycle (CNF_Shipment_Bill_Status), plus
+  // a combined "pending" view.
+  const eligibleEntries = useMemo(
+    () => ledgerEntries.filter(e => cnfLifecycle(e.batchId, shipmentStatusByBatchId, invoiceBatchById) === 'Logged'),
+    [ledgerEntries, shipmentStatusByBatchId, invoiceBatchById]
+  );
+  const generatedEntries = useMemo(
+    () => ledgerEntries.filter(e => cnfLifecycle(e.batchId, shipmentStatusByBatchId, invoiceBatchById) === 'Bill Requested'),
+    [ledgerEntries, shipmentStatusByBatchId, invoiceBatchById]
+  );
+  const receivedEntries = useMemo(
+    () => ledgerEntries.filter(e => {
+      const l = cnfLifecycle(e.batchId, shipmentStatusByBatchId, invoiceBatchById);
+      return l === 'Bill Received' || l === 'Approved';
+    }),
+    [ledgerEntries, shipmentStatusByBatchId, invoiceBatchById]
+  );
   const sumPayable = (list: CnfLedgerEntry[]) => list.reduce((sum, e) => sum + e.totalPayable, 0);
   const totalPendingCount = eligibleEntries.length + generatedEntries.length;
   const totalPendingValue = sumPayable(eligibleEntries) + sumPayable(generatedEntries);
@@ -266,7 +321,7 @@ export const CnfAgentAccounting: React.FC = () => {
   // has at least been requested). Checkbox selection (for Generate Bill) is
   // further scoped to "Bill Generated" only, since a bill can't be uploaded
   // before it's been requested.
-  const postRequestEntries = useMemo(() => ledgerEntries.filter(e => !!e.billRequestedAt), [ledgerEntries]);
+  const postRequestEntries = useMemo(() => [...generatedEntries, ...receivedEntries], [generatedEntries, receivedEntries]);
 
   const selectedEntries = useMemo(
     () => generatedEntries.filter(e => selectedEntryIds.has(e.id)),
@@ -668,7 +723,7 @@ export const CnfAgentAccounting: React.FC = () => {
                             Log Entry
                           </Button>
                         )}
-                        {ledgerEntry && !ledgerEntry.billRequestedAt && (
+                        {ledgerEntry && lifecycle === 'Logged' && (
                           <Button
                             variant="secondary"
                             className="text-xs !py-1 !px-2.5"
@@ -871,7 +926,10 @@ export const CnfAgentAccounting: React.FC = () => {
                       <div>
                         <p className="font-semibold">{batch.billNo} — {fmtInr(batch.billedAmount)}</p>
                         <p className="text-xs text-slate-400">
-                          {batch.entryIds.length} shipment{batch.entryIds.length === 1 ? '' : 's'} · Submitted by {batch.submittedBy}
+                          {(() => {
+                            const shipmentCount = batch.lineItems.reduce((sum, li) => sum + li.shipmentIds.length, 0);
+                            return `${shipmentCount} shipment${shipmentCount === 1 ? '' : 's'}`;
+                          })()} · Submitted by {batch.submittedBy}
                           {batch.overrideReason && <span className="text-amber-500"> · Override: {batch.overrideReason}</span>}
                         </p>
                         {batch.fileUrl && <a href={batch.fileUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-500 underline">View uploaded invoice</a>}
@@ -912,6 +970,7 @@ export const CnfAgentAccounting: React.FC = () => {
           {isBillModalOpen && (
             <GenerateBillModal
               selectedEntries={selectedEntries}
+              shipmentIdsByBatchId={shipmentIdsByBatchId}
               computedTotal={selectedTotalPayable}
               submittedBy="internal-admin"
               onClose={() => setIsBillModalOpen(false)}
@@ -956,11 +1015,11 @@ export const CnfAgentAccounting: React.FC = () => {
                   ) : postRequestEntries.length === 0 ? (
                     <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No bills requested yet.</td></tr>
                   ) : postRequestEntries.map(entry => {
-                    const lifecycle = cnfLifecycle(entry, invoiceBatchById);
+                    const lifecycle = cnfLifecycle(entry.batchId, shipmentStatusByBatchId, invoiceBatchById);
                     return (
                       <tr key={entry.id}>
                         <td className="px-4 py-3">
-                          {!entry.invoiceBatchId && (
+                          {lifecycle === 'Bill Requested' && (
                             <input
                               type="checkbox"
                               checked={selectedEntryIds.has(entry.id)}
@@ -993,11 +1052,12 @@ export const CnfAgentAccounting: React.FC = () => {
 
 export const GenerateBillModal: React.FC<{
   selectedEntries: CnfLedgerEntry[];
+  shipmentIdsByBatchId: Map<string, string[]>;
   computedTotal: number;
   submittedBy: string;
   onClose: () => void;
   onSuccess: () => void;
-}> = ({ selectedEntries, computedTotal, submittedBy, onClose, onSuccess }) => {
+}> = ({ selectedEntries, shipmentIdsByBatchId, computedTotal, submittedBy, onClose, onSuccess }) => {
   const [billNo, setBillNo] = useState('');
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
   const [billedAmount, setBilledAmount] = useState('');
@@ -1066,13 +1126,24 @@ export const GenerateBillModal: React.FC<{
   const withinTolerance = Math.abs(parsedAmount - computedTotal) < 1;
   const canSubmit = billNo.trim() && billedAmount && uploadedFileUrl && (withinTolerance || (overrideChecked && overrideReason.trim()));
 
+  // Bills every shipment of each selected batch — a shipment-level picker
+  // (billing a subset, or spanning batches beyond what's already selected
+  // here) is a follow-up; this still uses the new lineItems shape server-side.
   const handleSubmit = async () => {
     if (!canSubmit || isSubmitting) return;
     setIsSubmitting(true);
     setError(null);
     try {
+      const lineItems = selectedEntries.map(e => ({
+        batchId: e.batchId,
+        shipmentIds: shipmentIdsByBatchId.get(e.batchId) || []
+      }));
+      const missingShipments = lineItems.find(li => li.shipmentIds.length === 0);
+      if (missingShipments) {
+        throw new Error(`No vendor shipments found for batch ${missingShipments.batchId} — cannot generate a bill.`);
+      }
       await createCnfInvoiceBatch({
-        entryIds: selectedEntries.map(e => e.id),
+        lineItems,
         billNo: billNo.trim(),
         billDate,
         billedAmount: parsedAmount,
