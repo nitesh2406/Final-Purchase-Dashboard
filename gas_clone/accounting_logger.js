@@ -3522,3 +3522,275 @@ function createCnfAdvance_(vendorCode, linkedPaymentId, amountInr, dateStr) {
   sheet.appendRow([id, dateStr, vendorCode, linkedPaymentId, round2(amountInr), round2(amountInr)]);
 }
 
+// ─────────────────────────────────────────────────────────────
+// CNF GOODS INVOICES — CNF's real tax invoice (goods value, already
+// inflated with its service markup, GST on top), matched against
+// outstanding CNF_Advances. See docs/superpowers/specs/2026-09-25-cnf-advances-invoice-matching-design.md.
+// ─────────────────────────────────────────────────────────────
+
+function getCnfGoodsInvoicesSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('CNF_Goods_Invoices');
+  if (!sheet) {
+    sheet = ss.insertSheet('CNF_Goods_Invoices');
+    sheet.appendRow([
+      'ID', 'Date', 'File URL', 'Line Items', 'Matched Advances',
+      'Stated Base Amount', 'Expected Goods Value', 'Service Charge', 'GST', 'Total',
+      'Residual Liability', 'Status', 'Override Reason', 'Submitted By', 'Approved By',
+      'Rejection Reason', 'Created At'
+    ]);
+  }
+  return sheet;
+}
+
+function getCnfGoodsInvoices_() {
+  var sheet = getCnfGoodsInvoicesSheet_();
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var col = function (name) { return findHeaderIndex_(headers, name); };
+  var idCol = col('ID'), dateCol = col('Date'), fileUrlCol = col('File URL'),
+      lineItemsCol = col('Line Items'), matchedAdvancesCol = col('Matched Advances'),
+      statedBaseCol = col('Stated Base Amount'), expectedGoodsCol = col('Expected Goods Value'),
+      serviceChargeCol = col('Service Charge'), gstCol = col('GST'), totalCol = col('Total'),
+      residualCol = col('Residual Liability'), statusCol = col('Status'),
+      overrideReasonCol = col('Override Reason'), submittedByCol = col('Submitted By'),
+      approvedByCol = col('Approved By'), rejectionReasonCol = col('Rejection Reason');
+
+  var rows = [];
+  for (var i = 1; i < data.length; i++) {
+    if (!data[i][idCol]) continue;
+    var lineItems = [];
+    try { lineItems = data[i][lineItemsCol] ? JSON.parse(data[i][lineItemsCol]) : []; } catch (e) { lineItems = []; }
+    var matchedAdvances = [];
+    try { matchedAdvances = data[i][matchedAdvancesCol] ? JSON.parse(data[i][matchedAdvancesCol]) : []; } catch (e) { matchedAdvances = []; }
+    var rawDate = data[i][dateCol];
+
+    rows.push({
+      id: String(data[i][idCol]),
+      date: rawDate instanceof Date ? rawDate.toISOString() : String(rawDate || ''),
+      fileUrl: data[i][fileUrlCol] ? String(data[i][fileUrlCol]) : undefined,
+      lineItems: lineItems,
+      matchedAdvances: matchedAdvances,
+      statedBaseAmount: Number(data[i][statedBaseCol]) || 0,
+      expectedGoodsValue: Number(data[i][expectedGoodsCol]) || 0,
+      serviceCharge: Number(data[i][serviceChargeCol]) || 0,
+      gst: Number(data[i][gstCol]) || 0,
+      total: Number(data[i][totalCol]) || 0,
+      residualLiability: Number(data[i][residualCol]) || 0,
+      status: String(data[i][statusCol] || ''),
+      overrideReason: data[i][overrideReasonCol] ? String(data[i][overrideReasonCol]) : undefined,
+      submittedBy: String(data[i][submittedByCol] || ''),
+      approvedBy: data[i][approvedByCol] ? String(data[i][approvedByCol]) : undefined,
+      rejectionReason: data[i][rejectionReasonCol] ? String(data[i][rejectionReasonCol]) : undefined
+    });
+  }
+  return rows;
+}
+
+// payload.entry: { lineItems: [{batchId, shipmentIds}], matchedAdvances:
+// [{advanceId, amountMatched}], fileUrl, statedBaseAmount, gst, total,
+// overrideReason, submittedBy }. Validates every matched advance has
+// sufficient balance, then reserves (draws down) it immediately — before
+// approval — so a second invoice can't also claim the same advance balance
+// while this one is still Pending Approval. expectedGoodsValue is derived
+// as sum(matchedAdvances.amountMatched), never independently computed.
+function logCnfGoodsInvoice_(payload) {
+  var entry = (payload && payload.entry) || {};
+  var lineItemsInput = Array.isArray(entry.lineItems) ? entry.lineItems : [];
+  var matchedAdvancesInput = Array.isArray(entry.matchedAdvances) ? entry.matchedAdvances : [];
+  var fileUrl = entry.fileUrl ? String(entry.fileUrl).trim() : '';
+  var statedBaseAmount = Number(entry.statedBaseAmount);
+  var gst = Number(entry.gst);
+  var total = Number(entry.total);
+  var overrideReason = entry.overrideReason ? String(entry.overrideReason).trim() : '';
+  var submittedBy = String(entry.submittedBy || '').trim();
+
+  if (lineItemsInput.length === 0) throw new Error('lineItems must be a non-empty array');
+  if (matchedAdvancesInput.length === 0) throw new Error('matchedAdvances must be a non-empty array');
+  if (isNaN(statedBaseAmount) || statedBaseAmount <= 0) throw new Error('Stated Base Amount must be a positive number');
+  if (isNaN(gst) || gst < 0) throw new Error('GST must be a non-negative number');
+  if (isNaN(total) || total <= 0) throw new Error('Total must be a positive number');
+  if (!submittedBy) throw new Error('submittedBy is required');
+
+  var lineItems = lineItemsInput.map(function (li, idx) {
+    var batchId = String((li && li.batchId) || '').trim();
+    if (!batchId) throw new Error('lineItems[' + idx + '] is missing batchId');
+    var shipmentIds = Array.isArray(li && li.shipmentIds)
+      ? li.shipmentIds.map(function (x) { return String(x).trim(); }).filter(Boolean)
+      : [];
+    if (shipmentIds.length === 0) throw new Error('lineItems[' + idx + '] (batch ' + batchId + ') must include at least one shipmentId');
+    return { batchId: batchId, shipmentIds: shipmentIds };
+  });
+
+  var seenAdvanceIds = {};
+  var matchedAdvances = matchedAdvancesInput.map(function (m, idx) {
+    var advanceId = String((m && m.advanceId) || '').trim();
+    var amountMatched = Number(m && m.amountMatched);
+    if (!advanceId) throw new Error('matchedAdvances[' + idx + '] is missing advanceId');
+    if (isNaN(amountMatched) || amountMatched <= 0) throw new Error('matchedAdvances[' + idx + '] must have a positive amountMatched');
+    // Reject duplicates outright rather than trying to sum them during
+    // validation below — the balance check there reads each advance's
+    // current balance once, so two entries for the same advanceId would
+    // each be validated against the same stale balance and could together
+    // over-draw it.
+    if (seenAdvanceIds[advanceId]) throw new Error('Advance ' + advanceId + ' is listed more than once in matchedAdvances');
+    seenAdvanceIds[advanceId] = true;
+    return { advanceId: advanceId, amountMatched: Math.round(amountMatched * 100) / 100 };
+  });
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    throw new Error('Another CNF invoice is currently being logged. Please try again in a moment.');
+  }
+
+  try {
+    var advancesSheet = getCnfAdvancesSheet_();
+    var advancesData = advancesSheet.getDataRange().getValues();
+    var advancesHeaders = advancesData[0];
+    var advIdCol = findHeaderIndex_(advancesHeaders, 'ID');
+    var advBalanceCol = findHeaderIndex_(advancesHeaders, 'Balance');
+
+    var rowByAdvanceId = {};
+    for (var r = 1; r < advancesData.length; r++) {
+      var advId = String(advancesData[r][advIdCol] || '').trim();
+      if (advId) rowByAdvanceId[advId] = r;
+    }
+
+    var round2 = function (v) { return Math.round(v * 100) / 100; };
+    var expectedGoodsValue = 0;
+
+    matchedAdvances.forEach(function (m) {
+      var rowIdx = rowByAdvanceId[m.advanceId];
+      if (rowIdx === undefined) throw new Error('CNF advance not found: ' + m.advanceId);
+      var currentBalance = Number(advancesData[rowIdx][advBalanceCol]) || 0;
+      if (m.amountMatched > currentBalance + 0.01) {
+        throw new Error('Advance ' + m.advanceId + ' has balance ' + currentBalance + ', cannot match ' + m.amountMatched);
+      }
+      expectedGoodsValue += m.amountMatched;
+    });
+    expectedGoodsValue = round2(expectedGoodsValue);
+
+    matchedAdvances.forEach(function (m) {
+      var rowIdx = rowByAdvanceId[m.advanceId];
+      var currentBalance = Number(advancesData[rowIdx][advBalanceCol]) || 0;
+      advancesSheet.getRange(rowIdx + 1, advBalanceCol + 1).setValue(round2(currentBalance - m.amountMatched));
+    });
+
+    var serviceCharge = round2(statedBaseAmount - expectedGoodsValue);
+    var residualLiability = round2(total - expectedGoodsValue);
+
+    var id = 'CGI-' + new Date().getTime();
+    var sheet = getCnfGoodsInvoicesSheet_();
+    var nowIso = new Date().toISOString();
+    sheet.appendRow([
+      id, nowIso, fileUrl, JSON.stringify(lineItems), JSON.stringify(matchedAdvances),
+      statedBaseAmount, expectedGoodsValue, serviceCharge, gst, total,
+      residualLiability, 'Pending Approval', overrideReason, submittedBy, '', '', nowIso
+    ]);
+
+    return {
+      status: 'success', id: id, expectedGoodsValue: expectedGoodsValue,
+      serviceCharge: serviceCharge, residualLiability: residualLiability
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function approveCnfGoodsInvoice_(payload) {
+  var id = payload && payload.id;
+  var approvedBy = (payload && payload.approvedBy) || '';
+  if (!id) throw new Error('id is required');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    throw new Error('Another CNF invoice approval is in progress. Please try again in a moment.');
+  }
+  try {
+    var sheet = getCnfGoodsInvoicesSheet_();
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var idCol = findHeaderIndex_(headers, 'ID');
+    var statusCol = findHeaderIndex_(headers, 'Status');
+    var approvedByCol = findHeaderIndex_(headers, 'Approved By');
+
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][idCol] || '').trim() === String(id).trim()) {
+        var currentStatus = String(data[i][statusCol] || '').trim();
+        if (currentStatus === 'Approved') {
+          return { status: 'success', message: 'Already approved (duplicate submission ignored)', id: id };
+        }
+        if (currentStatus === 'Rejected') {
+          throw new Error('Cannot approve an already-rejected invoice');
+        }
+        sheet.getRange(i + 1, statusCol + 1).setValue('Approved');
+        sheet.getRange(i + 1, approvedByCol + 1).setValue(approvedBy);
+        return { status: 'success', id: id };
+      }
+    }
+    throw new Error('CNF goods invoice not found: ' + id);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Restores the balances reserved at log time (see logCnfGoodsInvoice_) —
+// rejection is the only way an advance's reservation gets undone.
+function rejectCnfGoodsInvoice_(payload) {
+  var id = payload && payload.id;
+  var reason = (payload && payload.rejectionReason) || '';
+  if (!id) throw new Error('id is required');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    throw new Error('Another CNF invoice rejection is in progress. Please try again in a moment.');
+  }
+  try {
+    var sheet = getCnfGoodsInvoicesSheet_();
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var idCol = findHeaderIndex_(headers, 'ID');
+    var statusCol = findHeaderIndex_(headers, 'Status');
+    var reasonCol = findHeaderIndex_(headers, 'Rejection Reason');
+    var matchedAdvancesCol = findHeaderIndex_(headers, 'Matched Advances');
+
+    var rowIdx = -1, currentStatus = '', matchedAdvances = [];
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][idCol] || '').trim() === String(id).trim()) {
+        rowIdx = i;
+        currentStatus = String(data[i][statusCol] || '').trim();
+        try { matchedAdvances = data[i][matchedAdvancesCol] ? JSON.parse(data[i][matchedAdvancesCol]) : []; } catch (e) { matchedAdvances = []; }
+        break;
+      }
+    }
+    if (rowIdx === -1) throw new Error('CNF goods invoice not found: ' + id);
+    if (currentStatus === 'Approved') throw new Error('Cannot reject an already-approved invoice');
+    if (currentStatus === 'Rejected') {
+      return { status: 'success', message: 'Already rejected (duplicate submission ignored)', id: id };
+    }
+
+    var advancesSheet = getCnfAdvancesSheet_();
+    var advancesData = advancesSheet.getDataRange().getValues();
+    var advancesHeaders = advancesData[0];
+    var advIdCol = findHeaderIndex_(advancesHeaders, 'ID');
+    var advBalanceCol = findHeaderIndex_(advancesHeaders, 'Balance');
+    var round2 = function (v) { return Math.round(v * 100) / 100; };
+
+    matchedAdvances.forEach(function (m) {
+      for (var r = 1; r < advancesData.length; r++) {
+        if (String(advancesData[r][advIdCol] || '').trim() === String(m.advanceId).trim()) {
+          var currentBalance = Number(advancesData[r][advBalanceCol]) || 0;
+          advancesSheet.getRange(r + 1, advBalanceCol + 1).setValue(round2(currentBalance + (Number(m.amountMatched) || 0)));
+          break;
+        }
+      }
+    });
+
+    sheet.getRange(rowIdx + 1, statusCol + 1).setValue('Rejected');
+    sheet.getRange(rowIdx + 1, reasonCol + 1).setValue(reason);
+    return { status: 'success', id: id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
