@@ -82,6 +82,176 @@ function appendRowFromObject_(sheet, headerMap, obj) {
   sheet.appendRow(buildRowFromObject_(headerMap, obj));
 }
 
+// Appends many rows with one setValues(). Rows are padded to the sheet's
+// full width so the block is rectangular even if the header has gaps.
+function appendRowsFromObjects_(sheet, headerMap, objs) {
+  if (!objs.length) return;
+  const width = sheet.getLastColumn();
+  const rows = objs.map(obj => {
+    const row = new Array(width).fill('');
+    for (const key in obj) {
+      if (headerMap[key] !== undefined) row[headerMap[key]] = obj[key];
+    }
+    return row;
+  });
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, width).setValues(rows);
+}
+
+// Groups sorted 0-based data indexes into runs of adjacent rows.
+function indexRuns_(indexes) {
+  const sorted = Array.from(new Set(indexes)).sort((a, b) => a - b);
+  const runs = [];
+  sorted.forEach(i => {
+    const last = runs[runs.length - 1];
+    if (last && i === last.start + last.count) last.count++;
+    else runs.push({ start: i, count: 1 });
+  });
+  return runs;
+}
+
+// Writes back rows of `data` (0-based indexes, header = 0) that were changed
+// in memory — one setValues per run of adjacent rows.
+function writeRowRuns_(sheet, data, indexes) {
+  indexRuns_(indexes).forEach(run => {
+    const block = data.slice(run.start, run.start + run.count);
+    sheet.getRange(run.start + 1, 1, block.length, block[0].length).setValues(block);
+  });
+}
+
+// Deletes rows by 0-based data index, bottom-up so earlier indexes stay valid.
+function deleteRowRuns_(sheet, indexes) {
+  indexRuns_(indexes).reverse().forEach(run => {
+    sheet.deleteRows(run.start + 1, run.count);
+  });
+}
+
+// Serialises every write that creates drafts, changes their lines or turns
+// them into POs: draft/PO ids are "highest existing + 1" and a save replaces
+// the draft's line set, so overlapping requests could otherwise mint the
+// same id or order the same lines twice.
+function withDraftLock_(fn) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('Another draft or PO update is in progress. Please try again in a moment.');
+  }
+  try {
+    return fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Draft_Orders.status, normalised. apiSubmitDraft_ used to write
+// PARTIALLY_SUBMITTED while cancel checked for 'PARTIALLY SUBMITTED', so
+// both spellings can be in the sheet.
+function draftStatusKey_(status) {
+  return String(status || '').trim().toUpperCase().replace(/\s+/g, '_');
+}
+
+function isDraftEditable_(status) {
+  const key = draftStatusKey_(status);
+  return key === 'DRAFT' || key === 'PARTIALLY_SUBMITTED';
+}
+
+// vendor_code → po_id for every PO already created from this draft. Those
+// vendors' lines went out as they were and are frozen; the rest of the
+// draft stays editable and can be submitted later.
+function getSubmittedVendorsForDraft_(draftId) {
+  const sheet = getSheet_(SHEET_NAMES.PURCHASE_ORDERS);
+  const header = getHeaderMap_(sheet);
+  const data = sheet.getDataRange().getValues();
+  const map = {};
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][header.draft_id] || '').trim() !== draftId) continue;
+    const vendor = String(data[i][header.vendor_code] || '').trim();
+    if (vendor && !map[vendor]) map[vendor] = String(data[i][header.po_id] || '');
+  }
+  return map;
+}
+
+// EE Product Master fields a draft line needs. unit_price is RMB_Price, the
+// vendor's RMB purchase price: it becomes Purchase_Order_Lines.unit_price_rmb
+// and Vendor Shipments compares it against RMB invoices. Cost is the INR
+// landed cost (duty, freight, margin; roughly 18x RMB) and is only passed on
+// as landed_cost_inr for the editor's ₹ estimate. Reading Cost into
+// unit_price was fixed on 2026-08-17 and then lost to a stale push.
+function productFromMasterRow_(row, header) {
+  return {
+    sku_name: row[header['Product Name']] || '',
+    unit_price: Number(row[header.RMB_Price]) || 0,
+    landed_cost_inr: Number(row[header.Cost]) || 0
+  };
+}
+
+// One read of the EE Product Master → { sku: product } (first row wins).
+function loadDraftProductMap_() {
+  const sheet = getSheet_(SHEET_NAMES.EE_PRODUCT_MASTER);
+  const header = getHeaderMap_(sheet);
+  if (header.RMB_Price === undefined) {
+    throw new Error("EE Product Master has no 'RMB_Price' column, so draft lines can't be priced");
+  }
+  const data = sheet.getDataRange().getValues();
+  const map = {};
+  for (let i = 1; i < data.length; i++) {
+    const sku = String(data[i][header.SKU] || '').trim();
+    if (sku && !map[sku]) map[sku] = productFromMasterRow_(data[i], header);
+  }
+  return map;
+}
+
+function getProductBySku_(sku) {
+  return loadDraftProductMap_()[String(sku || '').trim()] || null;
+}
+
+const DEFAULT_CUSTOMIZATION_ = {
+  custom_logo: false,
+  custom_packaging: false,
+  solving_manual: false,
+  opp_wrap: false,
+  custom_remarks: '',
+  customization_files: ''
+};
+
+// One read of SKU_Customization_Master → { sku: customization defaults }.
+function loadCustomizationDefaultsMap_() {
+  const sheet = getSheet_(SHEET_NAMES.SKU_CUSTOMIZATION_MASTER);
+  const header = getHeaderMap_(sheet);
+  const data = sheet.getDataRange().getValues();
+  const map = {};
+  for (let i = 1; i < data.length; i++) {
+    const sku = String(data[i][header.sku] || '').trim();
+    if (!sku || map[sku]) continue;
+    map[sku] = {
+      custom_logo: data[i][header.custom_logo],
+      custom_packaging: data[i][header.custom_packaging],
+      solving_manual: data[i][header.solving_manual],
+      opp_wrap: data[i][header.opp_wrap],
+      custom_remarks: data[i][header.custom_remarks],
+      customization_files: data[i][header.customization_files]
+    };
+  }
+  return map;
+}
+
+function getCustomizationDefaults_(sku) {
+  return loadCustomizationDefaultsMap_()[String(sku || '').trim()] || Object.assign({}, DEFAULT_CUSTOMIZATION_);
+}
+
+// Customization columns from an editor line, which may use either the DB
+// names (custom_logo, …) or the UI names (logo: 'Yes' | 'No', …).
+function customizationFromLine_(line) {
+  const pick = (a, b) => (a !== undefined ? a : b);
+  const files = pick(line.customization_files, line.files);
+  return {
+    custom_logo: parseCustomizationValue_(pick(line.custom_logo, line.logo)),
+    custom_packaging: parseCustomizationValue_(pick(line.custom_packaging, line.packaging)),
+    solving_manual: parseCustomizationValue_(pick(line.solving_manual, line.manual)),
+    opp_wrap: parseCustomizationValue_(pick(line.opp_wrap, line.wrap)),
+    custom_remarks: String(pick(line.custom_remarks, line.remarks) || ''),
+    customization_files: Array.isArray(files) ? files.join(', ') : String(files || '')
+  };
+}
+
 function apiCreateDraftFromForecast(payload) {
   if (!payload || !Array.isArray(payload.skus)) {
     throw new Error('Invalid payload: skus missing');
@@ -90,117 +260,63 @@ function apiCreateDraftFromForecast(payload) {
    // 🔄 Sync Drive links before reading customization data
   syncCustomizationDriveLinks();
 
-  const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
-  const header = getHeaderMap_(draftSheet);
+  const mode = String(payload.mode || '').toUpperCase();
+  const products = loadDraftProductMap_();
+  const customizations = loadCustomizationDefaultsMap_();
 
-  const draftId = generateDraftId_();
-  const now = new Date();
-  const user = Session.getActiveUser().getEmail();
+  // Validate every SKU before writing anything — this used to throw on the
+  // first unknown SKU after the header and earlier lines were already written.
+  const missing = payload.skus.map(s => String(s.sku || '').trim()).filter(sku => !products[sku]);
+  if (missing.length) {
+    throw new Error(`SKU not found in Product Master: ${missing.join(', ')}`);
+  }
 
-  const totalSkus = payload.skus.length;
-  const totalQty = payload.skus.reduce((sum, s) => sum + Number(s.qty || 0), 0);
+  return withDraftLock_(() => {
+    const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
+    const header = getHeaderMap_(draftSheet);
 
-  appendRowFromObject_(draftSheet, header, {
-    draft_id: draftId,
-    status: 'DRAFT',
-    planned_mode: String(payload.mode || '').toUpperCase(),
-    forecast_run_id: payload.forecastRunId || '',
-    total_skus: totalSkus,
-    total_qty: totalQty,
-    created_by: user,
-    created_at: now,
-    updated_at: now
-  });
+    const draftId = generateDraftId_();
+    const now = new Date();
+    const user = Session.getActiveUser().getEmail();
 
-    // 🔹 CREATE DRAFT ORDER LINES
-  const lineSheet = getSheet_(SHEET_NAMES.DRAFT_ORDER_LINES);
-  const lineHeader = getHeaderMap_(lineSheet);
-
-  payload.skus.forEach(s => {
-    const product = getProductBySku_(s.sku);
-    if (!product) {
-      throw new Error(`SKU not found in Product Master: ${s.sku}`);
-    }
-
-    const customization = getCustomizationDefaults_(s.sku);
-    //const vendorCode = resolveVendorForDraftLine_(s.sku, String(payload.mode).toUpperCase());
-    const vendorCode = resolveVendorForDraftLine_(
-      s.sku,
-      String(payload.mode).toUpperCase(),
-      s.vendor || ''  // ← passed from frontend payload
-      );
-
-    appendRowFromObject_(lineSheet, lineHeader, {
-      line_id: Utilities.getUuid(),
+    appendRowFromObject_(draftSheet, header, {
       draft_id: draftId,
-      sku: s.sku,
-      sku_name: product.sku_name,
-      qty: Number(s.qty),
-      vendor_code: vendorCode,
-      unit_price: product.unit_price,
-      source: 'FORECAST',
+      status: 'DRAFT',
+      planned_mode: mode,
+      forecast_run_id: payload.forecastRunId || '',
+      total_skus: payload.skus.length,
+      total_qty: payload.skus.reduce((sum, s) => sum + Number(s.qty || 0), 0),
+      created_by: user,
       created_at: now,
-      updated_at: now,
-
-      custom_logo: customization.custom_logo,
-      custom_packaging: customization.custom_packaging,
-      solving_manual: customization.solving_manual,
-      opp_wrap: customization.opp_wrap,
-      custom_remarks: customization.custom_remarks,
-      customization_files: customization.customization_files,
-      customization_updated_at: now
+      updated_at: now
     });
+
+    const lineSheet = getSheet_(SHEET_NAMES.DRAFT_ORDER_LINES);
+    const lineHeader = getHeaderMap_(lineSheet);
+
+    appendRowsFromObjects_(lineSheet, lineHeader, payload.skus.map(s => {
+      const sku = String(s.sku).trim();
+      const product = products[sku];
+      return Object.assign({
+        line_id: Utilities.getUuid(),
+        draft_id: draftId,
+        sku: sku,
+        sku_name: product.sku_name,
+        qty: Number(s.qty),
+        vendor_code: resolveVendorForDraftLine_(sku, mode, String(s.vendor || '')),
+        unit_price: product.unit_price,
+        source: 'FORECAST',
+        created_at: now,
+        updated_at: now,
+        customization_updated_at: now
+      }, customizations[sku] || DEFAULT_CUSTOMIZATION_);
+    }));
+
+    return {
+      status: 'success',
+      draftId
+    };
   });
-
-  return {
-    status: 'success',
-    draftId
-  };
-}
-
-function getProductBySku_(sku) {
-  const sheet = getSheet_(SHEET_NAMES.EE_PRODUCT_MASTER);
-  const header = getHeaderMap_(sheet);
-  const data = sheet.getDataRange().getValues();
-
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][header.SKU]).trim() === sku) {
-      return {
-        sku_name: data[i][header['Product Name']],
-        unit_price: Number(data[i][header.Cost]) || 0
-      };
-    }
-  }
-  return null;
-}
-
-function getCustomizationDefaults_(sku) {
-  const sheet = getSheet_(SHEET_NAMES.SKU_CUSTOMIZATION_MASTER);
-  const header = getHeaderMap_(sheet);
-  const data = sheet.getDataRange().getValues();
-
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][header.sku]).trim() === sku) {
-      return {
-        custom_logo: data[i][header.custom_logo],
-        custom_packaging: data[i][header.custom_packaging],
-        solving_manual: data[i][header.solving_manual],
-        opp_wrap: data[i][header.opp_wrap],
-        custom_remarks: data[i][header.custom_remarks],
-        customization_files: data[i][header.customization_files]
-      };
-    }
-  }
-
-  // default fallback
-  return {
-    custom_logo: false,
-    custom_packaging: false,
-    solving_manual: false,
-    opp_wrap: false,
-    custom_remarks: '',
-    customization_files: ''
-  };
 }
 
 function resolveVendorForDraftLine_(sku, mode, payloadVendor) {
@@ -252,16 +368,19 @@ function apiGetDraftById(draftId) {
   draft.id = draft.draft_id; // UI uses `draft.id`
   draft.total_items = Number(draft.total_qty || 0); // UI expects total_items
 
-  // Normalize status casing
-  if (String(draft.status).toUpperCase() === 'DRAFT') {
-    draft.status = 'Draft';
-  }
+  // Normalize status casing (and the two spellings of partially submitted)
+  const statusKey = draftStatusKey_(draft.status);
+  draft.status = statusKey === 'DRAFT' ? 'Draft' : statusKey;
 
-  
+  // Vendors that already have a PO from this draft — the editor locks them.
+  draft.submittedVendors = getSubmittedVendorsForDraft_(draftId);
+
+
   // 4️⃣ Fetch draft lines
   const lineSheet = getSheet_(SHEET_NAMES.DRAFT_ORDER_LINES);
   const lineHeader = getHeaderMap_(lineSheet);
   const lineData = lineSheet.getDataRange().getValues();
+  const products = loadDraftProductMap_();
 
   const lines = [];
 
@@ -293,7 +412,10 @@ line.remarks = line.custom_remarks || '';
 const filesRaw = line.customization_files || '';
 line.files = filesRaw ? [filesRaw] : [];
 
-          
+// 4) Current INR landed cost per unit, for the editor's ₹ estimate only
+const product = products[String(line.sku || '').trim()];
+line.landed_cost_inr = product ? product.landed_cost_inr : 0;
+
       lines.push(line);
     }
   }
@@ -337,11 +459,11 @@ function apiGetDraftOrders() {
   }
 
   const normalizeStatus_ = (s) => {
-    const v = String(s || '').trim().toUpperCase();
+    const v = draftStatusKey_(s);
     if (v === 'DRAFT') return 'Draft';
     if (v === 'CANCELLED') return 'Cancelled';
-    if (v === 'ORDER PLACED') return 'Order Placed';
-    if (v === 'PARTIALLY SUBMITTED') return 'Partially Submitted';
+    if (v === 'ORDER_PLACED') return 'Order Placed';
+    if (v === 'PARTIALLY_SUBMITTED') return 'PARTIALLY_SUBMITTED';
     // fallback: keep original (but Title Case-ish)
     return s || 'Draft';
   };
@@ -381,12 +503,12 @@ function apiGetDraftOrders() {
 }
 
 
-// Was called from entry_points.js's doPost ('cancel_draft' case) but never
-// defined anywhere in the project — every cancel-draft click has been
-// throwing a ReferenceError, caught and returned as a generic error.
 function apiCancelDraft(id) {
   if (!id) throw new Error('id is required');
+  return withDraftLock_(() => cancelDraftUnlocked_(String(id).trim()));
+}
 
+function cancelDraftUnlocked_(id) {
   const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
   const draftHeader = getHeaderMap_(draftSheet);
   const draftData = draftSheet.getDataRange().getValues();
@@ -394,13 +516,13 @@ function apiCancelDraft(id) {
   let currentStatus = null;
   for (let i = 1; i < draftData.length; i++) {
     if (String(draftData[i][draftHeader.draft_id]).trim() === id) {
-      currentStatus = String(draftData[i][draftHeader.status] || '').trim().toUpperCase();
+      currentStatus = draftData[i][draftHeader.status];
       break;
     }
   }
   if (currentStatus === null) throw new Error('Draft not found: ' + id);
-  if (currentStatus !== 'DRAFT' && currentStatus !== 'PARTIALLY SUBMITTED') {
-    throw new Error('Only drafts in DRAFT or PARTIALLY SUBMITTED status can be cancelled (current: ' + currentStatus + ')');
+  if (!isDraftEditable_(currentStatus)) {
+    throw new Error('Only drafts in DRAFT or PARTIALLY_SUBMITTED status can be cancelled (current: ' + draftStatusKey_(currentStatus) + ')');
   }
 
   const now = new Date();
@@ -414,100 +536,110 @@ function apiCancelDraft(id) {
   return { success: true, id, message: 'Draft cancelled successfully' };
 }
 
-// Was wired to a real "Cancel N Selected" bulk-select UI (checkboxes already
-// built in DraftOrdersTable.tsx) with no backend case at all until now.
 function apiBulkCancelDrafts(ids) {
   if (!Array.isArray(ids) || ids.length === 0) throw new Error('ids array is required');
 
   const cancelled = [];
   const failed = [];
-  ids.forEach(id => {
-    try {
-      apiCancelDraft(id);
-      cancelled.push(id);
-    } catch (err) {
-      failed.push({ id, error: err.message });
-    }
+  withDraftLock_(() => {
+    ids.forEach(id => {
+      try {
+        cancelDraftUnlocked_(String(id).trim());
+        cancelled.push(id);
+      } catch (err) {
+        failed.push({ id, error: err.message });
+      }
+    });
   });
 
   return { success: true, cancelled, failed };
 }
 
-// Was referenced by the frontend (API_ACTIONS.DUPLICATE_DRAFT, a real wired
-// "Duplicate" button) with no backend case at all until now.
+// Copies a draft's lines into a new DRAFT. Prices are re-read from the EE
+// Product Master rather than copied: older drafts carry INR landed cost in
+// unit_price (see productFromMasterRow_), and a stale price must not flow
+// into new POs. Zero-quantity lines are dropped.
 function apiDuplicateDraft(id) {
   if (!id) throw new Error('id is required');
 
-  const source = apiGetDraftById(id); // throws if not found; also gives us normalized lines
-  const newDraftId = generateDraftId_();
-  const now = new Date();
-  const user = Session.getActiveUser().getEmail();
+  const source = apiGetDraftById(String(id).trim()); // throws if not found; also gives us normalized lines
+  const sourceLines = source.lines.filter(l => Number(l.qty || 0) > 0);
+  if (sourceLines.length === 0) throw new Error('Draft ' + id + ' has no lines with a quantity to copy');
+  const products = loadDraftProductMap_();
 
-  const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
-  const draftHeader = getHeaderMap_(draftSheet);
-  const totalSkus = source.lines.length;
-  const totalQty = source.lines.reduce((sum, l) => sum + Number(l.qty || 0), 0);
+  return withDraftLock_(() => {
+    const newDraftId = generateDraftId_();
+    const now = new Date();
+    const user = Session.getActiveUser().getEmail();
 
-  appendRowFromObject_(draftSheet, draftHeader, {
-    draft_id: newDraftId,
-    status: 'DRAFT',
-    planned_mode: source.draft.planned_mode || '',
-    forecast_run_id: '', // duplicates start fresh, not tied to the original forecast run
-    total_skus: totalSkus,
-    total_qty: totalQty,
-    created_by: user,
-    created_at: now,
-    updated_at: now
-  });
+    const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
+    const draftHeader = getHeaderMap_(draftSheet);
+    const totalSkus = new Set(sourceLines.map(l => String(l.sku))).size;
+    const totalQty = sourceLines.reduce((sum, l) => sum + Number(l.qty || 0), 0);
 
-  const lineSheet = getSheet_(SHEET_NAMES.DRAFT_ORDER_LINES);
-  const lineHeader = getHeaderMap_(lineSheet);
-
-  source.lines.forEach(l => {
-    appendRowFromObject_(lineSheet, lineHeader, {
-      line_id: Utilities.getUuid(),
+    appendRowFromObject_(draftSheet, draftHeader, {
       draft_id: newDraftId,
-      sku: l.sku,
-      sku_name: l.sku_name || '',
-      qty: Number(l.qty || 0),
-      vendor_code: l.vendor_code || '',
-      unit_price: Number(l.unit_price || 0),
-      source: 'DUPLICATE',
-      created_at: now,
-      updated_at: now,
-      custom_logo: l.custom_logo || false,
-      custom_packaging: l.custom_packaging || false,
-      solving_manual: l.solving_manual || false,
-      opp_wrap: l.opp_wrap || false,
-      custom_remarks: l.custom_remarks || '',
-      customization_files: l.customization_files || '',
-      customization_updated_at: now
-    });
-  });
-
-  logAuditEvent_('DRAFT_ORDER', 'DUPLICATE', newDraftId, 'Duplicated from ' + id, 'SUCCESS', user);
-
-  // Shape matches apiGetDraftOrders()'s per-draft object — DraftOrdersTable.tsx
-  // prepends this directly into its drafts list.
-  const vendors = Array.from(new Set(source.lines.map(l => String(l.vendor_code || '').trim()).filter(Boolean))).sort();
-  return {
-    success: true,
-    newDraft: {
-      id: newDraftId,
-      vendors,
-      total_items: totalQty,
-      draft_id: newDraftId,
-      status: 'Draft',
+      status: 'DRAFT',
       planned_mode: source.draft.planned_mode || '',
-      forecast_run_id: '',
+      forecast_run_id: '', // duplicates start fresh, not tied to the original forecast run
       total_skus: totalSkus,
       total_qty: totalQty,
       created_by: user,
       created_at: now,
-      updated_at: now,
-      draft_date: now
-    }
-  };
+      updated_at: now
+    });
+
+    const lineSheet = getSheet_(SHEET_NAMES.DRAFT_ORDER_LINES);
+    const lineHeader = getHeaderMap_(lineSheet);
+
+    appendRowsFromObjects_(lineSheet, lineHeader, sourceLines.map(l => {
+      const product = products[String(l.sku || '').trim()];
+      return Object.assign({
+        line_id: Utilities.getUuid(),
+        draft_id: newDraftId,
+        sku: l.sku,
+        sku_name: (product && product.sku_name) || l.sku_name || '',
+        qty: Number(l.qty || 0),
+        vendor_code: l.vendor_code || '',
+        unit_price: product ? product.unit_price : 0,
+        source: 'DUPLICATE',
+        created_at: now,
+        updated_at: now,
+        customization_updated_at: now
+      }, customizationFromLine_({
+        custom_logo: l.custom_logo,
+        custom_packaging: l.custom_packaging,
+        solving_manual: l.solving_manual,
+        opp_wrap: l.opp_wrap,
+        custom_remarks: l.custom_remarks,
+        customization_files: l.customization_files
+      }));
+    }));
+
+    logAuditEvent_('DRAFT_ORDER', 'DUPLICATE', newDraftId, 'Duplicated from ' + id, 'SUCCESS', user);
+
+    // Shape matches apiGetDraftOrders()'s per-draft object — DraftOrdersTable.tsx
+    // prepends this directly into its drafts list.
+    const vendors = Array.from(new Set(sourceLines.map(l => String(l.vendor_code || '').trim()).filter(Boolean))).sort();
+    return {
+      success: true,
+      newDraft: {
+        id: newDraftId,
+        vendors,
+        total_items: totalQty,
+        draft_id: newDraftId,
+        status: 'Draft',
+        planned_mode: source.draft.planned_mode || '',
+        forecast_run_id: '',
+        total_skus: totalSkus,
+        total_qty: totalQty,
+        created_by: user,
+        created_at: now,
+        updated_at: now,
+        draft_date: now
+      }
+    };
+  });
 }
 
 function updateRowByKey_(sheet, headerMap, keyColName, keyValue, updates) {
@@ -528,318 +660,155 @@ function updateRowByKey_(sheet, headerMap, keyColName, keyValue, updates) {
   return false;
 }
 
-/*
+// Saves the editor's full line set for a draft. The payload is the whole
+// draft, not a patch:
+//  - lines with a line_id are updated (qty, vendor, customization);
+//  - lines without one are added, priced from the EE Product Master;
+//  - lines of this draft missing from the payload are DELETED — this used
+//    to be skipped, so a line removed in the editor stayed in the sheet and
+//    was still ordered on submit.
+// Lines whose vendor already has a PO from this draft are left exactly as
+// ordered. Nothing is written unless every line validates. Returns the saved
+// draft in apiGetDraftById's shape so the editor picks up the new line_ids
+// (without them, the next save appended the same new lines again).
 function apiSaveDraft(payload) {
-  const draftId = payload.draftId;
-  const lines = payload.lines || [];
+  const draftId = String(payload.draftId || '').trim();
+  const lines = Array.isArray(payload.lines) ? payload.lines : [];
 
   if (!draftId) {
     throw new Error('Missing draftId');
   }
+  if (lines.length === 0) {
+    throw new Error('A draft needs at least one line. Cancel the draft instead of removing every line.');
+  }
 
-  // 1️⃣ Validate draft status
-  const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
-  const draftHeader = getHeaderMap_(draftSheet);
-  const draftData = draftSheet.getDataRange().getValues();
+  withDraftLock_(() => {
+    // 1️⃣ Validate draft status
+    const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
+    const draftHeader = getHeaderMap_(draftSheet);
+    const draftData = draftSheet.getDataRange().getValues();
 
-  let draftRowIndex = -1;
-  let draftStatus = null;
-
-  for (let i = 1; i < draftData.length; i++) {
-    if (String(draftData[i][draftHeader.draft_id]).trim() === draftId) {
-      draftRowIndex = i + 1;
-      draftStatus = draftData[i][draftHeader.status];
-      break;
+    let draftStatus = null;
+    let draftUpdatedAt = null;
+    for (let i = 1; i < draftData.length; i++) {
+      if (String(draftData[i][draftHeader.draft_id]).trim() === draftId) {
+        draftStatus = draftData[i][draftHeader.status];
+        draftUpdatedAt = draftData[i][draftHeader.updated_at];
+        break;
+      }
     }
-  }
+    if (draftStatus === null) {
+      throw new Error(`Draft not found: ${draftId}`);
+    }
+    if (!isDraftEditable_(draftStatus)) {
+      throw new Error(`Draft ${draftId} is ${draftStatusKey_(draftStatus)} and can no longer be edited`);
+    }
+    // A save replaces the whole line set, so saving from a stale screen would
+    // silently undo someone else's changes. The editor sends the updated_at
+    // it loaded; refuse if the draft has been saved since.
+    if (payload.expected_updated_at && draftUpdatedAt && typeof draftUpdatedAt.getTime === 'function' &&
+        new Date(payload.expected_updated_at).getTime() !== draftUpdatedAt.getTime()) {
+      throw new Error(`Draft ${draftId} was changed by someone else after you opened it. Reload it and make your changes again.`);
+    }
 
-  if (draftRowIndex === -1) {
-    throw new Error(`Draft not found: ${draftId}`);
-  }
+    const submitted = getSubmittedVendorsForDraft_(draftId);
 
-  if (draftStatus !== 'DRAFT') {
-    throw new Error('Draft is locked after submission');
-  }
+    // 2️⃣ Index this draft's existing lines
+    const lineSheet = getSheet_(SHEET_NAMES.DRAFT_ORDER_LINES);
+    const lineHeader = getHeaderMap_(lineSheet);
+    const lineData = lineSheet.getDataRange().getValues();
+    const rowOf = {}; // line_id → index into lineData
+    for (let i = 1; i < lineData.length; i++) {
+      if (String(lineData[i][lineHeader.draft_id]).trim() === draftId) {
+        rowOf[String(lineData[i][lineHeader.line_id]).trim()] = i;
+      }
+    }
+    const vendorAt = i => String(lineData[i][lineHeader.vendor_code] || '').trim();
 
-  // 2️⃣ Prepare line sheet
-  const lineSheet = getSheet_(SHEET_NAMES.DRAFT_ORDER_LINES);
-  const lineHeader = getHeaderMap_(lineSheet);
-  const now = new Date();
+    // 3️⃣ Validate the payload and stage every change in memory
+    const now = new Date();
+    const seen = new Set();
+    const changedRows = [];
+    const newLines = [];
+    let products = null; // read only if this save adds lines
 
-  const seenSkus = new Set();
-  let totalQty = 0;
+    lines.forEach((line, idx) => {
+      const sku = String(line.sku || '').trim();
+      const qty = Number(line.qty);
+      const vendor = String(line.vendor_code || line.vendor || '').trim();
+      const lineId = line.line_id ? String(line.line_id).trim() : '';
 
-  lines.forEach(line => {
-    const qty = Number(line.qty || 0);
-    if (qty <= 0) return;
-
-    totalQty += qty;
-    seenSkus.add(String(line.sku));
-
-    // Existing line → update
-    // Existing line → update
-      if (line.line_id) {
-
-     const updates = {
-    qty: qty,
-    updated_at: now,
-
-    custom_logo: line.custom_logo,
-    custom_packaging: line.custom_packaging,
-    solving_manual: line.solving_manual,
-    opp_wrap: line.opp_wrap,
-    custom_remarks: line.custom_remarks || '',
-    customization_files: line.customization_files || '',
-    customization_updated_at: now
-  };
-
-  // 🔒 IMPORTANT: only update vendor if explicitly provided
-  // 🔁 Accept vendor edit from UI
-const incomingVendor =
-  line.vendor_code !== undefined && line.vendor_code !== ''
-    ? line.vendor_code
-    : line.vendor !== undefined && line.vendor !== ''
-    ? line.vendor
-    : null;
-
-// 🔒 Update vendor ONLY if explicitly provided
-if (incomingVendor !== null) {
-  updates.vendor_code = incomingVendor;
-}
-
-
-  // 🔁 Map UI customization fields → DB columns
-if (line.logo !== undefined) {
-  updates.custom_logo = line.logo === 'Yes';
-}
-if (line.packaging !== undefined) {
-  updates.custom_packaging = line.packaging === 'Yes';
-}
-if (line.manual !== undefined) {
-  updates.solving_manual = line.manual === 'Yes';
-}
-if (line.wrap !== undefined) {
-  updates.opp_wrap = line.wrap === 'Yes';
-}
-if (line.remarks !== undefined) {
-  updates.custom_remarks = line.remarks || '';
-}
-if (line.files !== undefined) {
-  updates.customization_files = Array.isArray(line.files)
-    ? line.files.join(', ')
-    : line.files;
-}
-  
-  updateRowByKey_(
-    lineSheet,
-    lineHeader,
-    'line_id',
-    line.line_id,
-    updates
-  );
+      if (lineId) {
+        if (rowOf[lineId] === undefined) {
+          throw new Error(`The line for SKU ${sku || '?'} is not part of draft ${draftId}. Reload the draft and try again.`);
+        }
+        if (seen.has(lineId)) throw new Error(`The line for SKU ${sku} was sent twice`);
+        seen.add(lineId);
+        if (submitted[vendorAt(rowOf[lineId])]) return; // already ordered as it was
       }
 
-    // New line → manual SKU add
-    else {
-      if (!line.vendor_code) {
-        throw new Error(`Vendor required for manual SKU: ${line.sku}`);
+      if (!sku) throw new Error(`SKU missing at line ${idx + 1}`);
+      if (!(qty > 0)) throw new Error(`Quantity must be more than 0 for SKU ${sku}`);
+      if (!vendor) throw new Error(`Vendor required for SKU ${sku}`);
+      if (submitted[vendor]) {
+        throw new Error(`${vendor} was already ordered on ${submitted[vendor]}, so SKU ${sku} can't be added to that vendor`);
       }
 
-      appendRowFromObject_(lineSheet, lineHeader, {
-        line_id: Utilities.getUuid(),
-        draft_id: draftId,
-        sku: line.sku,
-        sku_name: line.sku_name || '',
+      const fields = Object.assign({
         qty: qty,
-        vendor_code: line.vendor_code,
-        unit_price: Number(line.unit_price || 0),
-        source: 'MANUAL',
-        created_at: now,
+        vendor_code: vendor,
         updated_at: now,
-
-        custom_logo: line.custom_logo || false,
-        custom_packaging: line.custom_packaging || false,
-        solving_manual: line.solving_manual || false,
-        opp_wrap: line.opp_wrap || false,
-        custom_remarks: line.custom_remarks || '',
-        customization_files: line.customization_files || '',
         customization_updated_at: now
-      });
-    }
-  });
+      }, customizationFromLine_(line));
 
-  // 3️⃣ Recalculate & update header
-  const totalSkus = seenSkus.size;
-
-  updateRowByKey_(draftSheet, draftHeader, 'draft_id', draftId, {
-    total_skus: totalSkus,
-    total_qty: totalQty,
-    updated_at: now
-  });
-
-  return {
-    status: 'success',
-    draftId
-  };
-}
-
-*/
-
-function apiSaveDraft(payload) {
-  const draftId = payload.draftId;
-  const lines = payload.lines || [];
-
-  if (!draftId) {
-    throw new Error('Missing draftId');
-  }
-
-  // 1️⃣ Validate draft status
-  const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
-  const draftHeader = getHeaderMap_(draftSheet);
-  const draftData = draftSheet.getDataRange().getValues();
-
-  let draftRowIndex = -1;
-  let draftStatus = null;
-
-  for (let i = 1; i < draftData.length; i++) {
-    if (String(draftData[i][draftHeader.draft_id]).trim() === draftId) {
-      draftRowIndex = i + 1;
-      draftStatus = draftData[i][draftHeader.status];
-      break;
-    }
-  }
-
-  if (draftRowIndex === -1) {
-    throw new Error(`Draft not found: ${draftId}`);
-  }
-
-  if (draftStatus !== 'DRAFT') {
-    throw new Error('Draft is locked after submission');
-  }
-
-  // 2️⃣ Prepare line sheet
-  const lineSheet = getSheet_(SHEET_NAMES.DRAFT_ORDER_LINES);
-  const lineHeader = getHeaderMap_(lineSheet);
-  const now = new Date();
-
-  const seenSkus = new Set();
-  let totalQty = 0;
-
-  lines.forEach(line => {
-    const qty = Number(line.qty || 0);
-    if (qty <= 0) return;
-
-    totalQty += qty;
-    seenSkus.add(String(line.sku));
-
-    // Existing line → update
-    // Existing line → update
-      if (line.line_id) {
-
-     const updates = {
-    qty: qty,
-    updated_at: now,
-
-    custom_logo: line.custom_logo,
-    custom_packaging: line.custom_packaging,
-    solving_manual: line.solving_manual,
-    opp_wrap: line.opp_wrap,
-    custom_remarks: line.custom_remarks || '',
-    customization_files: line.customization_files || '',
-    customization_updated_at: now
-  };
-
-
-
-  // 🔒 IMPORTANT: only update vendor if explicitly provided
-  // 🔁 Accept vendor edit from UI
-const incomingVendor =
-  line.vendor_code !== undefined && line.vendor_code !== ''
-    ? line.vendor_code
-    : line.vendor !== undefined && line.vendor !== ''
-    ? line.vendor
-    : null;
-
-// 🔒 Update vendor ONLY if explicitly provided
-if (incomingVendor !== null) {
-  updates.vendor_code = incomingVendor;
-}
-
-
-  // 🔁 Map UI customization fields → DB columns
-if (line.logo !== undefined) {
-  updates.custom_logo = line.logo === 'Yes';
-}
-if (line.packaging !== undefined) {
-  updates.custom_packaging = line.packaging === 'Yes';
-}
-if (line.manual !== undefined) {
-  updates.solving_manual = line.manual === 'Yes';
-}
-if (line.wrap !== undefined) {
-  updates.opp_wrap = line.wrap === 'Yes';
-}
-if (line.remarks !== undefined) {
-  updates.custom_remarks = line.remarks || '';
-}
-if (line.files !== undefined) {
-  updates.customization_files = Array.isArray(line.files)
-    ? line.files.join(', ')
-    : line.files;
-}
-  
-  
-  updateRowByKey_(
-    lineSheet,
-    lineHeader,
-    'line_id',
-    line.line_id,
-    updates
-  );
+      if (lineId) {
+        const row = lineData[rowOf[lineId]];
+        Object.keys(fields).forEach(k => {
+          if (lineHeader[k] !== undefined) row[lineHeader[k]] = fields[k];
+        });
+        changedRows.push(rowOf[lineId]);
+      } else {
+        if (!products) products = loadDraftProductMap_();
+        const product = products[sku];
+        if (!product) throw new Error(`SKU ${sku} not found in EE Product Master`);
+        newLines.push(Object.assign({
+          line_id: Utilities.getUuid(),
+          draft_id: draftId,
+          sku: sku,
+          sku_name: product.sku_name,
+          unit_price: product.unit_price,
+          source: 'MANUAL',
+          created_at: now
+        }, fields));
       }
+    });
 
-    // New line → manual SKU add
-    else {
-      if (!line.vendor_code) {
-        throw new Error(`Vendor required for manual SKU: ${line.sku}`);
-      }
+    // Lines not in the payload were removed in the editor (ordered ones stay).
+    const removedRows = Object.keys(rowOf)
+      .filter(id => !seen.has(id) && !submitted[vendorAt(rowOf[id])])
+      .map(id => rowOf[id]);
+    const removed = new Set(removedRows);
 
-      appendRowFromObject_(lineSheet, lineHeader, {
-        line_id: Utilities.getUuid(),
-        draft_id: draftId,
-        sku: line.sku,
-        sku_name: line.sku_name || line.item_name || '',
-        qty: qty,
-        vendor_code: line.vendor_code,
-        unit_price: Number(line.unit_price || 0),
-        source: 'MANUAL',
-        created_at: now,
-        updated_at: now,
+    // 4️⃣ Write: updates in place, then appends, then deletes (bottom-up)
+    writeRowRuns_(lineSheet, lineData, changedRows);
+    appendRowsFromObjects_(lineSheet, lineHeader, newLines);
+    deleteRowRuns_(lineSheet, removedRows);
 
-        custom_logo: line.custom_logo || false,
-        custom_packaging: line.custom_packaging || false,
-        solving_manual: line.solving_manual || false,
-        opp_wrap: line.opp_wrap || false,
-        custom_remarks: line.custom_remarks || '',
-        customization_files: line.customization_files || '',
-        customization_updated_at: now
-      });
-    }
+    // 5️⃣ Recalculate header totals from the draft's final line set
+    const finalLines = Object.keys(rowOf)
+      .map(id => rowOf[id])
+      .filter(i => !removed.has(i))
+      .map(i => ({ sku: lineData[i][lineHeader.sku], qty: lineData[i][lineHeader.qty] }))
+      .concat(newLines);
+
+    updateRowByKey_(draftSheet, draftHeader, 'draft_id', draftId, {
+      total_skus: new Set(finalLines.map(l => String(l.sku))).size,
+      total_qty: finalLines.reduce((sum, l) => sum + Number(l.qty || 0), 0),
+      updated_at: now
+    });
   });
 
-  // 3️⃣ Recalculate & update header
-  const totalSkus = seenSkus.size;
-
-  updateRowByKey_(draftSheet, draftHeader, 'draft_id', draftId, {
-    total_skus: totalSkus,
-    total_qty: totalQty,
-    updated_at: now
-  });
-
-  return {
-    status: 'success',
-    draftId
-  };
+  return Object.assign({ draftId }, apiGetDraftById(draftId));
 }
 
 function rowToObject_(row, headerMap) {
@@ -870,10 +839,12 @@ function apiSearchSkuCatalog(query) {
       sku.toLowerCase().includes(q) ||
       name.toLowerCase().includes(q)
     ) {
+      const product = productFromMasterRow_(data[i], header);
       results.push({
         sku,
         sku_name: name,
-        unit_price: Number(data[i][header.Cost] || 0)
+        unit_price: product.unit_price, // RMB
+        landed_cost_inr: product.landed_cost_inr
       });
     }
 
@@ -897,6 +868,10 @@ function apiAddSkuToDraft(draftId, sku, qty) {
   const qtyNum = Number(qty || 0);
   if (qtyNum <= 0) throw new Error('qty must be greater than 0');
 
+  return withDraftLock_(() => addSkuToDraftUnlocked_(String(draftId).trim(), String(sku).trim(), qtyNum));
+}
+
+function addSkuToDraftUnlocked_(draftId, sku, qtyNum) {
   const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
   const draftHeader = getHeaderMap_(draftSheet);
   const draftData = draftSheet.getDataRange().getValues();
@@ -909,7 +884,7 @@ function apiAddSkuToDraft(draftId, sku, qty) {
     }
   }
   if (!draftRow) throw new Error('Draft not found: ' + draftId);
-  if (String(draftRow[draftHeader.status] || '').trim().toUpperCase() !== 'DRAFT') {
+  if (!isDraftEditable_(draftRow[draftHeader.status])) {
     throw new Error('Draft is locked after submission');
   }
 
@@ -1122,158 +1097,79 @@ function debugVendorMasterActiveSamples() {
  */
 function apiCreateManualDraft(payload) {
   const { mode, lines } = payload;
-  
+
   if (!mode) throw new Error("Shipping mode is required");
   if (!Array.isArray(lines) || lines.length === 0) {
     throw new Error("At least one line item is required");
   }
-  
-  // Validate all lines have required fields
+
+  // Validate every line before writing anything. Prices come from the EE
+  // Product Master (RMB_Price), not from the client.
+  const products = loadDraftProductMap_();
   lines.forEach((line, idx) => {
-    if (!line.sku) throw new Error(`SKU missing at line ${idx + 1}`);
-    if (!line.vendor_code) throw new Error(`Vendor missing for SKU ${line.sku}`);
-    if (!line.qty || Number(line.qty) <= 0) {
-      throw new Error(`Invalid quantity for SKU ${line.sku}`);
+    const sku = String(line.sku || '').trim();
+    if (!sku) throw new Error(`SKU missing at line ${idx + 1}`);
+    if (!String(line.vendor_code || '').trim()) throw new Error(`Vendor missing for SKU ${sku}`);
+    if (!(Number(line.qty) > 0)) {
+      throw new Error(`Invalid quantity for SKU ${sku}`);
     }
+    if (!products[sku]) throw new Error(`SKU ${sku} not found in EE Product Master`);
   });
-  
-  const now = new Date();
-  const userEmail = Session.getActiveUser().getEmail();
-  
-  // Get sheets
-  const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
-  const draftHeader = getHeaderMap_(draftSheet);
-  
-  const lineSheet = getSheet_(SHEET_NAMES.DRAFT_ORDER_LINES);
-  const lineHeader = getHeaderMap_(lineSheet);
-  
-  // Generate draft ID
-  const draftId = generateDraftId_();
-  
-  // Calculate totals
-  const uniqueSkus = new Set(lines.map(l => l.sku));
-  const totalQty = lines.reduce((sum, l) => sum + Number(l.qty || 0), 0);
-  
-  // Create draft header
-  appendRowFromObject_(draftSheet, draftHeader, {
-    draft_id: draftId,
-    status: 'DRAFT',
-    planned_mode: String(mode).toUpperCase(),
-    forecast_run_id: '', // Empty for manual
-    total_skus: uniqueSkus.size,
-    total_qty: totalQty,
-    created_by: userEmail,
-    created_at: now,
-    updated_at: now
-  });
-  
-  // Create draft lines
-  lines.forEach(line => {
-    const sku = String(line.sku).trim();
-    const qty = Number(line.qty);
-    const unitPrice = Number(line.unit_price || 0);
-    
-    // Get product details from EE Product Master
-    const productDetails = getProductDetailsForDraft_(sku);
-    
-    // Get vendor name
-    const vendorName = getVendorName_(line.vendor_code);
-    
-    // Parse customization from line
-    const customLogo = parseCustomizationValue_(line.custom_logo || line.logo);
-    const customPackaging = parseCustomizationValue_(line.custom_packaging || line.packaging);
-    const solvingManual = parseCustomizationValue_(line.solving_manual || line.manual);
-    const oppWrap = parseCustomizationValue_(line.opp_wrap || line.wrap);
-    
-    appendRowFromObject_(lineSheet, lineHeader, {
-      line_id: Utilities.getUuid(),
+
+  const vendorNames = {};
+  apiGetVendorMasters().vendors.forEach(v => { vendorNames[v.vendor_code] = v.vendor_name; });
+
+  return withDraftLock_(() => {
+    const now = new Date();
+    const userEmail = Session.getActiveUser().getEmail();
+
+    const draftSheet = getSheet_(SHEET_NAMES.DRAFT_ORDERS);
+    const draftHeader = getHeaderMap_(draftSheet);
+
+    const lineSheet = getSheet_(SHEET_NAMES.DRAFT_ORDER_LINES);
+    const lineHeader = getHeaderMap_(lineSheet);
+
+    const draftId = generateDraftId_();
+
+    appendRowFromObject_(draftSheet, draftHeader, {
       draft_id: draftId,
-      sku: sku,
-      sku_name: line.sku_name || productDetails.sku_name || '',
-      qty: qty,
-      vendor_code: line.vendor_code,
-      vendor_name: vendorName,
-      unit_price: unitPrice || productDetails.unit_price || 0,
-      source: 'MANUAL',
+      status: 'DRAFT',
+      planned_mode: String(mode).toUpperCase(),
+      forecast_run_id: '', // Empty for manual
+      total_skus: new Set(lines.map(l => String(l.sku).trim())).size,
+      total_qty: lines.reduce((sum, l) => sum + Number(l.qty || 0), 0),
+      created_by: userEmail,
       created_at: now,
-      updated_at: now,
-      
-      // Customization
-      custom_logo: customLogo,
-      custom_packaging: customPackaging,
-      solving_manual: solvingManual,
-      opp_wrap: oppWrap,
-      custom_remarks: line.custom_remarks || line.remarks || '',
-      customization_files: line.customization_files || (Array.isArray(line.files) ? line.files.join(', ') : line.files || ''),
-      customization_updated_at: now,
-      
-      // Financial
-      line_total_rmb: qty * (unitPrice || productDetails.unit_price || 0),
-      
-      // Additional fields from EE Product Master
-      Lead_TimeMOQ: productDetails.lead_time_moq || '',
-      Threshold_Qty: productDetails.threshold_qty || '',
-      Supplier_Code: productDetails.supplier_code || line.vendor_code || '',
-      
-      // Empty fields
-      line_close_reason: ''
+      updated_at: now
     });
+
+    appendRowsFromObjects_(lineSheet, lineHeader, lines.map(line => {
+      const sku = String(line.sku).trim();
+      const vendorCode = String(line.vendor_code).trim();
+      const product = products[sku];
+      return Object.assign({
+        line_id: Utilities.getUuid(),
+        draft_id: draftId,
+        sku: sku,
+        sku_name: product.sku_name || line.sku_name || '',
+        qty: Number(line.qty),
+        vendor_code: vendorCode,
+        vendor_name: vendorNames[vendorCode] || vendorCode,
+        unit_price: product.unit_price,
+        source: 'MANUAL',
+        created_at: now,
+        updated_at: now,
+        customization_updated_at: now
+      }, customizationFromLine_(line));
+    }));
+
+    return {
+      status: 'success',
+      draftId: draftId,
+      draft_id: draftId,
+      message: `Draft Order ${draftId} created successfully`
+    };
   });
-  
-  return {
-    status: 'success',
-    draft_id: draftId,
-    message: `Draft Order ${draftId} created successfully`
-  };
-}
-
-/**
- * Get product details from EE Product Master including extra fields
- */
-function getProductDetailsForDraft_(sku) {
-  const sheet = getSheet_(SHEET_NAMES.EE_PRODUCT_MASTER);
-  const header = getHeaderMap_(sheet);
-  const data = sheet.getDataRange().getValues();
-  
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][header.SKU]).trim() === sku) {
-      return {
-        sku_name: data[i][header['Product Name']] || '',
-        unit_price: Number(data[i][header.Cost]) || 0,
-        lead_time_moq: data[i][header.Lead_TimeMOQ] || '',
-        threshold_qty: data[i][header.Threshold_Qty] || '',
-        supplier_code: data[i][header.Supplier_Code] || ''
-      };
-    }
-  }
-  
-  // Return defaults if not found
-  return {
-    sku_name: '',
-    unit_price: 0,
-    lead_time_moq: '',
-    threshold_qty: '',
-    supplier_code: ''
-  };
-}
-
-/**
- * Get vendor name from vendor code
- */
-function getVendorName_(vendorCode) {
-  if (!vendorCode) return '';
-  
-  const sheet = getSheet_(SHEET_NAMES.VENDOR_MASTERS);
-  const header = getHeaderMap_(sheet);
-  const data = sheet.getDataRange().getValues();
-  
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][header.vendor_code]).trim() === vendorCode) {
-      return data[i][header.vendor_name] || vendorCode;
-    }
-  }
-  
-  return vendorCode; // Fallback to code if name not found
 }
 
 /**

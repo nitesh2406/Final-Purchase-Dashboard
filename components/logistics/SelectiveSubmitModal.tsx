@@ -47,8 +47,9 @@ export const SelectiveSubmitModal: React.FC<SelectiveSubmitModalProps> = ({
         );
     };
 
-    const formatCurrency = (amt: number) => 
-        new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amt);
+    // Draft line prices are the vendor's RMB price (EE Product Master RMB_Price).
+    const formatCurrency = (amt: number) =>
+        '¥' + Number(amt || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[120] p-4 animate-in fade-in duration-200">

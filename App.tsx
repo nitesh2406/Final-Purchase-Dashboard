@@ -660,31 +660,6 @@ const App: React.FC = () => {
         fetchPricingConfig();
     }, [user, fetchAllData, fetchConfig, fetchAmazonConfig, fetchPricingConfig]);
 
-    // Used by the "Add New SKU" flow inside a draft (AddNewSKUModal, via
-    // DraftOrderEdit's addSkuToCatalog prop) for items that aren't in the
-    // product catalog yet. This does NOT create a real catalog record —
-    // apiSaveDraft's manual-line branch doesn't require one, it just needs a
-    // stable sku identifier for the draft line, which is what this returns.
-    // The line itself persists correctly via the normal Save Draft flow
-    // (handleSaveDraft sends it with line_id: null, which apiSaveDraft
-    // treats as a new manual line). If the item needs to become a real,
-    // reusable catalog SKU, that's the separate New SKU Request workflow
-    // (NewSkuDashboard.tsx / NewSkuApi.js), not this.
-    //
-    // The id used to be `SKU-${skus.length+1}` — collision-prone (two
-    // manual adds in one session, or an existing real SKU happening to
-    // match that number) and, since this id IS the value persisted into
-    // the draft line's `sku` column, a collision there means two unrelated
-    // line items across different drafts end up sharing one sku code.
-    const addSku = (newSkuData: Omit<Sku, 'id'>) => {
-        const newSku: Sku = {
-            id: `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
-            ...newSkuData,
-        };
-        setSkus(prevSkus => [...prevSkus, newSku]);
-        return newSku;
-    };
-
     const updateSku = (updatedSku: Sku) => {
         setSkus(prevSkus => prevSkus.map(sku => sku.id === updatedSku.id ? updatedSku : sku));
     };
@@ -797,16 +772,11 @@ const App: React.FC = () => {
                 />;
             case 'Draft Orders':
                 return <DraftOrdersTable
-                    purchaseOrders={purchaseOrders}
-                    setPurchaseOrders={setPurchaseOrders}
                     drafts={drafts}
                     setDrafts={setDrafts}
-                    skus={skus}
-                    addSku={addSku}
                     vendors={vendors}
                     vendorMasters={vendorMasters}
                     onNavigate={(v: ViewType) => setCurrentView(v)}
-                    onRefreshPOs={() => fetchAllData(true)}
                     highlightDraftId={highlightDraftId}
                     setHighlightDraftId={setHighlightDraftId}
                     onRefreshDrafts={() => fetchAllData(true)}

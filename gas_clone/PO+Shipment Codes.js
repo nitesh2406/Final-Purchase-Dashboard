@@ -1,12 +1,49 @@
+// Creates one PO per selected vendor from a draft's lines, then emails them.
+// POs are created under the draft lock (a double submit or two people
+// submitting can't order the same lines twice); the emails, which can
+// attach large Drive files, are sent after the lock is released.
 function apiSubmitDraft_(payload) {
-  const { draftId, vendors } = payload;
+  const draftId = String(payload.draftId || '').trim();
+  const vendors = Array.isArray(payload.vendors)
+    ? payload.vendors.map(v => String(v || '').trim()).filter(Boolean)
+    : [];
   if (!draftId) throw new Error("draftId is required");
-  if (!Array.isArray(vendors) || vendors.length === 0) {
+  if (vendors.length === 0) {
     throw new Error("At least one vendor must be selected");
   }
 
-  const now = new Date();
   const userEmail = Session.getActiveUser().getEmail();
+  const result = withDraftLock_(() => createPosFromDraft_(draftId, vendors, userEmail));
+
+  // =========================
+  // 5️⃣ Send Email + Log
+  // =========================
+  // The POs already exist, so an email failure is reported, not thrown — a
+  // retry would be refused anyway (those vendors are now submitted).
+  const emailFailures = [];
+  result.createdPOs.forEach(po => {
+    try {
+      sendPoEmailAndLog_(po.poId, po.vendorCode, po.to, po.cc, userEmail);
+    } catch (err) {
+      emailFailures.push(po.poId + ': ' + err.message);
+    }
+  });
+
+  const newPOs = result.createdPOs.map(po => po.poId);
+  return {
+    success: true,
+    draftId,
+    newPOs,
+    status: result.status,
+    emailFailures,
+    message: `${newPOs.length} Purchase Order(s) created` +
+      (result.status === 'PARTIALLY_SUBMITTED' ? '; the draft still has vendors left to submit' : '') +
+      (emailFailures.length ? `. Email failed for ${emailFailures.join('; ')}` : '')
+  };
+}
+
+function createPosFromDraft_(draftId, vendors, userEmail) {
+  const now = new Date();
 
   // =========================
   // Sheets & headers
@@ -64,8 +101,15 @@ function apiSubmitDraft_(payload) {
   }
 
   if (!draftRow) throw new Error(`Draft not found: ${draftId}`);
-  if (draftRow[draftHeader.status] !== "DRAFT") {
-    throw new Error("Draft is locked after submission");
+  if (!isDraftEditable_(draftRow[draftHeader.status])) {
+    throw new Error(`Draft ${draftId} is ${draftStatusKey_(draftRow[draftHeader.status])} and can't be submitted`);
+  }
+
+  // Vendors already ordered from this draft can't be ordered again.
+  const submitted = getSubmittedVendorsForDraft_(draftId);
+  const again = vendors.filter(v => submitted[v]);
+  if (again.length) {
+    throw new Error(`Already ordered from this draft: ${again.map(v => v + ' (' + submitted[v] + ')').join(', ')}`);
   }
 
   const plannedMode = draftRow[draftHeader.planned_mode];
@@ -73,15 +117,23 @@ function apiSubmitDraft_(payload) {
   // =========================
   // 2️⃣ Collect draft lines by vendor
   // =========================
+  // Lines with no quantity are never ordered. Anything left un-ordered after
+  // this submission (other vendors, or lines with no vendor) keeps the draft
+  // PARTIALLY_SUBMITTED so it can still be finished or cancelled.
   const lineData = lineSheet.getDataRange().getValues();
   const vendorGroups = {}; // vendor_code → lines[]
+  const outstandingVendors = new Set();
 
   for (let i = 1; i < lineData.length; i++) {
     const row = lineData[i];
     if (String(row[lineHeader.draft_id]).trim() !== draftId) continue;
+    if (!(Number(row[lineHeader.qty]) > 0)) continue;
 
-    const vendorCode = row[lineHeader.vendor_code];
-    if (!vendors.includes(vendorCode)) continue;
+    const vendorCode = String(row[lineHeader.vendor_code] || '').trim();
+    if (!vendorCode || !vendors.includes(vendorCode)) {
+      if (!submitted[vendorCode]) outstandingVendors.add(vendorCode || '(no vendor)');
+      continue;
+    }
 
     if (!vendorGroups[vendorCode]) vendorGroups[vendorCode] = [];
     vendorGroups[vendorCode].push(row);
@@ -98,7 +150,7 @@ function apiSubmitDraft_(payload) {
   const vendorEmailMap = {};
   for (let i = 1; i < vendorData.length; i++) {
     const row = vendorData[i];
-    const vCode = row[vendorHeader.vendor_code];
+    const vCode = String(row[vendorHeader.vendor_code] || '').trim();
     if (!vCode) continue;
 
     vendorEmailMap[vCode] = {
@@ -113,7 +165,6 @@ function apiSubmitDraft_(payload) {
   const createdPOs = [];
 
   vendorsWithLines.forEach(vendorCode => {
-    //const poId = "PO-" + Utilities.getUuid().slice(0, 8).toUpperCase();
     const poId = nextPoId_(vendorCode);
 
     const lines = vendorGroups[vendorCode];
@@ -139,14 +190,7 @@ function apiSubmitDraft_(payload) {
       updated_at: now
     });
 
-    // ---- PO Lines
-    // Was: one appendRow() per line item (15 lines = 15 round trips). Now
-    // one setValues() call for this vendor's whole line set — same fields,
-    // same values, same order, just written together. Written per-vendor
-    // (not batched across the whole multi-vendor submission) because
-    // sendPoEmailAndLog_ below reads these lines straight back from the
-    // sheet to build the vendor's email — it needs to see them already
-    // written before it runs.
+    // ---- PO Lines (one setValues for this vendor's whole line set)
     const vendorLineRows = lines.map(l => {
       const qty = Number(l[lineHeader.qty] || 0);
       const price = Number(l[lineHeader.unit_price] || 0);
@@ -178,38 +222,20 @@ function apiSubmitDraft_(payload) {
       poLineSheet.getRange(startRow, 1, vendorLineRows.length, vendorLineRows[0].length).setValues(vendorLineRows);
     }
 
-    // =========================
-    // 5️⃣ Send Email + Log
-    // =========================
     const emailInfo = vendorEmailMap[vendorCode] || { to: "", cc: "" };
-    sendPoEmailAndLog_(
-      poId,
-      vendorCode,
-      emailInfo.to,
-      emailInfo.cc,
-      userEmail
-    );
-
-    createdPOs.push(poId);
+    createdPOs.push({ poId, vendorCode, to: emailInfo.to, cc: emailInfo.cc });
   });
 
   // =========================
   // 6️⃣ Update draft status
   // =========================
+  const status = outstandingVendors.size === 0 ? "SUBMITTED" : "PARTIALLY_SUBMITTED";
   updateRowByKey_(draftSheet, draftHeader, "draft_id", draftId, {
-    status:
-      vendorsWithLines.length === vendors.length
-        ? "SUBMITTED"
-        : "PARTIALLY_SUBMITTED",
+    status: status,
     updated_at: now
   });
 
-  return {
-    success: true,
-    draftId,
-    newPOs: createdPOs,
-    message: "Purchase Orders created successfully"
-  };
+  return { createdPOs, status };
 }
 
 //// -----------------------------Claude Code Starts Here------------------

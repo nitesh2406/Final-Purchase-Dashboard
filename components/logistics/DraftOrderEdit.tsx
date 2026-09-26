@@ -2,16 +2,15 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import {
-    PencilIcon, TrashIcon, MagnifyingGlassIcon, PlusIcon,
+    PencilIcon, TrashIcon, MagnifyingGlassIcon,
     EyeIcon, ChevronDownIcon, ChevronUpIcon, LockClosedIcon,
-    ClipboardDocumentIcon, BoxIcon, ExclamationTriangleIcon, XMarkIcon,
-    DocumentDuplicateIcon, ArrowLeftIcon, ArrowPathIcon, CheckBadgeIcon,
-    AirplaneIcon, ShipIcon, ClipboardDocumentCheckIcon, ClockIcon, FolderOpenIcon
+    BoxIcon, ExclamationTriangleIcon, XMarkIcon,
+    ArrowLeftIcon, ArrowPathIcon, CheckBadgeIcon,
+    AirplaneIcon, ShipIcon, ClockIcon, FolderOpenIcon
 } from '../icons/Icons';
-import { DraftOrder, Sku, PurchaseOrder, VendorMaster } from '../../types';
+import { DraftOrder, VendorMaster } from '../../types';
 import { CustomizationModal } from './CustomizationModal';
 import { SelectiveSubmitModal } from './SelectiveSubmitModal';
-import { AddNewSKUModal } from './AddNewSKUModal';
 import { API_ACTIONS } from '../../constants';
 import { callGas } from '../../services/gasApi';
 
@@ -24,7 +23,8 @@ interface LineItem {
     vendor_name?: string;
     item_name: string;
     qty: number;
-    unit_price: number;
+    unit_price: number;       // RMB (EE Product Master RMB_Price)
+    landed_cost_inr: number;  // INR landed cost per unit (EE Product Master Cost) — estimate only
     logo: 'Yes' | 'No';
     packaging: 'Yes' | 'No';
     manual: 'Yes' | 'No';
@@ -38,18 +38,48 @@ interface DraftOrderEditProps {
     draft: DraftOrder | null;
     initialMode?: 'SEA' | 'AIR';
     onBack: () => void;
-    setDrafts: React.Dispatch<React.SetStateAction<DraftOrder[]>>;
-    onSave: (updatedDraft: DraftOrder) => Promise<any>;
-    onOrdersSubmitted?: (updatedDraft: DraftOrder | null, newPos: PurchaseOrder[], message: string) => void;
-    onRefreshPOs?: () => void;
-    existingPoCount?: number;
-    skus: Sku[];
-    addSkuToCatalog: (newSku: Omit<Sku, 'id'>) => Sku;
+    // Called after a successful save/create so the list re-reads drafts.
+    onDraftSaved?: () => void;
+    // Called after POs were created; the list refreshes and shows `message`.
+    onOrdersSubmitted?: (message: string) => void;
     vendorMasters: VendorMaster[];
 }
 
-const formatCurrency = (amount: number) =>
+const formatInr = (amount: number) =>
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
+
+const formatRmb = (amount: number) =>
+    '¥' + Number(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
+// One line from get_draft_by_id / save_draft (or a draft's cached items) in
+// the editor's shape.
+const normalizeLine = (line: any): LineItem => {
+    const yesNo = (ui: any, db: any): 'Yes' | 'No' =>
+        ui === 'Yes' || ui === 'No' ? ui : (db === true || String(db).toLowerCase() === 'yes' || String(db).toLowerCase() === 'true') ? 'Yes' : 'No';
+    return {
+        id: line.line_id ? String(line.line_id) : (line.id || `ITEM-${Date.now()}-${Math.random()}`),
+        line_id: line.line_id ? String(line.line_id) : undefined,
+        sku: String(line.sku ?? ''),
+        item_name: line.item_name || line.sku_name || line.name || line.productName || '',
+        vendor: line.vendor_code || line.vendor || '',
+        vendor_code: line.vendor_code || line.vendor || '',
+        vendor_name: line.vendor_name || line.vendor || '',
+        qty: Number(line.qty || 0),
+        unit_price: Number(line.unit_price || 0),
+        landed_cost_inr: Number(line.landed_cost_inr || 0),
+        logo: yesNo(line.logo, line.custom_logo),
+        packaging: yesNo(line.packaging, line.custom_packaging),
+        manual: yesNo(line.manual, line.solving_manual),
+        wrap: yesNo(line.wrap, line.opp_wrap),
+        remarks: line.remarks || line.custom_remarks || '',
+        customization_files: line.customization_files || '',
+        source: line.source || 'FORECAST'
+    };
+};
+
+// Draft status as one key: the backend has used 'Draft', 'DRAFT',
+// 'PARTIALLY_SUBMITTED' and 'PARTIALLY SUBMITTED' for the same states.
+const statusKeyOf = (status?: string) => String(status || 'DRAFT').trim().toUpperCase().replace(/\s+/g, '_');
 
 const ModeBadge: React.FC<{ mode?: string }> = ({ mode }) => {
     if (!mode) return null;
@@ -68,37 +98,24 @@ const ModeBadge: React.FC<{ mode?: string }> = ({ mode }) => {
     );
 };
 
-export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMode, onBack, setDrafts, onSave, onOrdersSubmitted, onRefreshPOs, existingPoCount = 0, skus, addSkuToCatalog, vendorMasters }) => {
-    const isViewOnly = (draft?.status as string) === 'SUBMITTED' || draft?.status === 'Order Placed' || draft?.status === 'Cancelled';
-    const isSubmittedReadOnly = (draft?.status as string) === 'SUBMITTED' || draft?.status === 'Order Placed';
+export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMode, onBack, onDraftSaved, onOrdersSubmitted, vendorMasters }) => {
+    const statusKey = statusKeyOf(draft?.status);
+    const isSubmittedReadOnly = statusKey === 'SUBMITTED' || statusKey === 'ORDER_PLACED';
+    const isViewOnly = isSubmittedReadOnly || statusKey === 'CANCELLED';
     const isCreateMode = !draft;
 
-    const todayStr = new Date().toISOString().split('T')[0];
-    const [poDate, setPoDate] = useState(draft?.draft_date || draft?.created_at || todayStr);
     const shippingMode = (draft?.mode || draft?.planned_mode || initialMode || '') as 'SEA' | 'AIR' | '';
     const displayMode = String(draft?.planned_mode || draft?.mode || initialMode || shippingMode || '').toUpperCase() as 'SEA' | 'AIR' | '';
 
-    const [items, setItems] = useState<LineItem[]>(() => {
-        if (!draft?.items) return [];
-        return draft.items.map((item: any) => ({
-            ...item,
-            item_name: item.item_name || item.sku_name || item.name || item.productName || '',
-            vendor: item.vendor_code || item.vendor || '',
-            vendor_code: item.vendor_code || item.vendor || '',
-            vendor_name: item.vendor_name || item.vendor || '',
-            id: item.line_id ? String(item.line_id) : (item.id || `ITEM-${Date.now()}-${Math.random()}`),
-            source: item.source || 'FORECAST',
-            customization_files: item.customization_files || '',
-            remarks: item.remarks || item.custom_remarks || ''
-        }));
-    });
+    const [items, setItems] = useState<LineItem[]>(() => (draft?.items || []).map(normalizeLine));
+    // updated_at of the version on screen; save_draft refuses if the draft has
+    // been saved by someone else since (a save replaces the whole line set).
+    const [loadedUpdatedAt, setLoadedUpdatedAt] = useState<string | undefined>((draft as any)?.updated_at);
 
-    const notes = draft?.notes || '';
     const [searchQuery, setSearchQuery] = useState('');
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false);
 
     const [catalogResults, setCatalogResults] = useState<any[]>([]);
     const [isSearchingCatalog, setIsSearchingCatalog] = useState(false);
@@ -108,24 +125,6 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
 
     const [customizationItem, setCustomizationItem] = useState<LineItem | null>(null);
     const [isSubmitModalOpen, setSubmitModalOpen] = useState(false);
-    const [isAddNewSkuModalOpen, setIsAddNewSkuModalOpen] = useState(false);
-
-    const [showDebug, setShowDebug] = useState(false);
-    const [lastRequest, setLastRequest] = useState<any>(null);
-    const [lastResponse, setLastResponse] = useState<any>(null);
-    const [lastError, setLastError] = useState<string | null>(null);
-    const [lastTimestamp, setLastTimestamp] = useState<string | null>(null);
-    const [lastCustomizationData, setLastCustomizationData] = useState<any>(null);
-
-    const vendorCoverage = useMemo(() => {
-        const withVendor = items.filter(i => i.vendor_code || i.vendor).length;
-        return { count: withVendor, percent: items.length > 0 ? (withVendor / items.length * 100).toFixed(0) : '0' };
-    }, [items]);
-
-    const driveLinkStats = useMemo(() => {
-        const withLink = items.filter(i => i.customization_files && i.customization_files.trim() !== '').length;
-        return { count: withLink, percent: items.length > 0 ? (withLink / items.length * 100).toFixed(0) : '0' };
-    }, [items]);
 
     useEffect(() => {
         if (searchQuery.length < 2) {
@@ -145,7 +144,8 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
                     vendor: item.vendor_code || item.vendor || item.supplier || '',
                     vendor_code: item.vendor_code || item.vendor || item.supplier || '',
                     vendor_name: item.vendor_name || item.vendor || item.supplier || '',
-                    unit_price: Number(item.unit_price || item.cost || 0),
+                    unit_price: Number(item.unit_price || 0),
+                    landed_cost_inr: Number(item.landed_cost_inr || 0),
                     qty: Number(item.qty !== undefined ? item.qty : (item.reorderQty !== undefined ? item.reorderQty : 0)),
                     category: item.category || '',
                     brand: item.brand || ''
@@ -183,11 +183,11 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
 
     const stats = useMemo(() => {
         const totalItems = items.reduce((sum, item) => sum + Number(item.qty), 0);
-        const grandTotal = items.reduce((sum, item) => sum + (Number(item.qty) * Number(item.unit_price || 0)), 0);
+        const totalRmb = items.reduce((sum, item) => sum + (Number(item.qty) * Number(item.unit_price || 0)), 0);
+        const estLandedInr = items.reduce((sum, item) => sum + (Number(item.qty) * Number(item.landed_cost_inr || 0)), 0);
+        const missingRmb = items.filter(item => !(Number(item.unit_price) > 0)).length;
         const vendors = Object.keys(vendorGroups);
-        const submittedCount = vendors.filter(v => vendorGroups[v].isSubmitted).length;
-        const pendingCount = vendors.length - submittedCount;
-        return { totalItems, grandTotal, vendorsCount: vendors.length, submittedCount, pendingCount };
+        return { totalItems, totalRmb, estLandedInr, missingRmb, vendorsCount: vendors.length };
     }, [items, vendorGroups]);
 
     const handleSelectCatalogItem = (catalogItem: any) => {
@@ -208,6 +208,7 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
             vendor_name: itemVendorName,
             qty: Number(catalogItem.qty || catalogItem.reorderQty || 0),
             unit_price: Number(catalogItem.unit_price || 0),
+            landed_cost_inr: Number(catalogItem.landed_cost_inr || 0),
             logo: 'No',
             packaging: 'No',
             manual: 'No',
@@ -246,160 +247,93 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
         }
 
         setIsSaving(true);
-        setIsProcessing(true);
         setErrorToast(null);
         setSuccessToast(null);
-        setLastError(null);
 
         try {
+            // The whole line set is sent: lines left out are deleted server-side.
             const lines = items.map(item => ({
-                line_id: (item.line_id !== undefined && !String(item.line_id).startsWith('ITEM-')) ? item.line_id : null,
+                line_id: item.line_id ? String(item.line_id) : null,
                 sku: item.sku,
-                sku_name: item.item_name || (item as any).sku_name,
+                sku_name: item.item_name,
                 qty: Number(item.qty),
                 vendor_code: item.vendor || item.vendor_code,
                 unit_price: Number(item.unit_price || 0),
 
-                custom_logo: item.logo === 'Yes' || (item as any).custom_logo === true,
-                custom_packaging: item.packaging === 'Yes' || (item as any).custom_packaging === true,
-                solving_manual: item.manual === 'Yes' || (item as any).solving_manual === true,
-                opp_wrap: item.wrap === 'Yes' || (item as any).opp_wrap === true,
+                custom_logo: item.logo === 'Yes',
+                custom_packaging: item.packaging === 'Yes',
+                solving_manual: item.manual === 'Yes',
+                opp_wrap: item.wrap === 'Yes',
 
-                custom_remarks: item.remarks || (item as any).custom_remarks || '',
+                custom_remarks: item.remarks || '',
                 customization_files: item.customization_files || ''
             }));
 
-            console.log('Lines payload:', lines);
-            console.log('Lines with real line_id (UPDATE):', lines.filter(l => l.line_id !== null).length);
-            console.log('Lines with null line_id (CREATE NEW):', lines.filter(l => l.line_id === null).length);
-
-            const payload = {
-                action: isCreateMode ? 'create_manual_draft' : API_ACTIONS.SAVE_DRAFT,
-                mode: displayMode || shippingMode,
-                draft_date: poDate,
-                notes: notes,
-                lines: lines,
-                ...(draft?.id ? { draftId: draft.id } : {})
-            };
-
-            const timestamp = new Date().toISOString();
-            setLastTimestamp(timestamp);
-            setLastRequest(payload);
-
             // Creates/updates a draft order — never auto-retried, since a
             // garbled response can't tell us whether the write already landed.
-            const { action: draftAction, ...draftPayload } = payload;
-            const result = await callGas(draftAction, draftPayload);
-            setLastResponse(result);
+            const result = isCreateMode
+                ? await callGas('create_manual_draft', { mode: displayMode || shippingMode, lines })
+                : await callGas(API_ACTIONS.SAVE_DRAFT, { draftId: draft!.id, expected_updated_at: loadedUpdatedAt, lines });
 
-            if (result.status === 'success' || result.draftId) {
-                if (isCreateMode) {
-                    alert(`Draft Order ${result.draftId} created successfully!`);
-                    onBack();
-                } else {
-                    setSuccessToast('Draft saved successfully');
-                    setTimeout(() => setSuccessToast(null), 3000);
-                }
-
-                if (result.lines) {
-                    const normalizedLinesFromBackend = result.lines.map((line: any) => ({
-                        id: String(line.line_id),
-                        line_id: String(line.line_id),
-                        sku: line.sku,
-                        item_name: line.sku_name || line.item_name || '',
-                        vendor: line.vendor_code || line.vendor || '',
-                        vendor_code: line.vendor_code || line.vendor || '',
-                        vendor_name: line.vendor_name || line.vendor || '',
-                        qty: line.qty,
-                        unit_price: line.unit_price,
-                        logo: line.custom_logo ? 'Yes' : 'No',
-                        packaging: line.custom_packaging ? 'Yes' : 'No',
-                        manual: line.solving_manual ? 'Yes' : 'No',
-                        wrap: line.opp_wrap ? 'Yes' : 'No',
-                        remarks: line.custom_remarks || '',
-                        customization_files: line.customization_files || '',
-                        source: line.source || 'FORECAST'
-                    }));
-                    setItems(normalizedLinesFromBackend);
-                }
-            } else {
-                throw new Error(result.message || 'Failed to save draft');
+            if (result.status !== 'success') {
+                throw new Error(result.message || result.error || 'Failed to save draft');
             }
+
+            if (isCreateMode) {
+                alert(`Draft Order ${result.draftId || result.draft_id} created successfully!`);
+                onDraftSaved?.();
+                onBack();
+                return result;
+            }
+
+            // Adopt the saved lines: new lines get their line_id here, so the
+            // next save updates them instead of adding them again.
+            if (Array.isArray(result.lines)) setItems(result.lines.map(normalizeLine));
+            if (result.draft?.updated_at) setLoadedUpdatedAt(result.draft.updated_at);
+            setSuccessToast('Draft saved successfully');
+            setTimeout(() => setSuccessToast(null), 3000);
+            onDraftSaved?.();
             return result;
         } catch (err: any) {
-            const msg = err.message || 'Failed to save draft';
-            setErrorToast(msg);
-            setLastError(msg);
-            setLastResponse({ error: msg });
+            setErrorToast(err.message || 'Failed to save draft');
             throw err;
         } finally {
             setIsSaving(false);
-            setIsProcessing(false);
         }
     };
 
     const handleSubmitClick = async () => {
-        setIsSaving(true);
         try {
             await handleSaveDraft();
             setSubmitModalOpen(true);
-        } catch (err) {
-            setErrorToast("Please save changes before submitting");
-        } finally {
-            setIsSaving(false);
+        } catch {
+            // handleSaveDraft already shows the reason
         }
     };
 
     const handleSubmitDraft = async (selectedVendors: string[]) => {
         if (!draft) return;
 
-        const payload = {
-            action: API_ACTIONS.SUBMIT_DRAFT,
-            draftId: draft.id,
-            vendors: selectedVendors
-        };
-
         setIsSubmitting(true);
         setErrorToast(null);
         setSuccessToast(null);
-        setLastError(null);
-        setLastTimestamp(new Date().toISOString());
-        setLastRequest(payload);
 
         try {
             // Creates Purchase Orders from this draft — never auto-retried.
-            const { action: submitAction, ...submitPayload } = payload;
-            const result = await callGas(submitAction, submitPayload);
-            setLastResponse(result);
+            const result = await callGas(API_ACTIONS.SUBMIT_DRAFT, { draftId: draft.id, vendors: selectedVendors });
 
             if (!result || result.success !== true) {
                 throw new Error(result?.message || result?.error || "Submit failed");
             }
 
-            const poCount = result.newPOs?.length || 0;
-            const successMsg = `${poCount} Purchase Order(s) created successfully`;
-            setSuccessToast(successMsg);
-
             setSubmitModalOpen(false);
 
-            if (onOrdersSubmitted) {
-                onOrdersSubmitted(result.updatedDraft, result.newPOs, successMsg);
-            }
+            const createdPOs: string[] = result.newPOs || [];
+            window.dispatchEvent(new CustomEvent("po:refresh", createdPOs.length > 0 ? { detail: { po_id: createdPOs[0] } } : undefined));
 
-            const createdPOs = result.newPOs || [];
-            if (createdPOs.length > 0) {
-                window.dispatchEvent(new CustomEvent("po:refresh", {
-                    detail: { po_id: createdPOs[0] }
-                }));
-            } else {
-                window.dispatchEvent(new CustomEvent("po:refresh"));
-            }
-
-            onRefreshPOs?.();
+            onOrdersSubmitted?.(result.message || `${createdPOs.length} Purchase Order(s) created`);
         } catch (err: any) {
-            const msg = err.message || 'Submission failed';
-            setErrorToast(msg);
-            setLastError(msg);
+            setErrorToast(err.message || 'Submission failed');
         } finally {
             setIsSubmitting(false);
         }
@@ -409,11 +343,6 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
         if (!customizationItem) return;
 
         setItems(prev => prev.map(i => i.id === customizationItem.id ? { ...i, ...data } : i));
-        setLastCustomizationData({
-            sku: customizationItem.sku,
-            ...data,
-            timestamp: new Date().toLocaleTimeString()
-        });
 
         try {
             const result = await callGas('save_customization', {
@@ -451,10 +380,16 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
     return (
         <div className="flex flex-col min-h-screen space-y-4 text-slate-800 dark:text-white pb-32 relative bg-slate-50 dark:bg-slate-900 p-6">
 
-            {isSubmittedReadOnly && (
+            {isViewOnly && (
                 <div className="flex items-center gap-3 bg-amber-900/30 border border-amber-700 rounded-xl px-4 py-3 text-amber-300 text-sm font-medium mb-2 animate-in fade-in duration-300">
                     <LockClosedIcon className="w-4 h-4 flex-shrink-0" />
-                    <span>This draft has been submitted and cannot be edited.</span>
+                    <span>{statusKey === 'CANCELLED' ? 'This draft was cancelled and cannot be edited.' : 'This draft has been submitted and cannot be edited.'}</span>
+                </div>
+            )}
+            {statusKey === 'PARTIALLY_SUBMITTED' && (
+                <div className="flex items-center gap-3 bg-amber-900/20 border border-amber-700/60 rounded-xl px-4 py-3 text-amber-300 text-sm font-medium mb-2">
+                    <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0" />
+                    <span>Some vendors have already been ordered and are locked. The remaining vendors can still be edited and submitted.</span>
                 </div>
             )}
 
@@ -526,19 +461,19 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
                 <div>
                     <div className="flex items-center gap-3 mb-1">
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                            (draft?.status as string) === 'SUBMITTED' || draft?.status === 'Order Placed' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' :
-                            (draft?.status as string) === 'CANCELLED' || draft?.status === 'Cancelled' ? 'bg-red-600/20 text-red-400 border border-red-500/30' :
-                            (draft?.status as string) === 'PARTIALLY_SUBMITTED' || draft?.status === 'Partially Submitted' ? 'bg-amber-600/20 text-amber-400 border border-amber-500/30' :
+                            isSubmittedReadOnly ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' :
+                            statusKey === 'CANCELLED' ? 'bg-red-600/20 text-red-400 border border-red-500/30' :
+                            statusKey === 'PARTIALLY_SUBMITTED' ? 'bg-amber-600/20 text-amber-400 border border-amber-500/30' :
                             'bg-slate-600/20 text-slate-400 border border-slate-500/30'
                         }`}>
-                            {draft?.status || 'DRAFT'}
+                            {statusKey.replace(/_/g, ' ')}
                         </span>
                         <h2 className="text-2xl font-black tracking-tight text-slate-800 dark:text-white">
                             {isCreateMode ? 'Drafting New Order' : `Order Draft: ${draft?.id}`}
                         </h2>
                     </div>
                     <p className="text-xs text-slate-500 font-medium ml-0.5">
-                        {isCreateMode ? 'Build a new multi-vendor purchase order draft' : `Created on ${new Date(draft?.created_at || '').toLocaleDateString()} • Modified ${new Date().toLocaleDateString()}`}
+                        {isCreateMode ? 'Build a new multi-vendor purchase order draft' : `Created on ${new Date(draft?.created_at || '').toLocaleDateString()}${loadedUpdatedAt ? ` • Modified ${new Date(loadedUpdatedAt).toLocaleDateString()}` : ''}`}
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -570,15 +505,12 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
                 <div className="flex flex-col gap-4">
                     <div className="space-y-1.5">
                         <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-0.5">
-                            <ClockIcon className="w-3 h-3" /> PO Date
+                            <ClockIcon className="w-3 h-3" /> Created
                         </label>
-                        <input
-                            type="date"
-                            value={poDate}
-                            onChange={(e) => !isSubmittedReadOnly && setPoDate(e.target.value)}
-                            disabled={isViewOnly || isSubmittedReadOnly}
-                            className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none w-full transition-all outline-none"
-                        />
+                        {/* POs are dated the day they are submitted (the PO number encodes it). */}
+                        <p className="text-sm text-slate-800 dark:text-white px-0.5">
+                            {isCreateMode ? 'Today (on save)' : new Date(draft?.created_at || '').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </p>
                     </div>
                     <div className="space-y-1.5">
                         <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-0.5">
@@ -618,7 +550,11 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
                                                 {!poId && <span className="text-xs text-blue-500 font-bold">Add to Draft</span>}
                                             </div>
                                             <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mt-1.5">
-                                                <span>Price: ₹{Number(res.unit_price).toFixed(2)} • Vendor: {res.vendor_name || res.vendor_code}</span>
+                                                <span>
+                                                    {Number(res.unit_price) > 0 ? `Price: ${formatRmb(res.unit_price)}` : 'No RMB price'}
+                                                    {Number(res.landed_cost_inr) > 0 && ` • Est. landed ${formatInr(res.landed_cost_inr)}`}
+                                                    {(res.vendor_name || res.vendor_code) && ` • Vendor: ${res.vendor_name || res.vendor_code}`}
+                                                </span>
                                             </div>
                                         </div>
                                     );
@@ -649,14 +585,14 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
                                     <span className="font-bold text-sm tracking-wide text-slate-800 dark:text-white">
                                         {vendorMasters.find(vm => vm.vendor_code === v)?.vendor_name || v}
                                     </span>
-                                    {data.isSubmitted && <span className="bg-blue-600/20 text-blue-400 text-[10px] px-2 py-0.5 rounded font-mono border border-blue-500/30">Submitted to {data.poId}</span>}
+                                    {data.isSubmitted && data.poId && <span className="bg-blue-600/20 text-blue-400 text-[10px] px-2 py-0.5 rounded font-mono border border-blue-500/30">Submitted to {data.poId}</span>}
                                 </div>
                             </div>
                             <div className="text-xs font-semibold text-slate-500 flex items-center gap-6">
                                 <span className="bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded text-[10px] text-slate-600 dark:text-slate-400 uppercase tracking-tighter">{data.items.length} SKUs</span>
                                 <div className="flex items-center gap-2">
                                     <span className="text-slate-400">Subtotal:</span>
-                                    <span className="text-base font-bold text-slate-800 dark:text-white">₹{data.total.toLocaleString()}</span>
+                                    <span className="text-base font-bold text-slate-800 dark:text-white">{formatRmb(data.total)}</span>
                                 </div>
                             </div>
                         </div>
@@ -670,8 +606,8 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
                                             <th className="px-4 py-3 font-medium w-[15%]">Vendor</th>
                                             <th className="px-4 py-3 font-medium w-[18%]">Item Name</th>
                                             <th className="px-4 py-3 font-medium text-center w-[8%] border-x border-slate-200 dark:border-slate-700">Qty</th>
-                                            <th className="px-4 py-3 font-medium text-right w-[8%]">Price</th>
-                                            <th className="px-4 py-3 font-medium text-right w-[10%] border-r border-slate-200 dark:border-r-slate-700/30">Total</th>
+                                            <th className="px-4 py-3 font-medium text-right w-[8%]">Price (RMB)</th>
+                                            <th className="px-4 py-3 font-medium text-right w-[10%] border-r border-slate-200 dark:border-r-slate-700/30">Total (RMB)</th>
                                             <Tooltip label="LOGO" text="Custom Logo (Click to Toggle)" />
                                             <Tooltip label="PKG" text="Custom Packaging (Click to Toggle)" />
                                             <Tooltip label="MAN" text="Solving Manual (Click to Toggle)" />
@@ -751,12 +687,18 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
                                                     )}
                                                 </td>
                                                 <td className="px-4 py-3 text-right">
-                                                    <div className="text-right text-slate-500 dark:text-slate-400 text-xs font-mono font-medium">
-                                                        ₹{Number(item.unit_price || 0).toLocaleString()}
-                                                    </div>
+                                                    {Number(item.unit_price) > 0 ? (
+                                                        <div className="text-right text-slate-500 dark:text-slate-400 text-xs font-mono font-medium" title={item.landed_cost_inr > 0 ? `Est. landed ${formatInr(item.landed_cost_inr)} / unit` : undefined}>
+                                                            {formatRmb(item.unit_price)}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-right text-amber-500 text-[10px] font-semibold" title="No RMB_Price in EE Product Master for this SKU">
+                                                            No RMB price
+                                                        </div>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3 text-right font-bold text-slate-800 dark:text-white border-r border-slate-200 dark:border-r-slate-700/30 text-xs truncate">
-                                                    ₹{(Number(item.qty) * Number(item.unit_price || 0)).toLocaleString()}
+                                                    {Number(item.unit_price) > 0 ? formatRmb(Number(item.qty) * Number(item.unit_price)) : '—'}
                                                 </td>
 
                                                 {(['logo', 'packaging', 'manual', 'wrap'] as const).map(field => {
@@ -834,150 +776,21 @@ export const DraftOrderEdit: React.FC<DraftOrderEditProps> = ({ draft, initialMo
                             <p className="text-lg font-bold text-slate-800 dark:text-white">{stats.vendorsCount} <span className="text-xs font-normal text-slate-500 dark:text-slate-400">Distribution</span></p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={() => setShowDebug(!showDebug)}
-                            className="text-[10px] uppercase tracking-widest font-bold text-slate-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
-                        >
-                            {showDebug ? 'Hide Debug Info' : '🐛 Show Debug Info'}
-                        </button>
+                    <div className="flex items-center gap-8">
                         <div className="text-right">
-                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Session Value</p>
-                            <p className="text-3xl font-bold text-green-600 dark:text-green-400">{formatCurrency(stats.grandTotal)}</p>
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Est. Landed (INR)</p>
+                            <p className="text-lg font-bold text-slate-800 dark:text-white" title="Quantity × current landed cost (EE Product Master Cost). An estimate for budgeting, not what the vendor is paid.">{formatInr(stats.estLandedInr)}</p>
+                        </div>
+                        <div className="text-right">
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Order Value (RMB)</p>
+                            <p className="text-3xl font-bold text-green-600 dark:text-green-400">{formatRmb(stats.totalRmb)}</p>
+                            {stats.missingRmb > 0 && (
+                                <p className="text-[10px] font-semibold text-amber-500">{stats.missingRmb} line{stats.missingRmb === 1 ? '' : 's'} without an RMB price not included</p>
+                            )}
                         </div>
                     </div>
                 </div>
             </div>
-
-            {showDebug && (
-                <div className="mt-8 mb-24 space-y-6 border-t border-slate-200 dark:border-slate-800 pt-8 animate-in slide-in-from-bottom-4 duration-300">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                        <div className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-lg">
-                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Current Mode</p>
-                            <p className="text-sm font-mono text-slate-800 dark:text-white flex items-center gap-2">
-                                {(displayMode || shippingMode) === 'AIR' ? <AirplaneIcon className="w-4 h-4 text-sky-400" /> : <ShipIcon className="w-4 h-4 text-blue-400" />}
-                                {displayMode || shippingMode || 'NOT SELECTED'}
-                            </p>
-                        </div>
-                        <div className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-lg">
-                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Draft Status</p>
-                            <p className="text-sm font-mono text-amber-500 dark:text-amber-400">
-                                {draft?.status || 'DRAFT'}
-                            </p>
-                        </div>
-                        <div className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-lg">
-                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Read-Only Mode</p>
-                            <p className="text-sm font-mono text-orange-500 dark:text-orange-400">
-                                {isSubmittedReadOnly ? '🔒 SUBMITTED LOCK' : isViewOnly ? 'VIEW ONLY' : '✏️ EDITABLE'}
-                            </p>
-                        </div>
-                        <div className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-lg">
-                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Vendor Resolution</p>
-                            <p className="text-sm font-mono text-emerald-600 dark:text-emerald-400">
-                                {vendorCoverage.count} / {items.length} ({vendorCoverage.percent}%)
-                            </p>
-                        </div>
-                        <div className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-lg">
-                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Drive Files Present</p>
-                            <p className="text-sm font-mono text-blue-600 dark:text-blue-400">
-                                {driveLinkStats.count} / {items.length} ({driveLinkStats.percent}%)
-                            </p>
-                        </div>
-                        <div className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-lg">
-                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Last Customization Save</p>
-                            <p className="text-[11px] font-mono text-purple-600 dark:text-purple-400 truncate">
-                                {lastCustomizationData ? `${lastCustomizationData.sku} @ ${lastCustomizationData.timestamp}` : 'NO SAVES'}
-                            </p>
-                        </div>
-                    </div>
-
-                    <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2 mt-4">
-                        <ArrowPathIcon className="w-4 h-4" /> Transaction Trace {lastTimestamp && `(${lastTimestamp})`}
-                    </h3>
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        <Card className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-0 flex flex-col h-[400px]">
-                            <div className="px-4 py-2 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-200/50 dark:bg-slate-900/50 sticky top-0">
-                                <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase">Last Request Payload</span>
-                                <button onClick={() => lastRequest && navigator.clipboard.writeText(JSON.stringify(lastRequest, null, 2))} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition-colors text-slate-500 hover:text-slate-800 dark:hover:text-white">
-                                    <ClipboardDocumentCheckIcon className="w-4 h-4" />
-                                </button>
-                            </div>
-                            <div className="p-4 overflow-auto font-mono text-[11px] text-slate-800 dark:text-slate-300">
-                                {lastRequest ? (
-                                    <pre>{JSON.stringify(lastRequest, null, 2)}</pre>
-                                ) : (
-                                    <div className="h-full flex items-center justify-center italic text-slate-500 dark:text-slate-600">No operations performed yet.</div>
-                                )}
-                            </div>
-                        </Card>
-                        <Card className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-0 flex flex-col h-[400px]">
-                            <div className="px-4 py-2 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-200/50 dark:bg-slate-900/50 sticky top-0">
-                                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Server Response / Error</span>
-                                <button onClick={() => lastResponse && navigator.clipboard.writeText(JSON.stringify(lastResponse, null, 2))} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition-colors text-slate-500 hover:text-slate-800 dark:hover:text-white">
-                                    <ClipboardDocumentCheckIcon className="w-4 h-4" />
-                                </button>
-                            </div>
-                            <div className="p-4 overflow-auto font-mono text-[11px] text-slate-800 dark:text-slate-300">
-                                {lastError ? (
-                                    <div className="text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/20 p-3 rounded border border-red-200 dark:border-red-500/30">
-                                        <p className="font-bold mb-1">ERROR:</p>
-                                        {lastError}
-                                    </div>
-                                ) : lastResponse ? (
-                                    <pre>{JSON.stringify(lastResponse, null, 2)}</pre>
-                                ) : (
-                                    <div className="h-full flex items-center justify-center italic text-slate-500 dark:text-slate-600">Waiting for backend interaction...</div>
-                                )}
-                            </div>
-                        </Card>
-                    </div>
-                </div>
-            )}
-
-            {isAddNewSkuModalOpen && (
-                <AddNewSKUModal
-                    isOpen={true}
-                    onClose={() => setIsAddNewSkuModalOpen(false)}
-                    vendors={vendorMasters.map(vm => vm.vendor_name)}
-                    onSave={(data) => {
-                        const newSku = addSkuToCatalog({
-                            name: data.itemName,
-                            finalItemName: data.itemName,
-                            category: data.category,
-                            supplier: data.vendor,
-                            cost: Number(data.unitPrice || 0),
-                            mrp: Number(data.unitPrice || 0) * 2,
-                            shopifyPrice: Number(data.unitPrice || 0) * 1.8,
-                            stockOnHand: 0,
-                            stockInTransit: 0,
-                            stockOnOrder: 0,
-                            salesVelocity: 0
-                        });
-                        setItems(prev => [...prev, {
-                            id: `ITEM-${Date.now()}-${Math.random()}`,
-                            sku: newSku.id,
-                            item_name: data.itemName,
-                            // AddNewSKUModal's `vendors` prop is populated from vendor_name
-                            // (see below), so data.vendor is a name, not a code — matching
-                            // against vendor_name (not vendor_code) is what actually finds
-                            // the real vendor record here.
-                            vendor: vendorMasters.find(vm => vm.vendor_name === data.vendor)?.vendor_code || data.vendor,
-                            vendor_code: vendorMasters.find(vm => vm.vendor_name === data.vendor)?.vendor_code || data.vendor,
-                            vendor_name: data.vendor,
-                            qty: Number(data.quantity),
-                            unit_price: Number(data.unitPrice || 0),
-                            logo: data.logo,
-                            packaging: data.packaging,
-                            manual: data.manual,
-                            wrap: data.wrap,
-                            remarks: data.remarks,
-                            customization_files: '',
-                            source: 'MANUAL'
-                        }]);
-                        setIsAddNewSkuModalOpen(false);
-                    }}
-                />
-            )}
         </div>
     );
 };
