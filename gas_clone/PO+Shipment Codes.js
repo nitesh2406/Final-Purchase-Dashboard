@@ -626,6 +626,17 @@ if (attachmentLimitReached) {
   } catch (e) {
     Logger.log('sendPoEmailAndLog_ error: ' + e.message);
 
+    // Surface the failure on the PO itself (it used to stay NOT_SENT, so a
+    // failed email looked the same as one never meant to be sent).
+    try {
+      updateRowByKey_(poSheet, poHeader, 'po_id', poId, {
+        email_status: 'FAILED',
+        updated_at: now
+      });
+    } catch (statusErr) {
+      Logger.log('sendPoEmailAndLog_ could not mark FAILED: ' + statusErr.message);
+    }
+
     appendRowFromObject_(logSheet, logHeader, {
       log_id: Utilities.getUuid(),
       po_id: poId,
@@ -758,6 +769,11 @@ function apiGetPurchaseOrderDetails_(payload) {
   const lineHeader = getHeaderMap_(lineSheet);
   const lineData = lineSheet.getDataRange().getValues();
 
+  // Current RMB_Price per SKU, so the screen can flag a line whose stored
+  // unit_price_rmb is really INR landed cost (drafts were priced from Cost
+  // until 2026-09-26 — see productFromMasterRow_ in Draft_Order.js).
+  const products = loadDraftProductMap_();
+
   const lines = [];
 
   for (let i = 1; i < lineData.length; i++) {
@@ -766,7 +782,25 @@ function apiGetPurchaseOrderDetails_(payload) {
       Object.keys(lineHeader).forEach(k => {
         l[k] = lineData[i][lineHeader[k]];
       });
+      const product = products[String(l.sku || '').trim()];
+      l.master_rmb_price = product ? product.unit_price : 0;
       lines.push(l);
+    }
+  }
+
+  // Where the PO email goes (Vendor Masters) — the screen showed "No email
+  // provided" for every PO because this was never returned.
+  const vendorSheet = getSheet_(SHEET_NAMES.VENDOR_MASTERS);
+  const vendorHeader = getHeaderMap_(vendorSheet);
+  const vendorData = vendorSheet.getDataRange().getValues();
+  po.vendor_email = '';
+  po.cc_emails = [];
+  for (let i = 1; i < vendorData.length; i++) {
+    if (String(vendorData[i][vendorHeader.vendor_code] || '').trim() === String(po.vendor_code || '').trim()) {
+      po.vendor_name = vendorData[i][vendorHeader.vendor_name] || '';
+      po.vendor_email = String(vendorData[i][vendorHeader.primary_email] || '').trim();
+      po.cc_emails = String(vendorData[i][vendorHeader.cc_emails] || '').split(/[,;]/).map(s => s.trim()).filter(Boolean);
+      break;
     }
   }
 
@@ -1453,7 +1487,9 @@ function getOpenPOsForVendor_(vendorCode) {
     for (let j = 1; j < poLineData.length; j++) {
       const lineRow = poLineData[j];
       if (String(lineRow[poLineHeader.po_id]).trim() !== po.po_id) continue;
-      
+      // Closed lines (leftover written off) take no more shipment quantity.
+      if (poLineIsDone_(lineRow[poLineHeader.ordered_qty], lineRow[poLineHeader.fulfilled_qty], lineRow[poLineHeader.line_status])) continue;
+
       po.lines.push({
         sku: lineRow[poLineHeader.sku],
         sku_name: lineRow[poLineHeader.sku_name],
@@ -1981,8 +2017,9 @@ function updatePOLineFulfillment_(poId, sku, allocatedQty) {
   
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
-    if (String(row[header.po_id]).trim() === poId && 
-        String(row[header.sku]).trim() === sku) {
+    if (String(row[header.po_id]).trim() === poId &&
+        String(row[header.sku]).trim() === sku &&
+        String(row[header.line_status] || '').trim().toUpperCase() !== 'CLOSED') {
       
       const currentFulfilled = Number(row[header.fulfilled_qty] || 0);
       const orderedQty = Number(row[header.ordered_qty] || 0);
@@ -2010,47 +2047,56 @@ function updatePOLineFulfillment_(poId, sku, allocatedQty) {
 }
 
 /**
- * Update PO status based on all lines
+ * A PO line needs nothing more when it was received in full or closed.
+ * FULFILLED on a short line only happens by hand in the sheet (the code sets
+ * it at full receipt), and meant "stop waiting for the rest" — treated as closed.
+ */
+function poLineIsDone_(orderedQty, fulfilledQty, lineStatus) {
+  const status = String(lineStatus || '').trim().toUpperCase();
+  return Number(fulfilledQty || 0) >= Number(orderedQty || 0) || status === 'CLOSED' || status === 'FULFILLED';
+}
+
+// PO status from its lines: CLOSED once every line is done, PARTIALLY_SHIPPED
+// once anything was received, else OPEN. null for a PO with no lines.
+function computePoStatus_(lines) {
+  if (!lines.length) return null;
+  if (lines.every(l => poLineIsDone_(l.ordered_qty, l.fulfilled_qty, l.line_status))) return 'CLOSED';
+  return lines.some(l => Number(l.fulfilled_qty || 0) > 0) ? 'PARTIALLY_SHIPPED' : 'OPEN';
+}
+
+/**
+ * Update PO status based on all lines. Called after anything changes a PO's
+ * lines (shipment finalize, closing a line) — it used to run only at
+ * finalize and ignore closed lines, which left POs stuck as
+ * PARTIALLY_SHIPPED with nothing left to ship.
  */
 function updatePOStatus_(poId) {
   const lineSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDER_LINES);
   const lineHeader = getHeaderMap_(lineSheet);
   const lineData = lineSheet.getDataRange().getValues();
-  
-  let allFulfilled = true;
-  let anyFulfilled = false;
-  
-  // Check all lines for this PO
+
+  const lines = [];
   for (let i = 1; i < lineData.length; i++) {
     if (String(lineData[i][lineHeader.po_id]).trim() === poId) {
-      const orderedQty = Number(lineData[i][lineHeader.ordered_qty] || 0);
-      const fulfilledQty = Number(lineData[i][lineHeader.fulfilled_qty] || 0);
-      
-      if (fulfilledQty < orderedQty) {
-        allFulfilled = false;
-      }
-      if (fulfilledQty > 0) {
-        anyFulfilled = true;
-      }
+      lines.push({
+        ordered_qty: lineData[i][lineHeader.ordered_qty],
+        fulfilled_qty: lineData[i][lineHeader.fulfilled_qty],
+        line_status: lineData[i][lineHeader.line_status]
+      });
     }
   }
-  
-  // Determine PO status
-  let poStatus = 'OPEN';
-  if (allFulfilled) {
-    poStatus = 'CLOSED';
-  } else if (anyFulfilled) {
-    poStatus = 'PARTIALLY_SHIPPED';
-  }
-  
-  // Update PO
+
+  const poStatus = computePoStatus_(lines);
+  if (!poStatus) return null;
+
   const poSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDERS);
   const poHeader = getHeaderMap_(poSheet);
-  
+
   updateRowByKey_(poSheet, poHeader, 'po_id', poId, {
     po_status: poStatus,
     updated_at: new Date()
   });
+  return poStatus;
 }
 
 // Scans Vendor_Shipments for a row already stamped with this idempotency_key
@@ -4274,61 +4320,244 @@ function testGetBatches() {
   }
 }
 
+// Closes every line of a PO that still has something pending (the leftover
+// is written off), then the PO. Works on OPEN and PARTIALLY_SHIPPED POs.
 function apiClosePo_(payload) {
-  const { po_id } = payload;
+  const po_id = String(payload.po_id || '').trim();
   if (!po_id) throw new Error('po_id is required');
+  const reason = String(payload.reason || '').trim() || 'PO closed';
+  const closedBy = String(payload.closed_by || '').trim();
 
-  const now = new Date();
+  return withDraftLock_(() => {
+    const now = new Date();
+
+    const poSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDERS);
+    const poHeader = getHeaderMap_(poSheet);
+    const poData = poSheet.getDataRange().getValues();
+
+    let poRowIndex = -1;
+    for (let i = 1; i < poData.length; i++) {
+      if (String(poData[i][poHeader.po_id]).trim() === po_id) {
+        poRowIndex = i;
+        break;
+      }
+    }
+    if (poRowIndex === -1) throw new Error('PO not found: ' + po_id);
+
+    const currentStatus = String(poData[poRowIndex][poHeader.po_status] || '').trim();
+    if (currentStatus === 'CLOSED' || currentStatus === 'CLOSED_CANCELLED') {
+      throw new Error('PO is already closed');
+    }
+
+    // Close every line that still has something pending
+    const lineSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDER_LINES);
+    const lineHeader = getHeaderMap_(lineSheet);
+    const lineData = lineSheet.getDataRange().getValues();
+
+    const closedRows = [];
+    let writtenOff = 0;
+    for (let i = 1; i < lineData.length; i++) {
+      const row = lineData[i];
+      if (String(row[lineHeader.po_id]).trim() !== po_id) continue;
+      if (poLineIsDone_(row[lineHeader.ordered_qty], row[lineHeader.fulfilled_qty], row[lineHeader.line_status])) continue;
+      writtenOff += Number(row[lineHeader.ordered_qty] || 0) - Number(row[lineHeader.fulfilled_qty] || 0);
+      markPoLineClosed_(row, lineHeader, reason, now);
+      closedRows.push(i);
+    }
+    writeRowRuns_(lineSheet, lineData, closedRows);
+
+    updateRowByKey_(poSheet, poHeader, 'po_id', po_id, {
+      po_status: 'CLOSED',
+      updated_at: now
+    });
+
+    logAuditEvent_('PURCHASE_ORDER', 'CLOSE', po_id,
+      `${closedRows.length} line(s) closed, ${writtenOff} unit(s) written off. Reason: ${reason}`, 'SUCCESS', closedBy);
+
+    return { success: true, po_id, lines_closed: closedRows.length, written_off_qty: writtenOff, message: 'PO closed successfully' };
+  });
+}
+
+function markPoLineClosed_(row, lineHeader, reason, now) {
+  row[lineHeader.line_status] = 'CLOSED';
+  row[lineHeader.updated_at] = now;
+  if (lineHeader.line_close_reason !== undefined) row[lineHeader.line_close_reason] = reason;
+  if (lineHeader.completed_at !== undefined) row[lineHeader.completed_at] = now;
+}
+
+// Closes one PO line: whatever hasn't been received is written off, so it
+// stops counting as incoming stock (Demand Forecasting), stops taking
+// shipment quantity (apiAllocateToOpenPOs) and leaves Pending Lines. The PO's
+// status is then recomputed (it closes once every line is done).
+function apiClosePoLine_(payload) {
+  const lineId = String(payload.po_line_id || '').trim();
+  if (!lineId) throw new Error('po_line_id is required');
+  const reason = String(payload.reason || '').trim() || 'Remaining quantity closed';
+  const closedBy = String(payload.closed_by || '').trim();
+
+  return withDraftLock_(() => {
+    const now = new Date();
+    const lineSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDER_LINES);
+    const lineHeader = getHeaderMap_(lineSheet);
+    const lineData = lineSheet.getDataRange().getValues();
+
+    let idx = -1;
+    for (let i = 1; i < lineData.length; i++) {
+      if (String(lineData[i][lineHeader.po_line_id] || '').trim() === lineId) { idx = i; break; }
+    }
+    if (idx === -1) throw new Error('PO line not found: ' + lineId);
+
+    const row = lineData[idx];
+    const poId = String(row[lineHeader.po_id] || '').trim();
+    const sku = String(row[lineHeader.sku] || '').trim();
+    const ordered = Number(row[lineHeader.ordered_qty] || 0);
+    const fulfilled = Number(row[lineHeader.fulfilled_qty] || 0);
+    if (poLineIsDone_(ordered, fulfilled, row[lineHeader.line_status])) {
+      throw new Error(`SKU ${sku} on ${poId} has nothing left to close`);
+    }
+
+    markPoLineClosed_(row, lineHeader, reason, now);
+    writeRowRuns_(lineSheet, lineData, [idx]);
+    const poStatus = updatePOStatus_(poId);
+
+    logAuditEvent_('PURCHASE_ORDER', 'CLOSE_LINE', poId,
+      `SKU ${sku}: ${ordered - fulfilled} of ${ordered} unit(s) written off. Reason: ${reason}`, 'SUCCESS', closedBy);
+
+    return { success: true, po_id: poId, po_line_id: lineId, sku, written_off_qty: ordered - fulfilled, po_status: poStatus };
+  });
+}
+
+// Re-sends a PO email whose first send failed. Only FAILED: NOT_SENT POs are
+// the reference-only ones (bulk import, POs for extra shipped items) that are
+// deliberately never emailed to the vendor.
+function apiResendPoEmail_(payload) {
+  const poId = String(payload.po_id || '').trim();
+  if (!poId) throw new Error('po_id is required');
 
   const poSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDERS);
   const poHeader = getHeaderMap_(poSheet);
   const poData = poSheet.getDataRange().getValues();
-
-  let poRowIndex = -1;
+  let po = null;
   for (let i = 1; i < poData.length; i++) {
-    if (String(poData[i][poHeader.po_id]).trim() === po_id) {
-      poRowIndex = i;
+    if (String(poData[i][poHeader.po_id]).trim() === poId) { po = poData[i]; break; }
+  }
+  if (!po) throw new Error('PO not found: ' + poId);
+  if (String(po[poHeader.email_status] || '').trim().toUpperCase() !== 'FAILED') {
+    throw new Error(`Only a PO whose email failed can be re-sent (${poId} is ${po[poHeader.email_status] || 'NOT_SENT'})`);
+  }
+
+  const vendorCode = String(po[poHeader.vendor_code] || '').trim();
+  const vendorSheet = getSheet_(SHEET_NAMES.VENDOR_MASTERS);
+  const vendorHeader = getHeaderMap_(vendorSheet);
+  const vendorData = vendorSheet.getDataRange().getValues();
+  let to = '', cc = '';
+  for (let i = 1; i < vendorData.length; i++) {
+    if (String(vendorData[i][vendorHeader.vendor_code] || '').trim() === vendorCode) {
+      to = vendorData[i][vendorHeader.primary_email] || '';
+      cc = vendorData[i][vendorHeader.cc_emails] || '';
       break;
     }
   }
-  if (poRowIndex === -1) throw new Error('PO not found: ' + po_id);
+  if (!String(to).trim()) throw new Error(`Vendor ${vendorCode} has no primary email in Vendor Masters`);
 
-  const currentStatus = String(poData[poRowIndex][poHeader.po_status] || '').trim();
-  if (currentStatus === 'CLOSED' || currentStatus === 'CLOSED_CANCELLED') {
-    throw new Error('PO is already closed');
+  sendPoEmailAndLog_(poId, vendorCode, to, cc, String(payload.sent_by || '').trim());
+
+  // sendPoEmailAndLog_ records the outcome on the PO row; report it.
+  const after = getSheet_(SHEET_NAMES.PURCHASE_ORDERS).getDataRange().getValues();
+  let emailStatus = '';
+  for (let i = 1; i < after.length; i++) {
+    if (String(after[i][poHeader.po_id]).trim() === poId) { emailStatus = String(after[i][poHeader.email_status] || ''); break; }
   }
+  if (emailStatus !== 'SENT') throw new Error(`Email to ${to} failed again. See PO_Email_Log for the reason.`);
+  return { success: true, po_id: poId, email_status: emailStatus, message: `Email sent to ${to}` };
+}
 
-  // Update PO header
-  updateRowByKey_(poSheet, poHeader, 'po_id', po_id, {
-    po_status: 'CLOSED',
-    updated_at: now
-  });
+// One-off repair: recompute every PO's status from its lines (computePoStatus_).
+// { dry_run: true } (the default) only reports what would change.
+function backfillPoStatuses_(payload) {
+  const dryRun = !(payload && payload.dry_run === false);
+  return withDraftLock_(() => {
+    const poSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDERS);
+    const poHeader = getHeaderMap_(poSheet);
+    const poData = poSheet.getDataRange().getValues();
+    const lineSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDER_LINES);
+    const lineHeader = getHeaderMap_(lineSheet);
+    const lineData = lineSheet.getDataRange().getValues();
 
-  // Update all non-FULFILLED lines in one pass
-  const lineSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDER_LINES);
-  const lineHeader = getHeaderMap_(lineSheet);
-  const lineData = lineSheet.getDataRange().getValues();
-
-  const updatedRows = [];
-  for (let i = 1; i < lineData.length; i++) {
-    if (
-      String(lineData[i][lineHeader.po_id]).trim() === po_id &&
-      String(lineData[i][lineHeader.line_status]).trim() !== 'FULFILLED'
-    ) {
-      lineData[i][lineHeader.line_status] = 'CLOSED';
-      lineData[i][lineHeader.updated_at]  = now;
-      updatedRows.push({ rowIndex: i + 1, rowData: lineData[i] });
+    const linesByPo = {};
+    for (let i = 1; i < lineData.length; i++) {
+      const poId = String(lineData[i][lineHeader.po_id] || '').trim();
+      if (!poId) continue;
+      (linesByPo[poId] = linesByPo[poId] || []).push({
+        ordered_qty: lineData[i][lineHeader.ordered_qty],
+        fulfilled_qty: lineData[i][lineHeader.fulfilled_qty],
+        line_status: lineData[i][lineHeader.line_status]
+      });
     }
-  }
 
-  const totalCols = lineData[0].length;
-  updatedRows.forEach(({ rowIndex, rowData }) => {
-    lineSheet.getRange(rowIndex, 1, 1, totalCols).setValues([rowData]);
+    const now = new Date();
+    const changes = [];
+    const changedRows = [];
+    for (let i = 1; i < poData.length; i++) {
+      const poId = String(poData[i][poHeader.po_id] || '').trim();
+      const current = String(poData[i][poHeader.po_status] || '').trim();
+      // Closed POs stay closed; only OPEN / PARTIALLY_SHIPPED are recomputed.
+      if (!poId || (current !== 'OPEN' && current !== 'PARTIALLY_SHIPPED')) continue;
+      const next = computePoStatus_(linesByPo[poId] || []);
+      if (!next || next === current) continue;
+      changes.push({ po_id: poId, from: current, to: next });
+      poData[i][poHeader.po_status] = next;
+      poData[i][poHeader.updated_at] = now;
+      changedRows.push(i);
+    }
+    if (!dryRun) writeRowRuns_(poSheet, poData, changedRows);
+    return { success: true, dry_run: dryRun, changed: changes.length, changes };
   });
+}
 
-  logAuditEvent_('PURCHASE_ORDER', 'CLOSE', po_id, `${updatedRows.length} line(s) closed`, 'SUCCESS', payload.closed_by);
+// One-off repair: on OPEN / PARTIALLY_SHIPPED POs, lines whose unit_price_rmb
+// is really INR landed cost (more than 6x the SKU's RMB_Price) are re-priced
+// to RMB_Price. Lines with no RMB_Price in the master are left as they are.
+// { dry_run: true } (the default) only reports what would change.
+function backfillPoLineRmbPrices_(payload) {
+  const dryRun = !(payload && payload.dry_run === false);
+  return withDraftLock_(() => {
+    const poSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDERS);
+    const poHeader = getHeaderMap_(poSheet);
+    const poData = poSheet.getDataRange().getValues();
+    const active = {};
+    for (let i = 1; i < poData.length; i++) {
+      const s = String(poData[i][poHeader.po_status] || '').trim();
+      if (s === 'OPEN' || s === 'PARTIALLY_SHIPPED') active[String(poData[i][poHeader.po_id]).trim()] = true;
+    }
 
-  return { success: true, po_id, message: 'PO closed successfully' };
+    const products = loadDraftProductMap_();
+    const lineSheet = getSheet_(SHEET_NAMES.PURCHASE_ORDER_LINES);
+    const lineHeader = getHeaderMap_(lineSheet);
+    const lineData = lineSheet.getDataRange().getValues();
+    const changes = [];
+    const changedRows = [];
+    let noMasterPrice = 0;
+    for (let i = 1; i < lineData.length; i++) {
+      const row = lineData[i];
+      const poId = String(row[lineHeader.po_id] || '').trim();
+      if (!active[poId]) continue;
+      const sku = String(row[lineHeader.sku] || '').trim();
+      const price = Number(row[lineHeader.unit_price_rmb] || 0);
+      const product = products[sku];
+      const rmb = product ? product.unit_price : 0;
+      if (!(rmb > 0)) { if (price > 0) noMasterPrice++; continue; }
+      if (!(price > rmb * 6)) continue;
+      const qty = Number(row[lineHeader.ordered_qty] || 0);
+      changes.push({ po_id: poId, sku, from: price, to: rmb });
+      row[lineHeader.unit_price_rmb] = rmb;
+      if (lineHeader.line_total_rmb !== undefined) row[lineHeader.line_total_rmb] = qty * rmb;
+      // updated_at left alone: SKU History reads it as the fulfilment date.
+      changedRows.push(i);
+    }
+    if (!dryRun) writeRowRuns_(lineSheet, lineData, changedRows);
+    return { success: true, dry_run: dryRun, changed: changes.length, left_without_master_price: noMasterPrice, changes };
+  });
 }
 
 function apiGetPendingLines_(payload) {
@@ -4371,6 +4600,7 @@ function apiGetPendingLines_(payload) {
     const daysPending  = poDate ? Math.floor((today - poDate) / (1000 * 60 * 60 * 24)) : 0;
 
     rows.push({
+      po_line_id:        lineData[i][lineHeader.po_line_id],
       po_id:             poId,
       vendor_code:       po.vendor_code,
       sku:               lineData[i][lineHeader.sku],

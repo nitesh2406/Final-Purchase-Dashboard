@@ -114,6 +114,10 @@ function doPost(e) {
     if (!isReadAction_(action)) {
       try { SpreadsheetApp.flush(); } catch (err) {}
       bumpBatchDataVersion_();
+      // The PO list is cached for 60s (apiGetPurchaseOrders_); any write may
+      // have changed a PO, so drop it — the list used to lag every close,
+      // draft submit and shipment finalize by up to a minute.
+      try { CacheService.getScriptCache().remove(PO_LIST_CACHE_KEY_); } catch (err) {}
     }
   }
 }
@@ -300,6 +304,11 @@ function doPostInner_(e) {
       case 'sync_shipment_costing':     result = syncShipmentCostingApi();       break;
       case 'update_shipment_finance':   result = updateShipmentFinance(payload); break;
       case 'close_po':                  result = apiClosePo_(payload);            break;
+      case 'close_po_line':             result = apiClosePoLine_(payload);        break;
+      case 'resend_po_email':           result = apiResendPoEmail_(payload);      break;
+      // One-off repairs; { dry_run: true } by default. See PO+Shipment Codes.js.
+      case 'backfill_po_statuses':      result = backfillPoStatuses_(payload);    break;
+      case 'backfill_po_line_rmb_prices': result = backfillPoLineRmbPrices_(payload); break;
       case 'get_pending_lines':         result = apiGetPendingLines_(payload);    break;
       case 'get_sku_history':           result = apiGetSKUHistory_(payload);      break;
 

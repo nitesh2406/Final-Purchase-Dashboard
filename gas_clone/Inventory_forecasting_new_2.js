@@ -1019,6 +1019,9 @@ function calculatePOBalance(eePoData) {
 
         const orderedQty = getValue(row, poLinesSheet, 'ordered_qty', true);
         const fulfilledQty = getValue(row, poLinesSheet, 'fulfilled_qty', true);
+        // A closed line's leftover was written off — it isn't coming.
+        const lineStatus = String(getValue(row, poLinesSheet, 'line_status') || '').trim().toUpperCase();
+        if (lineStatus === 'CLOSED' || lineStatus === 'FULFILLED') continue;
         const pendingQty = orderedQty - fulfilledQty;
 
         if (pendingQty <= 0) continue;

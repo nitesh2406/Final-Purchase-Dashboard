@@ -4,11 +4,12 @@ import { Button } from '../ui/Button';
 import { 
     MagnifyingGlassIcon, EyeIcon, XMarkIcon, 
     AirplaneIcon, ShipIcon, ListBulletIcon,
-    InformationCircleIcon, ArrowLeftIcon, FunnelIcon,
+    InformationCircleIcon, ArrowLeftIcon,
     LinkIcon, EnvelopeIcon, ArrowPathIcon, ExclamationTriangleIcon
 } from '../icons/Icons';
 import { API_ACTIONS } from '../../constants';
 import { callGas } from '../../services/gasApi';
+import { getCurrentActor } from '../../services/authToken';
 import { ViewType } from '../../types';
 import { useQueryParam } from '../../hooks/useQueryParam';
 
@@ -16,18 +17,29 @@ type POStatus = 'OPEN' | 'PARTIALLY_SHIPPED' | 'CLOSED' | 'CLOSED_CANCELLED';
 type EmailStatus = 'NOT_SENT' | 'SENT' | 'FAILED';
 
 interface POLine {
+    po_line_id: string;
     sku: string;
     name: string;
     ordered_qty: number;
-    unit_price: number;
+    unit_price: number;       // unit_price_rmb as stored on the PO line
+    master_rmb_price: number; // current RMB_Price of the SKU (0 = none in master)
     logo: boolean;
     packaging: boolean;
     manual: boolean;
     wrap: boolean;
     fulfilled_qty: number;
-    status: 'PENDING' | 'PARTIAL' | 'FULFILLED';
+    status: 'PENDING' | 'PARTIAL' | 'FULFILLED' | 'CLOSED';
+    close_reason?: string;
     folder_link?: string;
 }
+
+// A line still waiting for goods: not received in full and not closed. (A
+// short line marked FULFILLED by hand in the sheet counts as closed.)
+const isLinePending = (l: POLine) => l.status === 'PENDING' || l.status === 'PARTIAL';
+
+// Drafts were priced from INR landed cost until 2026-09-26, so older PO lines
+// hold INR in unit_price_rmb. Flag a price far above the SKU's RMB price.
+const looksLikeInr = (l: POLine) => l.master_rmb_price > 0 && l.unit_price > l.master_rmb_price * 6;
 
 interface PurchaseOrderUI {
     po_id: string;
@@ -47,6 +59,7 @@ interface PurchaseOrderUI {
 }
 
 interface PendingLine {
+    po_line_id: string;
     po_id: string;
     vendor_code: string;
     sku: string;
@@ -125,76 +138,138 @@ const EmailStatusBadge: React.FC<{ status: EmailStatus }> = ({ status }) => {
 };
 
 const ModeBadge: React.FC<{ mode: 'Sea' | 'Air' }> = ({ mode }) => {
-    const isAir = String(mode).toUpperCase() === 'AIR';
+    const normalized = String(mode || '').toUpperCase();
+    const isAir = normalized === 'AIR';
+    const isSea = normalized === 'SEA';
     return (
         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold rounded border transition-colors ${
-            isAir ? 'bg-sky-600/20 text-sky-400 border-sky-600/30' : 'bg-blue-600/20 text-blue-400 border-blue-600/30'
+            isAir ? 'bg-sky-600/20 text-sky-400 border-sky-600/30' : isSea ? 'bg-blue-600/20 text-blue-400 border-blue-600/30' : 'bg-slate-500/10 text-slate-400 border-slate-500/30'
         }`}>
-            {isAir ? <AirplaneIcon className="w-3 h-3" /> : <ShipIcon className="w-3 h-3" />}
-            {String(mode).toUpperCase()}
+            {isAir && <AirplaneIcon className="w-3 h-3" />}
+            {isSea && <ShipIcon className="w-3 h-3" />}
+            {normalized || '—'}
         </span>
     );
 };
 
-const formatCurrency = (amount: number) => 
-    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
+// PO line prices are RMB (Purchase_Order_Lines.unit_price_rmb).
+const formatRmb = (amount: number) =>
+    '¥' + Number(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
+// Confirmation for closing a PO or one of its lines: whatever hasn't arrived
+// is written off, so it stops counting as incoming stock.
+const CloseDialog: React.FC<{
+    title: string;
+    detail: React.ReactNode;
+    busy: boolean;
+    error: string | null;
+    onCancel: () => void;
+    onConfirm: (reason: string) => void;
+}> = ({ title, detail, busy, error, onCancel, onConfirm }) => {
+    const [reason, setReason] = useState('');
+    return (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[200] flex items-center justify-center p-4">
+            <Card className="max-w-md w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl p-8 text-center animate-in zoom-in-95 duration-200">
+                <div className="w-16 h-16 bg-red-600/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <InformationCircleIcon className="w-10 h-10 text-red-500" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-850 dark:text-white mb-2">{title}</h3>
+                <div className="text-slate-500 dark:text-slate-400 text-sm mb-5 leading-relaxed">{detail}</div>
+                <input
+                    type="text"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="Reason (optional), e.g. vendor discontinued"
+                    className="w-full mb-5 px-3 py-2 text-sm bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-white focus:ring-2 focus:ring-red-500 focus:outline-none"
+                />
+                {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
+                <div className="flex gap-3">
+                    <Button
+                        variant="secondary"
+                        className="flex-1 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 h-11 bg-white dark:bg-slate-800"
+                        onClick={onCancel}
+                        disabled={busy}
+                    >
+                        Keep Open
+                    </Button>
+                    <Button
+                        className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold h-11 disabled:opacity-60"
+                        onClick={() => onConfirm(reason.trim())}
+                        disabled={busy}
+                    >
+                        {busy ? 'Closing...' : 'Close'}
+                    </Button>
+                </div>
+            </Card>
+        </div>
+    );
+};
 
 interface PurchaseOrdersProps {
     onNavigate?: (view: ViewType) => void;
 }
 
-// Module-level, not React state, so it survives this component unmounting
-// (e.g. switching tabs) and remounting — same pattern already used by
-// ShipmentTracker/ShipmentFinance/InventoryForecasting. Without this, the
-// PO list reset to empty and refetched on every tab switch.
+// Module-level, not React state, so switching tabs and back shows the last
+// list instantly. It is only a first paint: the list is re-read every time
+// the screen opens, because POs change from other screens (draft submit,
+// shipment finalize) whose refresh event can't reach an unmounted screen.
 let poListCache: { purchaseOrders: PurchaseOrderUI[]; timestamp: number } | null = null;
+
+type CloseTarget =
+    | { kind: 'po'; poId: string; pendingQty: number; pendingLines: number }
+    | { kind: 'line'; poId: string; line: POLine };
 
 export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) => {
     const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderUI[]>(poListCache?.purchaseOrders || []);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [selectedPo, setSelectedPo] = useState<PurchaseOrderUI | null>(null);
+    const [lastPoId, setLastPoId] = useState<string | null>(null);
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [detailsError, setDetailsError] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [activeTab, setActiveTab] = useQueryParam<'All' | POStatus>('statusFilter', 'All');
-    const [showCloseConfirm, setShowCloseConfirm] = useState(false);
-    const [closingPo, setClosingPo] = useState(false);
-    const [closePoError, setClosePoError] = useState<string | null>(null);
+    const [closeTarget, setCloseTarget] = useState<CloseTarget | null>(null);
+    const [closing, setClosing] = useState(false);
+    const [closeError, setCloseError] = useState<string | null>(null);
+    const [resending, setResending] = useState(false);
+    const [resendMessage, setResendMessage] = useState<{ ok: boolean; text: string } | null>(null);
     const [mainView, setMainView] = useQueryParam<'po_list' | 'pending_lines' | 'sku_history'>('poView', 'po_list');
 
     const mapLineToUi = (l: any): POLine => {
         const ordered = Number(l.ordered_qty ?? 0);
         const fulfilled = Number(l.fulfilled_qty ?? 0);
+        const lineStatus = String(l.line_status ?? '').toUpperCase();
         let status: POLine["status"] = "PENDING";
         if (fulfilled >= ordered && ordered > 0) status = "FULFILLED";
+        else if (lineStatus === 'CLOSED' || lineStatus === 'FULFILLED') status = "CLOSED";
         else if (fulfilled > 0 && fulfilled < ordered) status = "PARTIAL";
 
         return {
+            po_line_id: String(l.po_line_id ?? ""),
             sku: String(l.sku ?? ""),
             name: String(l.sku_name ?? l.name ?? ""),
             ordered_qty: ordered,
             unit_price: Number(l.unit_price_rmb ?? l.unit_price ?? 0),
+            master_rmb_price: Number(l.master_rmb_price ?? 0),
             logo: Boolean(l.custom_logo ?? l.logo ?? false),
             packaging: Boolean(l.custom_packaging ?? l.packaging ?? false),
             manual: Boolean(l.solving_manual ?? l.manual ?? false),
             wrap: Boolean(l.opp_wrap ?? l.wrap ?? false),
             fulfilled_qty: fulfilled,
             status,
+            close_reason: l.line_close_reason || undefined,
             folder_link: l.customization_files || undefined,
         };
     };
 
-    const fetchPurchaseOrders = async (forceRefresh = false) => {
-        if (!forceRefresh && poListCache) {
-            setPurchaseOrders(poListCache.purchaseOrders);
-            return;
-        }
+    // `force` bypasses the shared read cache (explicit Sync / after a write).
+    const fetchPurchaseOrders = async (force = false) => {
         setLoading(true);
         setError(null);
 
         try {
-            const result = await callGas(API_ACTIONS.GET_PURCHASE_ORDERS, {}, 2);
+            const result = await callGas(API_ACTIONS.GET_PURCHASE_ORDERS, {}, 2, undefined, { force });
             if (!result || result.success !== true) {
                 throw new Error(result?.message || "Failed to load POs");
             }
@@ -216,13 +291,13 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
     };
 
     const fetchPurchaseOrderDetails = async (poId: string) => {
+        setLastPoId(poId);
         setLoadingDetails(true);
         setDetailsError(null);
-
-        const action = API_ACTIONS.GET_PURCHASE_ORDER_DETAILS || "get_purchase_order_details";
+        setResendMessage(null);
 
         try {
-            const result = await callGas(action, { po_id: poId }, 2);
+            const result = await callGas(API_ACTIONS.GET_PURCHASE_ORDER_DETAILS, { po_id: poId }, 2);
 
             if (!result || result.success !== true) {
                 throw new Error(result?.message || "Failed to load PO details");
@@ -255,9 +330,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
 
     useEffect(() => {
         const handler = (e: any) => {
-            // Refresh PO list — force, since this event specifically means
-            // something just changed server-side (PO closed, draft
-            // submitted) and the cache is now known-stale.
+            // Something just changed server-side (PO closed, draft submitted).
             fetchPurchaseOrders(true);
 
             // If a PO is currently open, refresh its details too
@@ -280,33 +353,71 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
         });
     }, [searchTerm, activeTab, purchaseOrders]);
 
-    const handleClosePo = async () => {
+    const openClosePo = () => {
         if (!selectedPo) return;
-        const poId = selectedPo.po_id;
-        setClosingPo(true);
-        setClosePoError(null);
+        const pending = selectedPo.lines.filter(isLinePending);
+        setCloseError(null);
+        setCloseTarget({
+            kind: 'po',
+            poId: selectedPo.po_id,
+            pendingLines: pending.length,
+            pendingQty: pending.reduce((s, l) => s + (l.ordered_qty - l.fulfilled_qty), 0)
+        });
+    };
+
+    const handleConfirmClose = async (reason: string) => {
+        if (!closeTarget) return;
+        setClosing(true);
+        setCloseError(null);
         try {
-            const result = await callGas(API_ACTIONS.CLOSE_PO, { po_id: poId });
+            const result = closeTarget.kind === 'po'
+                ? await callGas(API_ACTIONS.CLOSE_PO, { po_id: closeTarget.poId, reason, closed_by: getCurrentActor() })
+                : await callGas('close_po_line', { po_line_id: closeTarget.line.po_line_id, reason, closed_by: getCurrentActor() });
             if (!result || result.success !== true) {
-                throw new Error(result?.message || 'Failed to close PO');
+                throw new Error(result?.message || result?.error || 'Failed to close');
             }
-            setShowCloseConfirm(false);
-            setSelectedPo(null);
+            const poId = closeTarget.poId;
+            setCloseTarget(null);
+            await fetchPurchaseOrderDetails(poId);
             window.dispatchEvent(new CustomEvent('po:refresh', { detail: { po_id: poId } }));
         } catch (err: any) {
-            setClosePoError(err.message || 'Failed to close PO');
+            setCloseError(err.message || 'Failed to close');
         } finally {
-            setClosingPo(false);
+            setClosing(false);
+        }
+    };
+
+    const handleResendEmail = async () => {
+        if (!selectedPo) return;
+        setResending(true);
+        setResendMessage(null);
+        try {
+            const result = await callGas('resend_po_email', { po_id: selectedPo.po_id, sent_by: getCurrentActor() });
+            if (!result || result.success !== true) {
+                throw new Error(result?.message || result?.error || 'Resend failed');
+            }
+            await fetchPurchaseOrderDetails(selectedPo.po_id);
+            setResendMessage({ ok: true, text: result.message || 'Email sent' });
+            fetchPurchaseOrders(true);
+        } catch (err: any) {
+            await fetchPurchaseOrderDetails(selectedPo.po_id);
+            setResendMessage({ ok: false, text: err.message || 'Resend failed' });
+        } finally {
+            setResending(false);
         }
     };
 
     if (selectedPo || loadingDetails || detailsError) {
+        const isPoActive = !!selectedPo && (selectedPo.po_status === 'OPEN' || selectedPo.po_status === 'PARTIALLY_SHIPPED');
+        const pendingLineCount = selectedPo ? selectedPo.lines.filter(isLinePending).length : 0;
+        const inrLineCount = selectedPo ? selectedPo.lines.filter(looksLikeInr).length : 0;
+        const goBack = () => { setSelectedPo(null); setDetailsError(null); setCloseTarget(null); };
         return (
             <div className="flex flex-col h-full space-y-6 text-slate-850 dark:text-white p-6 bg-slate-50 dark:bg-slate-900 min-h-screen animate-in fade-in duration-300">
                 <div className="flex justify-between items-center">
                     <div className="flex items-center gap-4">
-                        <button 
-                            onClick={() => { setSelectedPo(null); setDetailsError(null); }} 
+                        <button
+                            onClick={goBack}
                             className="p-2 -ml-2 text-slate-400 dark:text-slate-500 hover:text-slate-800 dark:hover:text-white transition-colors"
                         >
                             <ArrowLeftIcon className="w-6 h-6" />
@@ -320,17 +431,17 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <Button 
-                            variant="secondary" 
-                            onClick={() => { setSelectedPo(null); setDetailsError(null); }}
+                        <Button
+                            variant="secondary"
+                            onClick={goBack}
                             className="h-10 px-4 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
                         >
                             Back to List
                         </Button>
-                        {selectedPo && selectedPo.po_status === 'OPEN' && (
-                            <Button 
+                        {isPoActive && !loadingDetails && (
+                            <Button
                                 className="bg-red-600/10 text-red-500 border border-red-500/20 hover:bg-red-600 hover:text-white h-10 font-bold"
-                                onClick={() => setShowCloseConfirm(true)}
+                                onClick={openClosePo}
                             >
                                 Close PO
                             </Button>
@@ -349,9 +460,9 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                     <div className="flex-grow flex items-center justify-center min-h-[400px]">
                         <Card className="max-w-md p-8 text-center bg-red-500/5 border-red-500/20">
                             <ExclamationTriangleIcon className="w-12 h-12 text-red-500 mx-auto mb-4" />
-                            <h3 className="text-xl font-bold text-white mb-2">Fetch Failed</h3>
+                            <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2">Fetch Failed</h3>
                             <p className="text-slate-400 text-sm mb-6">{detailsError}</p>
-                            <Button onClick={() => { if(selectedPo) fetchPurchaseOrderDetails(selectedPo.po_id); }} className="bg-red-600 hover:bg-red-700">Retry Fetch</Button>
+                            <Button onClick={() => { if (lastPoId) fetchPurchaseOrderDetails(lastPoId); }} className="bg-red-600 hover:bg-red-700">Retry Fetch</Button>
                         </Card>
                     </div>
                 ) : selectedPo ? (
@@ -359,46 +470,66 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                         {/* Header Info Cards */}
                         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                             <Card className="bg-white dark:bg-slate-800/40 p-4 border border-slate-200 dark:border-slate-700 shadow-sm">
-                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Vendor Code</p>
+                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Vendor</p>
                                 <p className="text-base font-bold text-slate-800 dark:text-white">{selectedPo.vendor_code}</p>
+                                {(selectedPo as any).vendor_name && <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{(selectedPo as any).vendor_name}</p>}
                             </Card>
                             <Card className="bg-white dark:bg-slate-800/40 p-4 border border-slate-200 dark:border-slate-700 shadow-sm">
                                 <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Draft Reference</p>
-                                <p className="text-base text-blue-500 dark:text-blue-400 font-mono font-medium">{selectedPo.draft_id}</p>
+                                <p className="text-base text-blue-500 dark:text-blue-400 font-mono font-medium">{selectedPo.draft_id || '—'}</p>
                             </Card>
                             <Card className="bg-white dark:bg-slate-800/40 p-4 border border-slate-200 dark:border-slate-700 shadow-sm">
                                 <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">PO Date</p>
-                                <p className="text-base text-slate-800 dark:text-white">{selectedPo.po_date}</p>
+                                <p className="text-base text-slate-800 dark:text-white">{formatPoDate(selectedPo.po_date)}</p>
                             </Card>
                             <Card className="bg-white dark:bg-slate-800/40 p-4 border border-slate-200 dark:border-slate-700 shadow-sm">
                                 <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Shipping Mode</p>
                                 <div className="mt-1"><ModeBadge mode={selectedPo.planned_mode} /></div>
                             </Card>
                             <Card className="bg-white dark:bg-slate-800/40 p-4 border border-slate-200 dark:border-slate-700 shadow-sm">
-                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Total Value</p>
-                                <p className="text-lg font-bold text-green-600 dark:text-green-400">{formatCurrency(selectedPo.total_value)}</p>
+                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Total Value (RMB)</p>
+                                <p className="text-lg font-bold text-green-600 dark:text-green-400">{formatRmb(selectedPo.total_value)}</p>
                             </Card>
                             <Card className="bg-white dark:bg-slate-800/40 p-4 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between">
                                 <div>
                                     <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-1.5">
                                         <EnvelopeIcon className="w-3 h-3"/> Email Information
                                     </p>
-                                    <p className="text-[11px] text-slate-600 dark:text-slate-300 truncate" title={selectedPo.vendor_email}>{selectedPo.vendor_email || 'No email provided'}</p>
+                                    <p className="text-[11px] text-slate-600 dark:text-slate-300 truncate" title={selectedPo.vendor_email}>{selectedPo.vendor_email || 'No email in Vendor Masters'}</p>
                                     <p className="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5 truncate">
                                         CC: {selectedPo.cc_emails && selectedPo.cc_emails.length > 0 ? selectedPo.cc_emails.join(', ') : 'None'}
                                     </p>
                                 </div>
-                                <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700/50">
+                                <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700/50 flex items-center justify-between gap-2">
                                     <EmailStatusBadge status={selectedPo.email_status} />
+                                    {selectedPo.email_status === 'FAILED' && (
+                                        <button
+                                            onClick={handleResendEmail}
+                                            disabled={resending}
+                                            className="text-[10px] font-bold px-2 py-0.5 rounded border border-blue-500/30 text-blue-500 hover:bg-blue-600 hover:text-white disabled:opacity-50 transition-colors"
+                                        >
+                                            {resending ? 'Sending...' : 'Resend email'}
+                                        </button>
+                                    )}
                                 </div>
+                                {resendMessage && (
+                                    <p className={`text-[10px] mt-1 ${resendMessage.ok ? 'text-emerald-500' : 'text-red-500'}`}>{resendMessage.text}</p>
+                                )}
                             </Card>
                         </div>
+
+                        {inrLineCount > 0 && (
+                            <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2">
+                                <ExclamationTriangleIcon className="w-4 h-4 flex-shrink-0" />
+                                <span>{inrLineCount} line{inrLineCount === 1 ? '' : 's'} on this PO {inrLineCount === 1 ? 'has' : 'have'} a price that looks like INR landed cost, not RMB (drafts were priced in INR before 26 Sep 2026). Totals include them as stored.</span>
+                            </div>
+                        )}
 
                         {/* Line Items Table */}
                         <Card className="flex-grow p-0 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/20 overflow-hidden shadow-md dark:shadow-xl">
                             <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50 dark:bg-slate-900/40">
                                 <h3 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Order Line Items</h3>
-                                <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">{selectedPo.lines.length} SKUs Ordered</span>
+                                <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">{selectedPo.lines.length} SKUs Ordered{pendingLineCount > 0 ? ` • ${pendingLineCount} still pending` : ''}</span>
                             </div>
                             <div className="overflow-x-auto min-w-[1000px]">
                                 <table className="w-full text-left text-sm border-collapse">
@@ -407,7 +538,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                             <th className="px-6 py-3 font-medium w-[12%]">SKU</th>
                                             <th className="px-6 py-3 font-medium w-[20%]">Item Name</th>
                                             <th className="px-6 py-3 font-medium text-center">Ordered</th>
-                                            <th className="px-6 py-3 font-medium text-right">Unit Price</th>
+                                            <th className="px-6 py-3 font-medium text-right">Unit Price (RMB)</th>
                                             <th className="px-6 py-3 font-medium text-center">Logo/Pkg/Man/Wrp</th>
                                             <th className="px-6 py-3 font-medium text-center">Fulfilled</th>
                                             <th className="px-6 py-3 font-medium text-center">Customization</th>
@@ -416,11 +547,18 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                     </thead>
                                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700/30">
                                         {selectedPo.lines.map((line, idx) => (
-                                            <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700/20 transition-colors">
+                                            <tr key={line.po_line_id || idx} className="hover:bg-slate-50 dark:hover:bg-slate-700/20 transition-colors">
                                                 <td className="px-6 py-4 font-mono text-xs text-blue-500 dark:text-blue-300">{line.sku}</td>
                                                 <td className="px-6 py-4 font-medium text-slate-800 dark:text-white truncate text-xs">{line.name}</td>
                                                 <td className="px-6 py-4 text-center font-bold text-slate-900 dark:text-white">{line.ordered_qty}</td>
-                                                <td className="px-6 py-4 text-right text-slate-500 dark:text-slate-400 font-mono text-xs">₹{line.unit_price.toLocaleString()}</td>
+                                                <td className="px-6 py-4 text-right font-mono text-xs">
+                                                    <span className={looksLikeInr(line) ? 'text-amber-500' : 'text-slate-500 dark:text-slate-400'}>{formatRmb(line.unit_price)}</span>
+                                                    {looksLikeInr(line) && (
+                                                        <span className="block text-[9px] font-sans font-semibold text-amber-500" title={`Current RMB price: ${formatRmb(line.master_rmb_price)}`}>
+                                                            looks like INR (RMB {formatRmb(line.master_rmb_price)})
+                                                        </span>
+                                                    )}
+                                                </td>
                                                 <td className="px-6 py-4">
                                                     <div className="flex justify-center gap-1">
                                                         <span className={`px-1 py-0.5 rounded text-[8px] font-bold ${line.logo ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600'}`}>LOGO</span>
@@ -432,9 +570,9 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                                 <td className="px-6 py-4 text-center font-bold text-emerald-650 dark:text-emerald-400 bg-emerald-500/5">{line.fulfilled_qty}</td>
                                                 <td className="px-6 py-4 text-center">
                                                     {line.folder_link ? (
-                                                        <a 
-                                                            href={line.folder_link} 
-                                                            target="_blank" 
+                                                        <a
+                                                            href={line.folder_link}
+                                                            target="_blank"
                                                             rel="noopener noreferrer"
                                                             className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 bg-blue-600/10 text-blue-500 dark:text-blue-400 border border-blue-500/20 rounded hover:bg-blue-600 hover:text-white transition-all"
                                                         >
@@ -443,12 +581,27 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                                     ) : <span className="text-slate-400 dark:text-slate-600">—</span>}
                                                 </td>
                                                 <td className="px-6 py-4 text-right">
-                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                                                        line.status === 'FULFILLED' ? 'text-emerald-500' : 
-                                                        line.status === 'PARTIAL' ? 'text-orange-500' : 'text-slate-400 dark:text-slate-500'
-                                                    }`}>
-                                                        {line.status}
-                                                    </span>
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        <span
+                                                            title={line.status === 'CLOSED' ? `${line.ordered_qty - line.fulfilled_qty} written off${line.close_reason ? `: ${line.close_reason}` : ''}` : undefined}
+                                                            className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                                                line.status === 'FULFILLED' ? 'text-emerald-500' :
+                                                                line.status === 'PARTIAL' ? 'text-orange-500' :
+                                                                line.status === 'CLOSED' ? 'text-red-400' : 'text-slate-400 dark:text-slate-500'
+                                                            }`}
+                                                        >
+                                                            {line.status === 'CLOSED' ? `CLOSED (−${Math.max(0, line.ordered_qty - line.fulfilled_qty)})` : line.status}
+                                                        </span>
+                                                        {isPoActive && isLinePending(line) && line.po_line_id && (
+                                                            <button
+                                                                onClick={() => { setCloseError(null); setCloseTarget({ kind: 'line', poId: selectedPo.po_id, line }); }}
+                                                                className="text-[10px] font-bold px-2 py-0.5 rounded border border-red-500/30 text-red-500 hover:bg-red-600 hover:text-white transition-colors"
+                                                                title="Close the rest of this line"
+                                                            >
+                                                                Close
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}
@@ -461,45 +614,30 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                     <p className="text-xl font-bold text-slate-850 dark:text-white">{selectedPo.total_qty}</p>
                                 </div>
                                 <div className="text-right pr-4">
-                                    <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">PO Net Total</p>
-                                    <p className="text-2xl font-bold text-blue-550 dark:text-blue-400">{formatCurrency(selectedPo.total_value)}</p>
+                                    <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">PO Net Total (RMB)</p>
+                                    <p className="text-2xl font-bold text-blue-550 dark:text-blue-400">{formatRmb(selectedPo.total_value)}</p>
                                 </div>
                             </div>
                         </Card>
 
-                        {/* Close PO Confirmation Dialog */}
-                        {showCloseConfirm && (
-                            <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[200] flex items-center justify-center p-4">
-                                <Card className="max-w-md w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl p-8 text-center animate-in zoom-in-95 duration-200">
-                                    <div className="w-16 h-16 bg-red-600/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                                        <InformationCircleIcon className="w-10 h-10 text-red-500" />
-                                    </div>
-                                    <h3 className="text-xl font-bold text-slate-850 dark:text-white mb-2">Close Purchase Order?</h3>
-                                    <p className="text-slate-500 dark:text-slate-400 text-sm mb-8 leading-relaxed">
-                                        Closing <span className="text-slate-800 dark:text-white font-mono">{selectedPo?.po_id}</span> will mark it as complete. This will prevent further shipments from being matched.
-                                    </p>
-                                    {closePoError && (
-                                        <p className="text-red-500 text-sm mb-4 -mt-4">{closePoError}</p>
-                                    )}
-                                    <div className="flex gap-3">
-                                        <Button
-                                            variant="secondary"
-                                            className="flex-1 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 h-11 bg-white dark:bg-slate-800"
-                                            onClick={() => { setShowCloseConfirm(false); setClosePoError(null); }}
-                                            disabled={closingPo}
-                                        >
-                                            Keep Open
-                                        </Button>
-                                        <Button
-                                            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold h-11 disabled:opacity-60"
-                                            onClick={handleClosePo}
-                                            disabled={closingPo}
-                                        >
-                                            {closingPo ? 'Closing...' : 'Close PO'}
-                                        </Button>
-                                    </div>
-                                </Card>
-                            </div>
+                        {closeTarget && (
+                            <CloseDialog
+                                title={closeTarget.kind === 'po' ? 'Close Purchase Order?' : `Close ${closeTarget.line.sku}?`}
+                                detail={closeTarget.kind === 'po' ? (
+                                    <>Closes <span className="font-mono text-slate-800 dark:text-white">{closeTarget.poId}</span>.{' '}
+                                        {closeTarget.pendingQty > 0
+                                            ? <>The {closeTarget.pendingQty} unit(s) still pending on {closeTarget.pendingLines} line(s) are written off: they stop counting as incoming stock and no further shipments will be matched to them.</>
+                                            : <>Nothing is pending on it.</>}
+                                    </>
+                                ) : (
+                                    <>{closeTarget.line.fulfilled_qty} of {closeTarget.line.ordered_qty} received on <span className="font-mono text-slate-800 dark:text-white">{closeTarget.poId}</span>.
+                                        The remaining <b>{closeTarget.line.ordered_qty - closeTarget.line.fulfilled_qty}</b> are written off: they stop counting as incoming stock and no further shipments will be matched to this line.</>
+                                )}
+                                busy={closing}
+                                error={closeError}
+                                onCancel={() => { setCloseTarget(null); setCloseError(null); }}
+                                onConfirm={handleConfirmClose}
+                            />
                         )}
                     </>
                 ) : null}
@@ -534,9 +672,6 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                         icon={loading ? <ArrowPathIcon className="w-4 h-4 animate-spin"/> : undefined}
                     >
                         {loading ? 'Syncing...' : '🔄 Sync Purchase Orders'}
-                    </Button>
-                    <Button variant="secondary" className="h-[42px] px-4 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-705 dark:text-slate-300 flex items-center gap-2" icon={<FunnelIcon className="w-4 h-4"/>}>
-                        Filters
                     </Button>
                 </div>
             </div>
@@ -633,7 +768,7 @@ export const PurchaseOrders: React.FC<PurchaseOrdersProps> = ({ onNavigate }) =>
                                         <td className="px-6 py-4 font-mono font-bold text-blue-500 dark:text-blue-400">{po.po_id}</td>
                                         <td className="px-6 py-4 text-slate-700 dark:text-slate-200 font-medium">{po.vendor_code}</td>
                                         <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-xs">
-                                            {po.po_date}
+                                            {formatPoDate(po.po_date)}
                                         </td>
                                         <td className="px-6 py-4 text-center">
                                             <ModeBadge mode={po.planned_mode} />
@@ -685,9 +820,9 @@ interface PendingLinesViewProps {
     onPoClick: (poId: string) => void;
 }
 
-// Module-level cache — same rationale as poListCache above. Also preserves
-// the vendor filter/sort choices, which used to reset every time this
-// sub-tab remounted.
+// Module-level cache — same rationale as poListCache above (first paint only;
+// the lines are re-read every time this sub-tab opens). Also preserves the
+// vendor filter/sort choices, which used to reset every time it remounted.
 let pendingLinesCache: {
     pendingLines: PendingLine[];
     vendorFilter: string;
@@ -702,6 +837,9 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
     const [pendingVendorFilter, setPendingVendorFilter] = useState<string>(pendingLinesCache?.vendorFilter || 'All');
     const [pendingSortKey, setPendingSortKey] = useState<keyof PendingLine>(pendingLinesCache?.sortKey || 'days_pending');
     const [pendingSortDir, setPendingSortDir] = useState<'asc' | 'desc'>(pendingLinesCache?.sortDir || 'desc');
+    const [closeLine, setCloseLine] = useState<PendingLine | null>(null);
+    const [closing, setClosing] = useState(false);
+    const [closeError, setCloseError] = useState<string | null>(null);
 
     // Keeps the cache in sync with filter/sort changes so they survive a remount too.
     // Guarded on an existing cache so this doesn't fire on initial mount (before the
@@ -712,11 +850,7 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
         }
     }, [pendingLines, pendingVendorFilter, pendingSortKey, pendingSortDir]);
 
-    const fetchPendingLines = async (forceRefresh = false) => {
-        if (!forceRefresh && pendingLinesCache) {
-            setPendingLines(pendingLinesCache.pendingLines);
-            return;
-        }
+    const fetchPendingLines = async () => {
         setLoadingPending(true);
         setError(null);
         try {
@@ -773,6 +907,26 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
         });
         return result;
     }, [pendingLines, pendingVendorFilter, pendingSortKey, pendingSortDir]);
+
+    const handleCloseLine = async (reason: string) => {
+        if (!closeLine) return;
+        setClosing(true);
+        setCloseError(null);
+        try {
+            const result = await callGas('close_po_line', { po_line_id: closeLine.po_line_id, reason, closed_by: getCurrentActor() });
+            if (!result || result.success !== true) {
+                throw new Error(result?.message || result?.error || 'Failed to close line');
+            }
+            const poId = closeLine.po_id;
+            setCloseLine(null);
+            await fetchPendingLines();
+            window.dispatchEvent(new CustomEvent('po:refresh', { detail: { po_id: poId } }));
+        } catch (err: any) {
+            setCloseError(err.message || 'Failed to close line');
+        } finally {
+            setClosing(false);
+        }
+    };
 
     const handleExportCSV = () => {
         const headers = [
@@ -857,11 +1011,20 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
                     >
                         📤 Export CSV
                     </Button>
+                    <Button
+                        onClick={() => fetchPendingLines()}
+                        disabled={loadingPending}
+                        variant="secondary"
+                        className="h-8 text-xs px-3 border-slate-200 dark:border-slate-700 flex items-center gap-1.5 bg-white dark:bg-slate-800"
+                        icon={<ArrowPathIcon className={`w-3.5 h-3.5 ${loadingPending ? 'animate-spin' : ''}`} />}
+                    >
+                        Refresh
+                    </Button>
                 </div>
             </div>
 
             <Card className="overflow-hidden p-0 flex flex-col bg-white dark:bg-slate-800/30 border border-slate-200 dark:border-slate-700 shadow-sm dark:shadow-xl min-h-[400px]">
-                {loadingPending ? (
+                {loadingPending && pendingLines.length === 0 ? (
                     <div className="flex-grow flex items-center justify-center min-h-[350px]">
                         <div className="flex flex-col items-center gap-3">
                             <ArrowPathIcon className="w-10 h-10 animate-spin text-blue-500" />
@@ -874,7 +1037,7 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
                             <ExclamationTriangleIcon className="w-12 h-12 text-red-500 mx-auto mb-4" />
                             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Failed to load Pending Lines</h3>
                             <p className="text-slate-400 text-sm mb-6">{error}</p>
-                            <Button onClick={() => fetchPendingLines(true)} className="bg-blue-600 hover:bg-blue-700 px-6">Retry</Button>
+                            <Button onClick={() => fetchPendingLines()} className="bg-blue-600 hover:bg-blue-700 px-6">Retry</Button>
                         </div>
                     </div>
                 ) : (
@@ -893,6 +1056,7 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
                                     <SortHeader label="Mode" field="planned_mode" center />
                                     <th className="px-4 py-3 font-semibold text-[11px] uppercase tracking-wider text-center">Customization</th>
                                     <SortHeader label="PO Date" field="po_date" />
+                                    <th className="px-4 py-3" />
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
@@ -942,6 +1106,17 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
                                             <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs">
                                                 {formatPoDate(line.po_date)}
                                             </td>
+                                            <td className="px-4 py-3 text-right">
+                                                {line.po_line_id && (
+                                                    <button
+                                                        onClick={() => { setCloseError(null); setCloseLine(line); }}
+                                                        className="text-[10px] font-bold px-2 py-0.5 rounded border border-red-500/30 text-red-500 hover:bg-red-600 hover:text-white transition-colors"
+                                                        title="Close the rest of this line"
+                                                    >
+                                                        Close
+                                                    </button>
+                                                )}
+                                            </td>
                                         </tr>
                                     );
                                 })}
@@ -956,6 +1131,18 @@ const PendingLinesView: React.FC<PendingLinesViewProps> = ({ onPoClick }) => {
                     </div>
                 )}
             </Card>
+
+            {closeLine && (
+                <CloseDialog
+                    title={`Close ${closeLine.sku}?`}
+                    detail={<>{closeLine.fulfilled_qty} of {closeLine.ordered_qty} received on <span className="font-mono text-slate-800 dark:text-white">{closeLine.po_id}</span>.
+                        The remaining <b>{closeLine.pending_qty}</b> are written off: they stop counting as incoming stock and no further shipments will be matched to this line.</>}
+                    busy={closing}
+                    error={closeError}
+                    onCancel={() => { setCloseLine(null); setCloseError(null); }}
+                    onConfirm={handleCloseLine}
+                />
+            )}
         </div>
     );
 };
