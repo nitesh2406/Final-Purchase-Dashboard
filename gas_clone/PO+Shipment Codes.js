@@ -794,22 +794,32 @@ function generatePoId_(vendorCode, now) {
  * - SKU cross-checking with vendor-provided SKU
  * - Filter out total/summary rows
  */
+// Read-only: parses + SKU-matches the uploaded rows and returns them. It used
+// to also append a placeholder Vendor_Shipments row (VS-<timestamp>, status
+// NORMALIZED, no batch) on every click — nothing ever used that row except as
+// a fake invoice number the frontend fell back to, and they piled up as
+// orphans (9 live on 2026-09-26). The real shipment row is written only at
+// finalize (apiCreateVendorShipment). createVendorShipmentHeader_ /
+// updateVendorShipmentStatus_ are left defined but no longer called from here.
 function apiUploadAndNormalizeVendorShipment(payload) {
   validateUploadPayload_(payload);
 
-  const shipmentId = createVendorShipmentHeader_(payload);
-
   const allNormalizedRows = [];
   const issues = [];
+  // One counter across ALL files: the per-file index used to restart at 1 for
+  // each file with the same Date.now(), so a two-file upload produced
+  // duplicate line_ids — and the UI edits rows by line_id.
+  const uploadStamp = Date.now();
+  let lineSeq = 0;
 
   payload.files.forEach((file) => {
     const rawRows = file.rows || [];
     if (!rawRows.length) return;
 
     // Frontend handles all column detection — always passthrough
-    const normalizedRows = rawRows.map((row, index) => ({
+    const normalizedRows = rawRows.map((row) => ({
       ...row,
-      line_id: `LINE-${Date.now()}-${index + 1}`,
+      line_id: `LINE-${uploadStamp}-${++lineSeq}`,
       source_file_name: file.fileName,
       document_type: file.documentType
     }));
@@ -820,11 +830,8 @@ function apiUploadAndNormalizeVendorShipment(payload) {
   const productMaster = loadEEProductMaster_();
   const matchedRows = performSKUMatching_(allNormalizedRows, productMaster);
 
-  updateVendorShipmentStatus_(shipmentId, 'NORMALIZED');
-
   return {
     status: 'success',
-    shipmentId,
     rows: matchedRows,
     issues
   };
@@ -1294,10 +1301,17 @@ function apiAllocateToOpenPOs(payload) {
   
   // Get open POs for this vendor
   const openPOs = getOpenPOsForVendor_(vendor_code);
-  
+
   const allocations = [];
   const now = new Date();
-  
+
+  // Quantity already claimed from each PO line by EARLIER rows of this same
+  // shipment. Pending qty comes from one snapshot of Purchase_Order_Lines, so
+  // without this an invoice carrying the same SKU on two lines (exactly the
+  // MULTIPLE_VARIANT case) let both lines claim the same open quantity —
+  // finalize then added both to fulfilled_qty, over-fulfilling the PO.
+  const claimedByPoSku = {};
+
   // Process each SKU from shipment
   validated_rows.forEach(row => {
     //const sku = row.matched_sku || row.sku;
@@ -1329,12 +1343,15 @@ function apiAllocateToOpenPOs(payload) {
       
       const orderedQty = Number(poLine.ordered_qty || 0);
       const fulfilledQty = Number(poLine.fulfilled_qty || 0);
-      const pendingQty = orderedQty - fulfilledQty;
-      
+      const claimKey = po.po_id + '|' + String(sku).trim();
+      const alreadyClaimed = claimedByPoSku[claimKey] || 0;
+      const pendingQty = orderedQty - fulfilledQty - alreadyClaimed;
+
       if (pendingQty <= 0) return;
-      
+
       // Allocate as much as possible to this PO
       const allocateQty = Math.min(remainingQty, pendingQty);
+      claimedByPoSku[claimKey] = alreadyClaimed + allocateQty;
       
       // Calculate age
       const poDate = new Date(po.po_date);
@@ -1345,10 +1362,10 @@ function apiAllocateToOpenPOs(payload) {
         po_date: po.po_date,
         age_days: ageDays,
         ordered_qty: orderedQty,
-        fulfilled_qty: fulfilledQty,
+        fulfilled_qty: fulfilledQty + alreadyClaimed,
         pending_qty: pendingQty,
         allocated_qty: allocateQty,
-        will_be_fulfilled: (fulfilledQty + allocateQty) >= orderedQty
+        will_be_fulfilled: (fulfilledQty + alreadyClaimed + allocateQty) >= orderedQty
       });
       
       allocation.total_allocated += allocateQty;
@@ -1508,21 +1525,23 @@ function calculateFinancialReconciliation_(validatedRows, allocations) {
     poPriceMap[poId + '|' + sku] = Number(poLineData[i][poLineHeader.unit_price_rmb] || 0);
   }
 
-  // Per-SKU: quantity + value actually recorded against a PO (accumulated across every
-  // PO the allocation drew from), so multi-PO fulfillment is weighted correctly.
+  // Per-SKU pool: quantity + value actually recorded against a PO (accumulated across every
+  // PO the allocation drew from), so multi-PO fulfillment is weighted correctly. Accumulated
+  // (+=) across allocations — the same SKU on two invoice lines produces two allocation
+  // entries, and assigning (=) used to keep only the last one's figures while BOTH lines
+  // were then priced from it. Rows below draw down this pool in order.
   const poRecordedBySku = {};
   (allocations || []).forEach(alloc => {
     const sku = alloc.sku;
     if (!sku || !Array.isArray(alloc.po_allocations)) return;
-    let qty = 0, value = 0;
+    const pool = poRecordedBySku[sku] || (poRecordedBySku[sku] = { qty: 0, value: 0 });
     alloc.po_allocations.forEach(pa => {
       const allocatedQty = Number(pa.allocated_qty || 0);
       if (allocatedQty <= 0) return;
       const poPrice = poPriceMap[pa.po_id + '|' + sku] || 0;
-      qty += allocatedQty;
-      value += allocatedQty * poPrice;
+      pool.qty += allocatedQty;
+      pool.value += allocatedQty * poPrice;
     });
-    poRecordedBySku[sku] = { qty: qty, value: value };
   });
 
   let invoiceTotal = 0;
@@ -1535,13 +1554,18 @@ function calculateFinancialReconciliation_(validatedRows, allocations) {
     const sku = row.matched_sku || row.sku || '';
     const masterPrice = Number(row.master_cost || 0);
 
-    // Recorded value for this line: PO-committed price for the allocated portion,
-    // current master cost for whatever hasn't been allocated to a PO yet.
+    // Recorded value for this line: PO-committed price for the allocated portion
+    // (drawn from this SKU's pool at its average PO price), current master cost for
+    // whatever hasn't been allocated to a PO yet.
     const poRecorded = poRecordedBySku[sku];
     let recordedValue, recordedPrice;
     if (poRecorded && poRecorded.qty > 0) {
-      const unallocQty = Math.max(qty - poRecorded.qty, 0);
-      recordedValue = poRecorded.value + (unallocQty * masterPrice);
+      const takeQty = Math.min(qty, poRecorded.qty);
+      const takeValue = takeQty * (poRecorded.value / poRecorded.qty);
+      poRecorded.qty -= takeQty;
+      poRecorded.value -= takeValue;
+      const unallocQty = Math.max(qty - takeQty, 0);
+      recordedValue = takeValue + (unallocQty * masterPrice);
       recordedPrice = qty > 0 ? recordedValue / qty : 0;
     } else {
       recordedValue = qty * masterPrice;
@@ -1633,27 +1657,11 @@ function detectWarnings_(validatedRows, allocations) {
     });
   }
   
-  // 3. Flagged Items (BLOCKING)
-  const flaggedItems = validatedRows.filter(row => 
-    row.resolution_action === 'FLAG_REVIEW'
-  );
-  
-  if (flaggedItems.length > 0) {
-    warnings.push({
-      type: 'FLAGGED_ITEMS',
-      severity: 'BLOCKING',
-      count: flaggedItems.length,
-      message: flaggedItems.length + ' items flagged for review (must be resolved)',
-      items: flaggedItems.map(r => ({
-        sku: r.matched_sku || r.sku,
-        item_name: r.matched_name || r.item_name,
-        match_status: r.match_status,
-        resolution_notes: r.resolution_notes
-      }))
-    });
-  }
-  
-  // 4. Items without PO at all (no allocation possible)
+  // (A BLOCKING "FLAG_REVIEW" check used to live here — nothing in the UI
+  // ever sets that resolution, so it could never fire. Removed; unresolved
+  // rows are blocked earlier, at Validate Items.)
+
+  // 3. Items without PO at all (no allocation possible)
   const noPOItems = allocations.filter(a => 
     a.po_allocations.length === 0 && Number(a.unallocated_qty || 0) > 0
   );
@@ -1775,12 +1783,15 @@ function apiCreateBatch_(batchType, createdBy) {
   const sheet = getSheet_(SHEET_NAMES.BATCHES);
   const header = getHeaderMap_(sheet);
   
-  // Guard — if batch ID already exists, return it without creating a duplicate
+  // Guard — the generated id must be new. This used to RETURN the existing
+  // batch instead, which (with no lock around creation) silently merged two
+  // unrelated "new batch" shipments into one. Creation now runs under the
+  // script lock (apiCreateVendorShipment), so a hit here means the sheet has
+  // an id out of sequence — fail loudly rather than attach to it.
   const data = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][header.batch_id]).trim() === batchId) {
-      Logger.log('Batch already exists, skipping creation: ' + batchId);
-      return batchId;
+      throw new Error('Generated batch id ' + batchId + ' already exists in Batches — check the batch ids in the sheet, then retry.');
     }
   }
   
@@ -2037,6 +2048,18 @@ function findVendorShipmentByIdempotencyKey_(shipmentSheet, shipmentHeader, key)
 /**
  * API: Create Vendor Shipment
  */
+// Order-sensitive fingerprint of an allocation result: per entry, the SKU and
+// every PO it draws from with the quantity. Used by apiCreateVendorShipment to
+// detect that the live allocation no longer matches the one the user reviewed.
+function allocationSignature_(allocations) {
+  return (allocations || []).map(function(a) {
+    var parts = (a.po_allocations || [])
+      .filter(function(pa) { return Number(pa.allocated_qty) > 0; })
+      .map(function(pa) { return String(pa.po_id) + '=' + Number(pa.allocated_qty); });
+    return String(a.sku) + ':' + parts.join(',');
+  }).join(';');
+}
+
 function apiCreateVendorShipment(payload) {
   const {
     vendor_code,
@@ -2072,6 +2095,24 @@ function apiCreateVendorShipment(payload) {
   if (!total_amount || total_amount <= 0) {
     throw new Error("Total amount must be greater than 0");
   }
+  // The invoice number is what the shipment becomes in accounting
+  // (syncShipmentsToInvoices_ creates the PurchaseInvoices row from it, and
+  // skips shipments without one). It used to be optional and was often
+  // pre-filled with an internal VS-<timestamp> placeholder, which is how
+  // three live PW shipments ended up booked under placeholder invoice IDs.
+  if (!invoice_no || !String(invoice_no).trim()) {
+    throw new Error("Invoice number is required");
+  }
+  if (/^VS-\d+$/.test(String(invoice_no).trim())) {
+    throw new Error("Invoice number looks like an internal placeholder (" + invoice_no + ") — enter the vendor's real invoice number");
+  }
+  // The invoice date prices the invoice (exchange rate of that day). Only a
+  // strict yyyy-mm-dd is accepted: new Date() on free text like "01/07/2026"
+  // silently reads it US-style (month first) — one live invoice dated
+  // 1 July was stored as 7 January that way.
+  if (!invoice_date || !/^\d{4}-\d{2}-\d{2}$/.test(String(invoice_date))) {
+    throw new Error("Invoice date is required, as yyyy-mm-dd");
+  }
 
   // Idempotency guard — a network drop, an EasyEcom push slow enough to
   // outlast the browser's patience, or a stray double-click must not create
@@ -2096,6 +2137,30 @@ function apiCreateVendorShipment(payload) {
 
   const now = new Date();
   const userEmail = Session.getActiveUser().getEmail();
+
+  // The rows the user actually allocated at the Allocation step (accepted
+  // rows). Older frontends didn't send the list — fall back to every row;
+  // apiAllocateToOpenPOs skips REQUEST_NEW_SKU / SKU-less rows either way.
+  const allocatedIds = Array.isArray(payload.allocated_line_ids) ? payload.allocated_line_ids : null;
+  const rowsToAllocate = allocatedIds
+    ? validated_rows.filter(r => allocatedIds.indexOf(r.line_id) !== -1)
+    : validated_rows;
+
+  // Everything that reads-then-writes shared state (next batch id, next
+  // shipment id, PO fulfilled_qty) runs under the script lock. Without it two
+  // finalizes at once could compute the same batch id (apiCreateBatch_ then
+  // silently reused it, merging two unrelated shipments into one batch), the
+  // same shipment id, or lose one of two fulfilled_qty increments. The
+  // EasyEcom push and the SKU-request writes run AFTER the lock is released —
+  // they're slow and don't need it, and holding it would stall payments.
+  const createLock = LockService.getScriptLock();
+  if (!createLock.tryLock(30000)) {
+    if (idemCacheKey) CacheService.getScriptCache().remove(idemCacheKey);
+    throw new Error('Another shipment or payment is being saved right now — wait a few seconds and click Finalize again.');
+  }
+  let wroteAnything = false;
+  let shipmentId, finalBatchId, affectedPOs;
+  try {
 
   // Get sheets
   const shipmentSheet = getSheet_(SHEET_NAMES.VENDOR_SHIPMENTS);
@@ -2135,14 +2200,32 @@ function apiCreateVendorShipment(payload) {
     }
   }
 
+  // Re-run the PO allocation against the live PO data, under the lock. The
+  // allocation the user reviewed was computed earlier (possibly hours earlier
+  // — drafts survive a day) and nothing reserved it; applying it blindly
+  // over-fulfilled POs whenever another shipment or PO change used the same
+  // open quantity in between. If the live result differs from what was
+  // reviewed, stop BEFORE writing anything and have the user re-review.
+  const freshAllocation = rowsToAllocate.some(r => r.resolution_action !== 'REQUEST_NEW_SKU' && (r.matched_sku || r.sku))
+    ? apiAllocateToOpenPOs({ vendor_code: vendor_code, validated_rows: rowsToAllocate })
+    : { allocations: [] };
+  const freshAllocations = freshAllocation.allocations || [];
+  if (allocationSignature_(freshAllocations) !== allocationSignature_(allocations || [])) {
+    throw new Error(
+      'The purchase-order allocation has changed since you reviewed it (another shipment or PO update used some of the same open quantities). ' +
+      'Go back to the Review step, click Refresh Allocation, check the result, then Finalize again. Nothing was saved.'
+    );
+  }
+
   // Create or use batch
-  let finalBatchId = batch_id;
+  wroteAnything = true;
+  finalBatchId = batch_id;
   if (batch_option === 'new') {
     finalBatchId = apiCreateBatch_(batch_type, userEmail);
   }
 
   // Generate shipment ID
-  const shipmentId = generateShipmentId_(vendor_code, new Date(shipment_date));
+  shipmentId = generateShipmentId_(vendor_code, new Date(shipment_date));
 
   const lineSheet = getSheet_(SHEET_NAMES.VENDOR_SHIPMENT_LINES);
   const lineHeader = getHeaderMap_(lineSheet);
@@ -2220,27 +2303,30 @@ for (let i = freshShipData.length - 1; i >= 1; i--) {
   //   });
   // });
 
-  // Build a SKU → po_ids map from allocations
-  const skuPoMap = {};
-  if (allocations && Array.isArray(allocations)) {
-  allocations.forEach(alloc => {
+  // Build a SKU → po_ids map from the (fresh) allocations. Merged across
+  // entries: the same SKU on two invoice lines gives two allocation entries,
+  // and assigning per entry kept only the last one's PO ids.
+  const skuPoSets = {};
+  freshAllocations.forEach(alloc => {
     if (alloc.sku && alloc.po_allocations && alloc.po_allocations.length > 0) {
-      const poIds = alloc.po_allocations
-        .filter(pa => pa.allocated_qty > 0)
-        .map(pa => pa.po_id)
-        .filter(Boolean);
-      if (poIds.length > 0) {
-        skuPoMap[alloc.sku] = poIds.join(',');
-      }
+      alloc.po_allocations
+        .filter(pa => pa.allocated_qty > 0 && pa.po_id)
+        .forEach(pa => { (skuPoSets[alloc.sku] = skuPoSets[alloc.sku] || {})[pa.po_id] = true; });
     }
   });
-}
+  const skuPoMap = {};
+  Object.keys(skuPoSets).forEach(sku => { skuPoMap[sku] = Object.keys(skuPoSets[sku]).join(','); });
 
 // Create shipment lines from validated_rows
 validated_rows.forEach(row => {
   const unitPrice = Number(row.unit_price_total || row.unit_price || 0);
   const qty = Number(row.invoice_qty || 0);
-  const sku = row.matched_sku || row.sku || '';
+  // A row resolved as "Request New SKU" is a product we don't have yet — its
+  // matched_sku is only the matcher's best-guess candidate (a MISMATCH row
+  // carries candidates[0]), and saving the line under it recorded the goods
+  // as an existing, wrong SKU. Leave it blank: writeSkuToShipmentLine_
+  // (NewSkuApi.js) fills it in once the new SKU is actually created.
+  const sku = row.resolution_action === 'REQUEST_NEW_SKU' ? '' : (row.matched_sku || row.sku || '');
 
   // Look up allocated PO IDs for this SKU
   const allocatedPoIds = skuPoMap[sku] || '';
@@ -2266,10 +2352,11 @@ validated_rows.forEach(row => {
     validation_notes: row.resolution_notes || ''
   });
 });
-  // Update PO fulfillment from allocations
-  const affectedPOs = new Set();
-  
-  allocations.forEach(alloc => {
+  // Update PO fulfillment from the fresh allocations (identical to the
+  // reviewed ones — checked above — but computed from live data under the lock)
+  affectedPOs = new Set();
+
+  freshAllocations.forEach(alloc => {
     if (alloc.po_allocations && alloc.po_allocations.length > 0) {
       alloc.po_allocations.forEach(po => {
         updatePOLineFulfillment_(po.po_id, alloc.sku, po.allocated_qty);
@@ -2286,6 +2373,20 @@ validated_rows.forEach(row => {
 
    // Update batch totals
   updateBatchTotals_(finalBatchId, carton_count, total_amount, vendor_code, carrier, expected_delivery);
+
+  // Commit before releasing the lock so the next holder reads these writes.
+  SpreadsheetApp.flush();
+  } catch (err) {
+    // Failed before writing anything (e.g. the allocation changed) — drop
+    // the 60s "already being created" marker so the user can retry right
+    // after fixing the cause instead of being told to wait.
+    if (!wroteAnything && idemCacheKey) {
+      try { CacheService.getScriptCache().remove(idemCacheKey); } catch (e) {}
+    }
+    throw err;
+  } finally {
+    createLock.releaseLock();
+  }
 
   // Push to EasyEcom as in-transit PO
   const eeResult = pushShipmentToEasyEcom_(shipmentId, vendor_code, expected_delivery, validated_rows, finalBatchId);
@@ -3714,21 +3815,34 @@ function pushShipmentToEasyEcom_(shipmentId, vendorCode, expectedDelivery, lines
   try {
     const token = getEasyEcomToken();
     
-    //const items = lines
-     // .filter(line => line.matched_sku || line.sku)
-     const items = lines
-        .filter(line => (line.matched_sku || line.sku) && line.resolution_action !== 'REQUEST_NEW_SKU')
+    const rawLines = lines
+      .filter(line => (line.matched_sku || line.sku) && line.resolution_action !== 'REQUEST_NEW_SKU')
       .map(line => ({
-        sku: line.matched_sku || line.sku,
+        sku: String(line.matched_sku || line.sku).trim(),
         quantity: Number(line.invoice_qty || 0),
-        unitPrice: Number(line.unit_price || 0)
+        rmbPrice: Number(line.unit_price || 0)
       }))
       .filter(item => item.quantity > 0);
-    
-    if (items.length === 0) {
+
+    if (rawLines.length === 0) {
       Logger.log('pushShipmentToEasyEcom_: No valid items for ' + shipmentId);
       return { success: false, message: 'No valid items to push' };
     }
+
+    // EasyEcom PO prices are INR landed cost — the same basis the Create SKU
+    // flow uses when it later updates this very PO (NewSkuApi.js
+    // getExistingPoLines_). This used to send the invoice's RMB unit price as
+    // if it were rupees. If any line can't be priced (no RMB price, or a
+    // cheap AIR-priced item with no package weight), refuse the push rather
+    // than send a wrong figure: the shipment itself is already saved, the
+    // failure is recorded on its row, and "Retry EasyEcom push" re-prices
+    // from the current data once the weight/price is fixed.
+    const priced = priceLinesInInr_(rawLines);
+    if (priced.unpriced.length > 0) {
+      throw new Error('Could not price ' + priced.unpriced.length + ' line(s) in INR: ' + priced.unpriced.join(', ') +
+        '. Add the missing weight/price in Update SKU, then retry the EasyEcom push.');
+    }
+    const items = priced.items;
     
     const expDate = expectedDelivery
       ? new Date(expectedDelivery)

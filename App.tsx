@@ -73,6 +73,7 @@ const DATA_ACTION_LABELS: Record<string, string> = {
     get_cnf_advances: 'CNF advances', get_cnf_goods_invoices: 'CNF invoices',
     get_cnf_ledger: 'CNF ledger', get_cnf_invoice_batches: 'CNF bills',
     get_cnf_shipment_bill_status: 'CNF bill status', get_batches: 'shipment batches',
+    get_product_master: 'product master',
 };
 
 const TEST_LOGIN_BYPASS = import.meta.env.VITE_TEST_LOGIN_BYPASS === 'true';

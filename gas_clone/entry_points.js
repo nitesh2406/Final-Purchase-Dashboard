@@ -683,7 +683,7 @@ var BUNDLE_READ_ACTIONS_ = {
   get_vendor_ledger: true, get_vendor_shipments: true,
   get_cnf_eligible_batches: true, get_cnf_advances: true, get_cnf_goods_invoices: true,
   get_cnf_ledger: true, get_cnf_invoice_batches: true, get_cnf_shipment_bill_status: true,
-  get_batches: true
+  get_batches: true, get_product_master: true
 };
 
 function getBundle_(payload) {

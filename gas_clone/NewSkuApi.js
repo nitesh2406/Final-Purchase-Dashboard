@@ -1256,7 +1256,7 @@ function createSkuOnEasyEcom_(payload) {
     // Write SKU to Vendor_Shipment_Lines if shipment-based
     if (obj.shipment_id && obj.factory_code) {
       const written = writeSkuToShipmentLine_(
-        obj.shipment_id, obj.factory_code, eeSku
+        obj.shipment_id, obj.factory_code, eeSku, obj.item_name
       );
       Logger.log(`writeSkuToShipmentLine_: ${written ? '✅' : '⚠️ not written'}`);
     }
@@ -1592,12 +1592,20 @@ function updateEasyEcomProduct_(sku, fields, customFields) {
   }
 }
 
-// Write newly created ee_sku back to Vendor_Shipment_Lines
-// Matches by factory_code (col G, index 6)
-// Updates sku column (col E, index 4)
-
-
-function writeSkuToShipmentLine_(shipmentId, factoryCode, eeSku) {
+// Write newly created ee_sku back to the Vendor_Shipment_Lines line it was
+// requested from. Columns are found by header name (they used to be fixed
+// positions A/E/G). The NSR only knows shipment + factory_code, and several
+// lines can share a factory code — that's exactly what a MULTIPLE_VARIANT
+// shipment is — so "first line with that code" could overwrite a sibling
+// line's correct SKU. Preference order:
+//   1. a candidate already carrying eeSku → done (idempotent retry)
+//   2. candidates with a BLANK sku (new-SKU lines are saved blank since
+//      2026-09-26), tie-broken by item_name
+//   3. legacy lines saved under the matcher's guess: item_name match, or the
+//      only candidate
+// Still ambiguous → write nothing (the Create SKU PO step then reports the
+// SKU as missing from the shipment lines) rather than risk the wrong line.
+function writeSkuToShipmentLine_(shipmentId, factoryCode, eeSku, itemName) {
   try {
     if (!shipmentId || !factoryCode || !eeSku) {
       Logger.log('writeSkuToShipmentLine_: missing params — skipping');
@@ -1612,24 +1620,34 @@ function writeSkuToShipmentLine_(shipmentId, factoryCode, eeSku) {
     }
 
     const data = sheet.getDataRange().getValues();
+    const headers = data[0].map(h => String(h).trim());
+    const shipCol = headers.indexOf('shipment_id');
+    const skuCol  = headers.indexOf('sku');
+    const fcCol   = headers.indexOf('factory_code');
+    const nameCol = headers.indexOf('item_name');
+    if (shipCol === -1 || skuCol === -1 || fcCol === -1) {
+      Logger.log('writeSkuToShipmentLine_: Vendor_Shipment_Lines is missing shipment_id/sku/factory_code headers');
+      return false;
+    }
 
     // Match full factory_code — no splitting
     // Both NSR and VSL store the full value e.g. "MYML112|MF8994"
     const factoryCodeClean = String(factoryCode).trim();
+    const nameClean = String(itemName || '').trim().toLowerCase();
 
-    let matchedRow = -1;
+    const candidates = [];
     for (let i = 1; i < data.length; i++) {
-      const rowShipmentId  = String(data[i][0]).trim();
-      const rowFactoryCode = String(data[i][6]).trim();
-
-      if (rowShipmentId  === shipmentId.trim() &&
-          rowFactoryCode === factoryCodeClean) {
-        matchedRow = i + 1; // 1-based sheet row
-        break;
+      if (String(data[i][shipCol]).trim() === String(shipmentId).trim() &&
+          String(data[i][fcCol]).trim() === factoryCodeClean) {
+        candidates.push({
+          row: i + 1, // 1-based sheet row
+          sku: String(data[i][skuCol] || '').trim(),
+          name: nameCol !== -1 ? String(data[i][nameCol] || '').trim().toLowerCase() : ''
+        });
       }
     }
 
-    if (matchedRow === -1) {
+    if (candidates.length === 0) {
       Logger.log(
         `writeSkuToShipmentLine_: no match found for ` +
         `shipment=${shipmentId}, factory_code=${factoryCodeClean}`
@@ -1637,8 +1655,26 @@ function writeSkuToShipmentLine_(shipmentId, factoryCode, eeSku) {
       return false;
     }
 
-    // Write ee_sku to col E (index 4, col 5 in 1-based)
-    sheet.getRange(matchedRow, 5).setValue(eeSku);
+    if (candidates.some(c => c.sku === String(eeSku).trim())) return true;
+
+    const byName = list => (nameClean ? list.filter(c => c.name === nameClean) : []);
+    const blank = candidates.filter(c => !c.sku);
+    let target = null;
+    if (blank.length === 1) target = blank[0];
+    else if (blank.length > 1) target = byName(blank)[0] || blank[0];
+    else if (byName(candidates).length === 1) target = byName(candidates)[0];
+    else if (candidates.length === 1) target = candidates[0];
+
+    if (!target) {
+      Logger.log(
+        `writeSkuToShipmentLine_: ${candidates.length} lines share factory_code=${factoryCodeClean} in ` +
+        `shipment=${shipmentId} and none is unambiguous — not writing, to avoid overwriting a sibling line's SKU`
+      );
+      return false;
+    }
+    const matchedRow = target.row;
+
+    sheet.getRange(matchedRow, skuCol + 1).setValue(eeSku);
     SpreadsheetApp.flush();
 
     Logger.log(
@@ -1662,23 +1698,54 @@ function writeSkuToShipmentLine_(shipmentId, factoryCode, eeSku) {
 // send a PO while `unpriced` is non-empty. Errors are thrown, not swallowed: the
 // old `return []` turned any failure into a misleading "no lines with SKU".
 
+// Inputs for pricing EasyEcom PO lines in INR landed cost: the pricing config
+// and per-SKU package weight (needed for AIR-priced items — sourced from EE
+// Product Master since Vendor_Shipment_Lines doesn't carry it). Shared by the
+// Create SKU PO step (getExistingPoLines_) and the vendor-shipment PO push
+// (pushShipmentToEasyEcom_ via priceLinesInInr_) so both price identically.
+function loadPoPricingInputs_() {
+  const pricingConfig = apiGetPricingConfig({}).data;
+  if (!pricingConfig) throw new Error('The pricing config could not be loaded, so PO prices cannot be calculated. Please try again.');
+  const weightBySku = {};
+  getSheetData_('EE Product Master').forEach(function (p) {
+    const sku = String(p['SKU'] || '').trim();
+    if (sku) weightBySku[sku] = Number(p['Weight']) || 0;
+  });
+  return { pricingConfig: pricingConfig, weightBySku: weightBySku };
+}
+
+// Prices [{ sku, quantity, rmbPrice }] into EasyEcom PO items at INR landed
+// cost (calculatePricing_, same as Create SKU). Returns { items, unpriced }:
+// `unpriced` names every line that could not be priced, and the caller must
+// not send a PO while it's non-empty — sending the RMB figure instead is the
+// "RMB as rupees" bug this replaces.
+function priceLinesInInr_(lines) {
+  const inputs = loadPoPricingInputs_();
+  const threshold = Number(inputs.pricingConfig.threshold) || 40;
+  const items = [];
+  const unpriced = [];
+  lines.forEach(function (l) {
+    const weightGm = inputs.weightBySku[l.sku] || 0;
+    const pricing = calculatePricing_(l.rmbPrice, weightGm, inputs.pricingConfig);
+    if (!pricing) {
+      unpriced.push(l.sku + ' (' + (
+        !l.rmbPrice ? 'no RMB price on the shipment line'
+        : (l.rmbPrice <= threshold && !weightGm) ? 'no package weight on EasyEcom'
+        : 'pricing failed') + ')');
+      return;
+    }
+    items.push({ sku: l.sku, quantity: l.quantity, unitPrice: pricing.landing });
+  });
+  return { items: items, unpriced: unpriced };
+}
+
 function getExistingPoLines_(shipmentId) {
   {
     const ss    = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getSheetByName('Vendor_Shipment_Lines');
     if (!sheet) throw new Error('Vendor_Shipment_Lines not found');
 
-    // Get pricing config for landed cost calculation
-    const pricingConfig = apiGetPricingConfig({}).data;
-    if (!pricingConfig) throw new Error('The pricing config could not be loaded, so PO prices cannot be calculated. Please try again.');
-
-    // Per-SKU weight, needed for AIR-mode landing cost — sourced from EE
-    // Product Master since Vendor_Shipment_Lines doesn't carry it.
-    const weightBySku = {};
-    getSheetData_('EE Product Master').forEach(function (p) {
-      const sku = String(p['SKU'] || '').trim();
-      if (sku) weightBySku[sku] = Number(p['Weight']) || 0;
-    });
+    const { pricingConfig, weightBySku } = loadPoPricingInputs_();
 
     const data = sheet.getDataRange().getValues().slice(1);
 
@@ -2627,7 +2694,7 @@ function updateEePurchaseOrder_(payload) {
     // its line (matched by factory code); if that write-back missed earlier, try
     // it once more, then read the lines again.
     if (!poLines.skus.includes(eeSkuKey)) {
-      writeSkuToShipmentLine_(obj.shipment_id, obj.factory_code, eeSkuKey);
+      writeSkuToShipmentLine_(obj.shipment_id, obj.factory_code, eeSkuKey, obj.item_name);
       poLines = getExistingPoLines_(obj.shipment_id);
     }
     if (!poLines.skus.includes(eeSkuKey)) {

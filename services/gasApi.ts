@@ -128,6 +128,7 @@ const CACHEABLE_READ_ACTIONS = new Set([
   'get_vendor_shipments',
   'get_cnf_eligible_batches', 'get_cnf_advances', 'get_cnf_goods_invoices', 'get_cnf_ledger',
   'get_cnf_invoice_batches', 'get_cnf_shipment_bill_status', 'get_batches',
+  'get_product_master',
 ]);
 
 // Actions that only read. Anything else is treated as a write and clears the

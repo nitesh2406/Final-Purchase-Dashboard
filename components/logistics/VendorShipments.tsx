@@ -645,6 +645,22 @@ const getStep3Flags = (row: EnrichedRow, productMasterList: MasterRecord[]): Ste
     return flags;
 };
 
+// Today's calendar date in the user's own timezone (IST), as yyyy-mm-dd.
+// new Date().toISOString() is UTC — before 05:30 IST it's still yesterday.
+const localDateStr = (d: Date = new Date()): string =>
+    new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+
+// A restored draft can't bring back real File objects (localStorage only has
+// their names), so uploadedFiles entries after a reload are { file: { name } }
+// stubs. Only real files can be sent to Drive.
+const isRealFile = (f: { file?: any } | null | undefined): boolean =>
+    typeof File !== 'undefined' && f?.file instanceof File;
+
+// Product master (≈2,000 SKUs, ~270KB) survives this screen unmounting, so a
+// return visit shows it instantly; every mount still re-reads it in the
+// background (see loadProductMaster) so newly created SKUs appear.
+let productMasterCache: { list: MasterRecord[]; fetchedAt: number } | null = null;
+
 // FIFO allocation loader — status lines shown one at a time while the engine runs
 const ALLOCATION_LOADER_MESSAGES = [
     'Reading shipment line items...',
@@ -655,7 +671,7 @@ const ALLOCATION_LOADER_MESSAGES = [
     'Wrapping up allocation...',
 ];
 
-export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, vendorMasters, productMasterList: initialProductMasterList = [] }) => {
+export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, vendorMasters }) => {
     // Component State
     const [activeTab, setActiveTab] = useState<ShipmentTab>('Setup');
     const [vendorCode, setVendorCode] = useState('');
@@ -665,7 +681,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     // invoices, certificates, photos) — uploaded to Drive alongside the
     // Setup tab's packing list at Finalize, into the same shipment folder.
     const [excessFiles, setExcessFiles] = useState<{ file: File; id: string }[]>([]);
-    const [shipmentDate, setShipmentDate] = useState(new Date().toISOString().split('T')[0]);
+    const [shipmentDate, setShipmentDate] = useState(localDateStr());
     const [isProcessing, setIsProcessing] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [parsedPreview, setParsedPreview] = useState<{ fileName: string; rows: any[] } | null>(null);
@@ -682,6 +698,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     // and return the original result instead of creating a duplicate shipment/PO.
     // Only cleared when the user actually starts a new shipment (clearSelection).
     const shipmentIdempotencyKeyRef = useRef<string | null>(null);
+    // Mirror of the ref, only so the key is saved with the draft: a reload
+    // after a Finalize whose response never arrived must resend the SAME key,
+    // or the backend's duplicate guard can't recognise the retry.
+    const [idempotencyKeyForDraft, setIdempotencyKeyForDraft] = useState<string | null>(null);
     const isFinalizingRef = useRef(false);
     const [showDebug, setShowDebug] = useState(false);
     const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -711,8 +731,13 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(new Set());
     const [statusTooltip, setStatusTooltip] = useState<{ id: string; pos: { top: number; left: number } } | null>(null);
 
-    // Product master state
-    const [productMasterList, setProductMasterList] = useState<Array<{ id: string; name: string; cost: number; ean?: string; articleNumber?: string; otherFactoryCode?: string }>>([]);
+    // Product master state. Step 3's price / ID / EAN checks run against this
+    // list — with an empty list every row looked clean and no update requests
+    // were raised — so its load state gates Step 3 and Finalize.
+    const [productMasterList, setProductMasterList] = useState<MasterRecord[]>(productMasterCache?.list || []);
+    const [productMasterStatus, setProductMasterStatus] = useState<'loading' | 'ready' | 'error'>(productMasterCache ? 'ready' : 'loading');
+    const [productMasterError, setProductMasterError] = useState<string | null>(null);
+    const productMasterReady = productMasterStatus === 'ready';
 
     // Bypasses upload — user goes straight to Validate Items to add lines manually
     const [manualOnlyMode, setManualOnlyMode] = useState(false);
@@ -817,7 +842,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         setIsSuccess(false);
         setActiveTab('Setup');
         setVendorCode('');
-        setShipmentDate(new Date().toISOString().split('T')[0]);
+        setShipmentDate(localDateStr());
         setShippingMode('');
         setBatchOption('new');
         setSelectedBatchId('');
@@ -843,6 +868,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         setP2Filter('ALL');
         setIssueReasonFilter('ALL');
         shipmentIdempotencyKeyRef.current = null;
+        setIdempotencyKeyForDraft(null);
 
         // Clear saved draft from localStorage
         localStorage.removeItem('vendor_shipment_draft');
@@ -911,7 +937,23 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                 const age = Date.now() - (parsed.timestamp || 0);
                 if (age < 24 * 60 * 60 * 1000) {
                     setVendorCode(parsed.vendorCode || '');
-                    setShipmentDate(parsed.shipmentDate || new Date().toISOString().split('T')[0]);
+                    setShipmentDate(parsed.shipmentDate || localDateStr());
+                    // Creation-step fields — weren't saved before, so a reload on
+                    // the last step silently blanked the invoice number/date,
+                    // cartons, carrier, ETA and batch choice.
+                    setInvoiceNumber(parsed.invoiceNumber || '');
+                    setInvoiceDate(parsed.invoiceDate || '');
+                    setCartonCount(toNum(parsed.cartonCount));
+                    setFinalShipmentAmount(toNum(parsed.finalShipmentAmount));
+                    setNotes(parsed.notes || '');
+                    setCarrier(parsed.carrier || '');
+                    setExpectedDelivery(parsed.expectedDelivery || '');
+                    if (parsed.batchOption === 'new' || parsed.batchOption === 'existing') setBatchOption(parsed.batchOption);
+                    setSelectedBatchId(parsed.selectedBatchId || '');
+                    if (parsed.idempotencyKey) {
+                        shipmentIdempotencyKeyRef.current = parsed.idempotencyKey;
+                        setIdempotencyKeyForDraft(parsed.idempotencyKey);
+                    }
                     setShippingMode(parsed.shippingMode || '');
                     setValidationRows(withAutoAccept(parsed.validationRows || []));
                     setAllocationData(parsed.allocationData || []);
@@ -959,16 +1001,27 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                 activeTab,
                 backendError,
                 backendIssues,
+                invoiceNumber,
+                invoiceDate,
+                cartonCount,
+                finalShipmentAmount,
+                notes,
+                carrier,
+                expectedDelivery,
+                batchOption,
+                selectedBatchId,
+                idempotencyKey: idempotencyKeyForDraft,
                 timestamp: Date.now()
             };
             localStorage.setItem('vendor_shipment_draft', JSON.stringify(shipmentState));
-            
+
             // Show "Saved" indicator briefly
             setShowSaved(true);
             const timer = setTimeout(() => setShowSaved(false), 2000);
             return () => clearTimeout(timer);
         }
-    }, [validationRows, uploadedFiles, vendorCode, shipmentDate, shippingMode, allocationData, allocationSummary, reviewData, canProceedToCreation, activeTab, backendError, backendIssues]);
+    }, [validationRows, uploadedFiles, vendorCode, shipmentDate, shippingMode, allocationData, allocationSummary, reviewData, canProceedToCreation, activeTab, backendError, backendIssues,
+        invoiceNumber, invoiceDate, cartonCount, finalShipmentAmount, notes, carrier, expectedDelivery, batchOption, selectedBatchId, idempotencyKeyForDraft]);
 
     // Fetch Open Batches When Entering Creation Tab
     useEffect(() => {
@@ -1042,44 +1095,42 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     }, [batchOption, selectedBatchId]);
 
 
-    // Load product master list for manual SKU selection
-    useEffect(() => {
-        const loadProductMaster = async () => {
-            try {
-                const data = await callGas('get_product_master', {}, 2);
-
-                if (data.status === 'success' && data.products) {
-                    setProductMasterList(data.products.map((p: any) => ({
-                        id: p.sku || p.id,
-                        name: p.productName || p.name,
-                        cost: toNum(p.cost),
-                        ean: p.ean || '',
-                        articleNumber: p.articleNumber || '',
-                        otherFactoryCode: p.otherFactoryCode || ''
-                    })));
-                } else if (initialProductMasterList.length > 0) {
-                    setProductMasterList(initialProductMasterList.map(p => ({
-                        id: p.id,
-                        name: p.name,
-                        cost: p.cost,
-                        ean: p.ean || ''
-                    })));
-                }
-            } catch (error) {
-                console.error('Failed to load product master:', error);
-                if (initialProductMasterList.length > 0) {
-                    setProductMasterList(initialProductMasterList.map(p => ({
-                        id: p.id,
-                        name: p.name,
-                        cost: p.cost,
-                        ean: p.ean || ''
-                    })));
-                }
+    // Load product master list (manual SKU selection + Step 3 checks). The old
+    // fallback on failure was App's `skus` prop — which App never loads — so a
+    // failed or slow load silently left Step 3 with nothing to check against.
+    // Now: a cached copy shows instantly, a failure with no copy is an explicit
+    // error state with Retry, and Step 3 / Finalize wait for 'ready'.
+    const loadProductMaster = useCallback(async (force = false) => {
+        if (!productMasterCache) setProductMasterStatus('loading');
+        try {
+            const data = await callGas('get_product_master', {}, 2, undefined, { force });
+            if (data.status === 'success' && Array.isArray(data.products) && data.products.length > 0) {
+                const list: MasterRecord[] = data.products.map((p: any) => ({
+                    id: p.sku || p.id,
+                    name: p.productName || p.name,
+                    cost: toNum(p.cost),
+                    ean: p.ean || '',
+                    articleNumber: p.articleNumber || '',
+                    otherFactoryCode: p.otherFactoryCode || ''
+                }));
+                productMasterCache = { list, fetchedAt: Date.now() };
+                setProductMasterList(list);
+                setProductMasterStatus('ready');
+                setProductMasterError(null);
+            } else {
+                throw new Error(data.message || 'The product master came back empty.');
             }
-        };
-        
-        loadProductMaster();
-    }, [initialProductMasterList]);
+        } catch (error: any) {
+            console.error('Failed to load product master:', error);
+            // A copy from earlier this session is still valid to check against.
+            if (!productMasterCache) {
+                setProductMasterStatus('error');
+                setProductMasterError(error?.message || 'Could not load the product master.');
+            }
+        }
+    }, []);
+
+    useEffect(() => { loadProductMaster(); }, [loadProductMaster]);
 
     // Filter Logic
     // A manually-picked SKU (via the search dropdown) shouldn't jump to "Looks
@@ -1240,7 +1291,6 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             }
 
             if (r.resolution_action === 'REQUEST_NEW_SKU') return acc;
-            if (r.resolution_action === 'Skip Item') return acc;
             if (r.resolution_action === 'ACCEPT') return acc;
             if (r.resolution_action === 'OVERRIDE') return acc;
             if (r.match_status === 'MATCH' || r.match_status === 'MATCH_MULTIPLE_VARIANT') return acc;
@@ -1387,13 +1437,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                 const rows = withAutoAccept(result.rows || []);
                 setValidationRows(rows);
                 setBackendIssues(result.issues || []);
-                // Only fall back to the backend's internal placeholder ID
-                // (VS-<timestamp>, always present on a successful upload) when
-                // no real invoice number was actually parsed from the file —
-                // this used to run unconditionally and clobbered a correctly
-                // parsed invoice number on every single upload, directly
-                // contradicting the "Invoice No auto-filled" notice shown above.
-                if (result.shipmentId && !firstMeta?.invoiceMeta.invoiceNo) setInvoiceNumber(result.shipmentId);
+                // No placeholder fallback any more: when no invoice number was
+                // parsed, the field stays empty and Finalize requires the real
+                // one. The old VS-<timestamp> fallback got booked into
+                // accounting as the invoice number (3 live PW shipments).
 
                 setMatchingResultSummary({
                     total: rows.length,
@@ -1402,8 +1449,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                     multipleVariant: rows.filter((r: any) => r.match_status === 'MATCH_MULTIPLE_VARIANT' || r.match_status === 'MISMATCH_MULTIPLE_VARIANT').length,
                     unmatched: rows.filter((r: any) => r.match_status === 'UNMATCHED').length,
                 });
-                setMatchingPhase('complete');
-                await new Promise(res => setTimeout(res, 2400));
+                // (A fixed 2.4s pause used to sit here purely for the animation.)
                 setMatchingPhase('idle');
                 setActiveTab('Validate Items');
             } else {
@@ -1478,6 +1524,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
     };
 
     const handleConfirmValidation = async () => {
+        if (!productMasterReady) {
+            setBackendError('The product master is not loaded, so the price / ID / EAN checks on this step have not run. Retry loading it above, then proceed.');
+            return;
+        }
         setAllocationLoading(true);
         setBackendError(null);
 
@@ -1494,15 +1544,14 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             };
             setLastRequest(payload);
 
-            // Reserves quantities against open POs server-side — not auto-retried.
+            // Computes a proposed allocation only — nothing is reserved. Finalize
+            // re-runs it against live PO data and refuses if it has changed.
             const data = await callGas(payload.action, payload);
             setLastResponse(data);
 
             if (data.status === 'success') {
                 setAllocationData(data.allocations || []);
                 setAllocationSummary(data.summary || null);
-                setAllocationPhase('complete');
-                await new Promise(res => setTimeout(res, 1500));
                 setActiveTab('Allocation');
             } else {
                 setBackendError(data.message || 'Allocation failed');
@@ -1545,13 +1594,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         }
     };
 
-    const handleConfirmAndContinue = async () => {
-        setPriceEanPhase('running');
-        // ~2.4s of animation: 30 ticks × 80ms
-        await new Promise(res => setTimeout(res, 2400));
-        setPriceEanPhase('complete');
-        await new Promise(res => setTimeout(res, 1200));
-        setPriceEanPhase('idle');
+    // Used to play a 3.6s "engine" animation here before switching tabs — there
+    // is no backend work at this point (Step 3's checks are computed locally).
+    const handleConfirmAndContinue = () => {
         setActiveTab('ID / Price / EAN Review');
     };
 
@@ -1570,7 +1615,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             validated_rows: rowsToAllocate
           };
 
-          // Reserves quantities against open POs server-side — not auto-retried.
+          // Proposed allocation only — nothing is reserved (see handleConfirmValidation).
           const data = await callGas(payload.action, payload);
 
           if (data.status === 'success') {
@@ -1591,8 +1636,6 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
             if (refreshedReviewData.status === 'success') {
               setReviewData(refreshedReviewData);
               setCanProceedToCreation(refreshedReviewData.can_proceed);
-              setAllocationPhase('complete');
-              await new Promise(res => setTimeout(res, 1500));
             } else {
               throw new Error(refreshedReviewData.message || 'Failed to refresh review data');
             }
@@ -1685,6 +1728,19 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         errors.amount = "Amount must be greater than 0";
       }
 
+      // The invoice number/date become the accounting invoice (PurchaseInvoices)
+      // and its exchange-rate date — both required, and the backend refuses
+      // them otherwise too.
+      const invNo = invoiceNumber.trim();
+      if (!invNo) {
+        errors.invoiceNo = "Invoice number is required — enter the vendor's invoice number";
+      } else if (/^VS-\d+$/.test(invNo)) {
+        errors.invoiceNo = "That's an internal placeholder, not the vendor's invoice number";
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)) {
+        errors.invoiceDate = "Invoice date is required";
+      }
+
       if (expectedDelivery) {
         // yyyy-mm-dd string compare is safe here since <input type="date">
         // always gives us that format — avoids timezone-shift bugs from
@@ -1692,7 +1748,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         // (wrong month typed in) before it ever reaches EasyEcom, which
         // rejects a past expected delivery date but previously did so silently
         // as far as the user could tell.
-        const todayStr = new Date().toISOString().slice(0, 10);
+        const todayStr = localDateStr();
         if (expectedDelivery < todayStr) {
           errors.expectedDelivery = "Expected delivery can't be in the past — check the date (day/month easy to mix up)";
         }
@@ -1784,7 +1840,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
     const handleResolveDriveConflict = (fileName: string, strategy: 'replace' | 'keep_both' | 'use_existing') => {
       if (!pendingDriveIds) return;
-      const file = uploadedFiles.find(f => f.file.name === fileName) || excessFiles.find(f => f.file.name === fileName);
+      const file = [...uploadedFiles, ...excessFiles].find(f => isRealFile(f) && f.file.name === fileName);
       if (!file) return;
       setResolvingConflict(fileName);
       uploadShipmentDocumentsToDrive(pendingDriveIds.batchId, pendingDriveIds.shipmentId, [file], { [fileName]: strategy })
@@ -1793,7 +1849,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
     const handleRetryDriveUpload = (fileName: string) => {
       if (!pendingDriveIds) return;
-      const file = uploadedFiles.find(f => f.file.name === fileName) || excessFiles.find(f => f.file.name === fileName);
+      const file = [...uploadedFiles, ...excessFiles].find(f => isRealFile(f) && f.file.name === fileName);
       if (!file) return;
       setResolvingConflict(fileName);
       uploadShipmentDocumentsToDrive(pendingDriveIds.batchId, pendingDriveIds.shipmentId, [file])
@@ -1802,6 +1858,12 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
     const handleFinalizeShipment = async () => {
       if (!validateCreation()) {
+        return;
+      }
+      // Step 3's update requests (price / ID / EAN) are derived from the
+      // product master below — don't finalize against an empty one.
+      if (!productMasterReady) {
+        setBackendError('The product master is not loaded, so the price / ID / EAN update requests can\'t be worked out. Retry loading it, then finalize.');
         return;
       }
       // Belt-and-suspenders against a rapid double-click: `disabled` only takes
@@ -1814,7 +1876,11 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
         shipmentIdempotencyKeyRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        setIdempotencyKeyForDraft(shipmentIdempotencyKeyRef.current);
       }
+      // Documents restored from a draft are name-only stubs — only real files
+      // can go to Drive (the Creation step lists any that need re-attaching).
+      const docsToUpload = [...uploadedFiles, ...excessFiles].filter(isRealFile);
 
       setIsCreatingShipment(true);
 
@@ -1831,9 +1897,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
 
           setCreatedShipmentId(testShipmentId);
 
-          if (uploadedFiles.length > 0 || excessFiles.length > 0) {
+          if (docsToUpload.length > 0) {
             setPendingDriveIds({ batchId: testBatchId, shipmentId: testShipmentId });
-            await uploadShipmentDocumentsToDrive(testBatchId, testShipmentId, [...uploadedFiles, ...excessFiles]);
+            await uploadShipmentDocumentsToDrive(testBatchId, testShipmentId, docsToUpload);
           } else {
             setShipmentSuccess(true);
           }
@@ -1878,6 +1944,10 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
           expected_delivery: expectedDelivery,
           validated_rows: rowsWithFieldUpdateFlags,
           allocations: allocationData,
+          // Which rows were allocated (accepted rows) — Finalize re-runs the
+          // allocation on exactly these against live PO data and refuses if the
+          // result no longer matches what was reviewed.
+          allocated_line_ids: validationRows.filter(isRowAccepted).map(r => r.line_id),
           idempotency_key: shipmentIdempotencyKeyRef.current
         };
 
@@ -1904,9 +1974,9 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
           // Clear draft from localStorage
           localStorage.removeItem('vendor_shipment_draft');
 
-          if (uploadedFiles.length > 0 || excessFiles.length > 0) {
+          if (docsToUpload.length > 0) {
             setPendingDriveIds({ batchId: data.batch_id, shipmentId: data.shipment_id });
-            await uploadShipmentDocumentsToDrive(data.batch_id, data.shipment_id, [...uploadedFiles, ...excessFiles]);
+            await uploadShipmentDocumentsToDrive(data.batch_id, data.shipment_id, docsToUpload);
           } else {
             setShipmentSuccess(true);
           }
@@ -3553,6 +3623,27 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                         </div>
                     )}
 
+                    {/* Product master gate — every check on this screen compares against it.
+                        Used to fail silently into an empty list, which made every row look clean. */}
+                    {!productMasterReady && (
+                        <div className={`p-4 rounded-lg flex items-start gap-3 border ${productMasterStatus === 'error' ? 'bg-red-500/10 border-red-500/30' : 'bg-blue-500/10 border-blue-500/30'}`}>
+                            <ExclamationTriangleIcon className={`w-5 h-5 mt-0.5 shrink-0 ${productMasterStatus === 'error' ? 'text-red-500' : 'text-blue-500'}`} />
+                            <div className="flex-1">
+                                <h4 className={`font-bold ${productMasterStatus === 'error' ? 'text-red-500' : 'text-blue-600 dark:text-blue-400'}`}>
+                                    {productMasterStatus === 'error' ? "Couldn't load the product master" : 'Loading the product master…'}
+                                </h4>
+                                <p className="text-sm text-slate-600 dark:text-slate-300">
+                                    {productMasterStatus === 'error'
+                                        ? `${productMasterError || 'Unknown error'} — the price / ID / EAN checks below can't run until it loads.`
+                                        : 'The price / ID / EAN checks below appear once it has loaded.'}
+                                </p>
+                            </div>
+                            {productMasterStatus === 'error' && (
+                                <Button variant="secondary" onClick={() => loadProductMaster(true)} className="text-xs shrink-0">Retry</Button>
+                            )}
+                        </div>
+                    )}
+
                     {/* Blocked banner — Proceed to Allocation is gated on Step 2's SKU-match
                         resolution, not on anything in this screen, so a disabled button here
                         needs to explain itself or it's a silent dead end. */}
@@ -3849,7 +3940,7 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                         </Button>
                         <Button
                             onClick={handleConfirmValidation}
-                            disabled={allocationLoading || !canProceedToAllocation}
+                            disabled={allocationLoading || !canProceedToAllocation || !productMasterReady}
                             className="bg-blue-600 hover:bg-blue-700 h-11 px-8 font-bold shadow-xl"
                         >
                             {allocationLoading ? 'Running Allocation...' : 'Proceed to Allocation →'}
@@ -4579,28 +4670,36 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                           {/* Invoice Number */}
                           <div>
                             <label className="block text-xs font-bold text-slate-600 dark:text-slate-500 uppercase tracking-widest mb-2">
-                              Invoice Number
+                              Invoice Number <span className="text-red-500">*</span>
                             </label>
                             <input
                               type="text"
                               value={invoiceNumber}
                               onChange={(e) => setInvoiceNumber(e.target.value)}
-                              className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                              placeholder="Optional"
+                              className={`w-full bg-slate-100 dark:bg-slate-900 border rounded-lg px-4 py-2 text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${validationErrors.invoiceNo ? 'border-red-500' : 'border-slate-300 dark:border-slate-700'}`}
+                              placeholder="Vendor's invoice number"
                             />
+                            {validationErrors.invoiceNo && (
+                              <p className="text-red-500 dark:text-red-400 text-xs mt-1">{validationErrors.invoiceNo}</p>
+                            )}
                           </div>
 
                           {/* Invoice Date */}
                           <div>
                             <label className="block text-xs font-bold text-slate-600 dark:text-slate-500 uppercase tracking-widest mb-2">
-                              Invoice Date
+                              Invoice Date <span className="text-red-500">*</span>
                             </label>
                             <input
                               type="date"
                               value={invoiceDate}
                               onChange={(e) => setInvoiceDate(e.target.value)}
-                              className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                              className={`w-full bg-slate-100 dark:bg-slate-900 border rounded-lg px-4 py-2 text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${validationErrors.invoiceDate ? 'border-red-500' : 'border-slate-300 dark:border-slate-700'}`}
                             />
+                            {validationErrors.invoiceDate ? (
+                              <p className="text-red-500 dark:text-red-400 text-xs mt-1">{validationErrors.invoiceDate}</p>
+                            ) : invoiceDate && (
+                              <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1 italic">Sets the exchange rate this invoice is priced at — check it matches the invoice.</p>
+                            )}
                           </div>
 
                           {/* Carrier */}
@@ -4669,6 +4768,19 @@ export const VendorShipments: React.FC<VendorShipmentsProps> = ({ onNavigate, ve
                       Optional — any extra files here (additional invoices, certificates, photos) upload
                       to Drive together with the Setup tab's packing list when you finalize.
                     </p>
+
+                    {/* Files from before a page reload can't be restored — only their names
+                        were saved. They used to be sent anyway and the Drive upload failed
+                        after the shipment was already created. */}
+                    {uploadedFiles.some(f => !isRealFile(f)) && (
+                      <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-sm text-amber-800 dark:text-amber-300">
+                        <p className="font-semibold">Re-attach {uploadedFiles.filter(f => !isRealFile(f)).length === 1 ? 'this document' : 'these documents'} — the page was reloaded, so the original file{uploadedFiles.filter(f => !isRealFile(f)).length === 1 ? ' is' : 's are'} no longer available:</p>
+                        <ul className="mt-1 list-disc list-inside">
+                          {uploadedFiles.filter(f => !isRealFile(f)).map(f => <li key={f.id}>{f.file?.name || 'Unnamed file'}</li>)}
+                        </ul>
+                        <p className="mt-1 text-xs opacity-80">Add them below, or upload them later from Shipment Tracker → Upload Documents. The shipment itself saves either way.</p>
+                      </div>
+                    )}
 
                     <label className="flex items-center justify-center gap-2 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg py-4 cursor-pointer hover:border-blue-400 dark:hover:border-blue-500 transition-colors">
                       <CloudArrowUpIcon className="w-5 h-5 text-slate-400" />
@@ -5243,6 +5355,60 @@ const COLUMN_MAP: Record<string, string> = {
     'total price': 'total_amount',
 };
 
+// Invoice-number / date labels in a vendor file's header area. Anchored at the
+// start of the cell; group 1 is anything after the label in the same cell.
+// (?![a-z]) stops a label running into a longer word: "Pieces", "Invoiced",
+// "Dated", "Shipping" never count as labels.
+const INVOICE_NO_LABEL = /^(?:proforma\s+invoice|commercial\s+invoice|invoice|inv\.?|p\s*\.?\s*\/?\s*i\.?)(?![a-z])\s*(?:no\.?|number|num|#)?\s*[:：]?\s*(.*)$/i;
+const INVOICE_DATE_LABEL = /^(?:(?:invoice|inv\.?|p\s*\.?\s*\/?\s*i\.?)\s+)?date(?![a-z])\s*[:：]?\s*(.*)$/i;
+
+const MONTHS: Record<string, number> = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/**
+ * Normalizes an invoice date cell to yyyy-mm-dd, or '' if it can't be read
+ * unambiguously enough — the user then picks it. The raw text used to be
+ * passed straight through and parsed server-side with new Date(), which reads
+ * "01/07/2026" US-style (month first): a 1 July invoice was stored as 7
+ * January and priced at January's exchange rate. Vendors here write dates day
+ * first, so dd/mm/yyyy is assumed unless the first number can't be a day
+ * position (i.e. the second is > 12).
+ */
+const normalizeInvoiceDate = (raw: any): string => {
+    const build = (y: number, m: number, d: number): string => {
+        if (!(y >= 2000 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31)) return '';
+        const dt = new Date(Date.UTC(y, m - 1, d));
+        if (dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return ''; // e.g. 31 Feb
+        return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    };
+    // Excel stores dates as a serial day count (1900 epoch) — SheetJS returns the number.
+    if (typeof raw === 'number' && raw > 30000 && raw < 80000) {
+        const dt = new Date(Math.round((raw - 25569) * 86400 * 1000));
+        return build(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+    }
+    const s = String(raw ?? '').trim();
+    if (!s) return '';
+    let m = s.match(/^(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/);                       // 2026-07-01, 2026/7/1, 2026年7月1日
+    if (m) return build(+m[1], +m[2], +m[3]);
+    m = s.match(/^(\d{4})(\d{2})(\d{2})$/);                                                          // 20260701
+    if (m) return build(+m[1], +m[2], +m[3]);
+    m = s.match(/^(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{4})/);                                 // 01/07/2026 — day first
+    if (m) {
+        const a = +m[1], b = +m[2];
+        return b > 12 && a <= 12 ? build(+m[3], a, b) : build(+m[3], b, a);
+    }
+    m = s.match(/^(\d{1,2})(?:st|nd|rd|th)?[\s\-.]*([A-Za-z]{3,9})\.?[\s\-.,]*(\d{4})/);              // 1-Jul-2026, 1st July 2026
+    if (m && MONTHS[m[2].slice(0, 4).toLowerCase()] !== undefined) return build(+m[3], MONTHS[m[2].slice(0, 4).toLowerCase()], +m[1]);
+    if (m && MONTHS[m[2].slice(0, 3).toLowerCase()] !== undefined) return build(+m[3], MONTHS[m[2].slice(0, 3).toLowerCase()], +m[1]);
+    m = s.match(/^([A-Za-z]{3,9})\.?\s*(\d{1,2})(?:st|nd|rd|th)?[\s,.\-]*(\d{4})/);                   // Jul 1, 2026
+    if (m) {
+        const mon = MONTHS[m[1].slice(0, 4).toLowerCase()] ?? MONTHS[m[1].slice(0, 3).toLowerCase()];
+        if (mon !== undefined) return build(+m[3], mon, +m[2]);
+    }
+    return '';
+};
+
 // Logic: Smart Vendor File Parser
 const parseVendorFile = async (file: File): Promise<any> => {
     return new Promise((resolve, reject) => {
@@ -5308,29 +5474,37 @@ const parseVendorFile = async (file: File): Promise<any> => {
 
                 if (dataStartRowIndex === -1) dataStartRowIndex = headerRowIndex + 1;
 
-                // STEP 4 - Parse invoice metadata
+                // STEP 4 - Parse invoice metadata (header area above the table).
+                // The label must START the cell and look like an invoice-number /
+                // date label — this used to match "pi" anywhere ("Shipping",
+                // "Pieces"…) and let later matches overwrite earlier ones. The
+                // value is whatever follows the label in the same cell, or the next
+                // non-empty cell to its right. First valid match wins.
                 let invoiceNo = '';
                 let invoiceDate = '';
+                const valueAfterLabel = (row: any[], j: number, rest: string): any => {
+                    if (rest.trim()) return rest.trim();
+                    for (let k = j + 1; k < Math.min(row.length, j + 4); k++) {
+                        if (String(row[k]).trim() !== '') return row[k];
+                    }
+                    return '';
+                };
                 for (let i = 0; i < headerRowIndex; i++) {
                     const row = rawData[i];
                     for (let j = 0; j < row.length; j++) {
                         const cellVal = String(row[j]).trim();
-                        const lowVal = cellVal.toLowerCase();
-                        
-                        if (lowVal.includes('pi') || lowVal.includes('invoice no') || lowVal.includes('pi no')) {
-                            if (cellVal.includes(':')) {
-                                invoiceNo = cellVal.split(':')[1].trim();
-                            } else if (j + 1 < row.length) {
-                                invoiceNo = String(row[j+1]).trim();
+                        if (!invoiceNo) {
+                            const m = cellVal.match(INVOICE_NO_LABEL);
+                            if (m) {
+                                const v = String(valueAfterLabel(row, j, m[1] || '')).trim();
+                                // A real invoice number has at least one digit — a bare
+                                // "COMMERCIAL INVOICE" title followed by blank/text isn't one.
+                                if (/\d/.test(v)) invoiceNo = v;
                             }
                         }
-                        
-                        if (lowVal.includes('date')) {
-                            if (cellVal.includes(':')) {
-                                invoiceDate = cellVal.split(':')[1].trim();
-                            } else if (j + 1 < row.length) {
-                                invoiceDate = String(row[j+1]).trim();
-                            }
+                        if (!invoiceDate) {
+                            const m = cellVal.match(INVOICE_DATE_LABEL);
+                            if (m) invoiceDate = normalizeInvoiceDate(valueAfterLabel(row, j, m[1] || ''));
                         }
                     }
                 }
