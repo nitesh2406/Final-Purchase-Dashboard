@@ -2327,6 +2327,37 @@ validated_rows.forEach(row => {
 
 
 //----------------------------------Batch Code----------------------------------
+
+// vendor_code → vendor_name from EE Product Master (first row with a given
+// code wins), cached in CacheService for 6h. Shared by getBatches and
+// getCnfEligibleBatches — see getBatches for why only this small derived map
+// is cached rather than the multi-thousand-row sheet it comes from.
+function getCachedVendorNameMap_(ss) {
+  var cacheKey = 'batches_vendor_name_map';
+  var scriptCache = CacheService.getScriptCache();
+  var cached = scriptCache.get(cacheKey);
+  if (cached) {
+    try { return JSON.parse(cached); } catch (e) {}
+  }
+  var productData = ss.getSheetByName('EE Product Master').getDataRange().getValues();
+  var productHeaders = productData[0];
+  var prodVendorCodeCol = productHeaders.indexOf('vendor_code');
+  var prodVendorNameCol = productHeaders.indexOf('vendor_name');
+  var vendorNameMap = {};
+  for (var vn = 1; vn < productData.length; vn++) {
+    var vnCode = productData[vn][prodVendorCodeCol];
+    if (vnCode && !vendorNameMap[vnCode]) {
+      vendorNameMap[vnCode] = productData[vn][prodVendorNameCol] || vnCode;
+    }
+  }
+  // 21600s (6h) — CacheService's max TTL, not the original 300s. Vendor
+  // names change rarely, but a 5-minute window meant any gap that long
+  // between Shipment Tracker loads forced a full re-read of the
+  // multi-thousand-row EE Product Master sheet (the ~5s/25s+ cost documented
+  // in getBatches) on every single call. 6h makes that the rare case.
+  try { scriptCache.put(cacheKey, JSON.stringify(vendorNameMap), 21600); } catch (e) {}
+  return vendorNameMap;
+}
 // getBatches() is the single endpoint for the Shipment Tracker screen. It is
 // logistics-only and unauthenticated-safe — no finance fields (payment
 // status, amounts, payments) are computed or returned here at all; those
@@ -2428,33 +2459,7 @@ function getBatches() {
     // window of staleness is low-risk (nothing else on this response derives
     // from this map — vendor_code, used for filtering, always comes fresh
     // from Vendor_Shipments above).
-    var vendorNameMapCacheKey_ = 'batches_vendor_name_map';
-    var scriptCache_ = CacheService.getScriptCache();
-    var vendorNameMap = null;
-    var cachedVendorNameMap_ = scriptCache_.get(vendorNameMapCacheKey_);
-    if (cachedVendorNameMap_) {
-      try { vendorNameMap = JSON.parse(cachedVendorNameMap_); } catch (e) { vendorNameMap = null; }
-    }
-    if (!vendorNameMap) {
-      var productSheet = ss.getSheetByName('EE Product Master');
-      var productData = productSheet.getDataRange().getValues();
-      var productHeaders = productData[0];
-      var prodVendorCodeCol = productHeaders.indexOf('vendor_code');
-      var prodVendorNameCol = productHeaders.indexOf('vendor_name');
-      vendorNameMap = {};
-      for (var vn = 1; vn < productData.length; vn++) {
-        var vnCode = productData[vn][prodVendorCodeCol];
-        if (vnCode && !vendorNameMap[vnCode]) {
-          vendorNameMap[vnCode] = productData[vn][prodVendorNameCol] || vnCode;
-        }
-      }
-      // 21600s (6h) — CacheService's max TTL, not the original 300s. Vendor
-      // names change rarely (see comment above), but a 5-minute window meant
-      // any gap that long between Shipment Tracker loads forced a full re-read
-      // of the multi-thousand-row EE Product Master sheet (the ~5s/25s+ cost
-      // documented above) on every single call. 6h makes that the rare case.
-      try { scriptCache_.put(vendorNameMapCacheKey_, JSON.stringify(vendorNameMap), 21600); } catch (e) {}
-    }
+    var vendorNameMap = getCachedVendorNameMap_(ss);
 
     // Known SKU_Config prefixes, longest first, so a longer specific prefix
     // is checked before a shorter one could coincidentally match — matches
@@ -3198,7 +3203,64 @@ function getCnfEligibleBatches() {
     // syncBatchWeightAggregate_ in accounting_logger.js.
     var totalWeightKgCol = batchHeaders.indexOf('total_weight_kg');
 
-    var ctx = buildBatchAssemblyContext_();
+    // Was buildBatchAssemblyContext_ + buildVendorShipmentsForBatch_ per batch
+    // (measured 26.7s live on 2026-09-26): a full read of EE Product Master
+    // and Purchase_Order_Lines, every shipment line rescanned once per
+    // shipment, and a linear product-master scan per shipment for its vendor
+    // name. All of that exists to build per-SKU line_items (stock levels,
+    // Logo/Pkg flags) — which no CNF screen reads. CNF Agent Accounting, CNF
+    // Advances and the CNF Portal only use each shipment's id / invoice /
+    // vendor and the batch's qty & carton totals. So: one pass to index
+    // shipments by batch, one two-column pass over the lines for unit counts,
+    // the cached vendor-name map, and line_items: [] (kept so the response
+    // shape — BatchVendorShipment — is unchanged). Batch Detail still uses
+    // buildVendorShipmentsForBatch_ for the full per-SKU view.
+    var shipmentsSheet = ss.getSheetByName('Vendor_Shipments');
+    var shipmentsData = shipmentsSheet.getDataRange().getValues();
+    var sh = shipmentsData[0];
+    var shipBatchIdCol = sh.indexOf('batch_id');
+    var shipmentIdCol = sh.indexOf('shipment_id');
+    var vendorCodeCol = sh.indexOf('vendor_code');
+    var invoiceNoCol = sh.indexOf('invoice_no');
+    var invoiceDateCol = sh.indexOf('invoice_date');
+    var cartonCountCol = sh.indexOf('carton_count');
+    var remarksCol = sh.indexOf('remarks');
+    var driveFolderIdCol = sh.indexOf('drive_folder_id');
+    var driveFolderUrlCol = sh.indexOf('drive_folder_url');
+    var expectedDeliveryColShip = sh.indexOf('expected_delivery');
+    var eePoStatusCol = sh.indexOf('ee_po_status');
+    var eePoReferenceCol = sh.indexOf('ee_po_reference');
+    var eePushErrorCol = sh.indexOf('ee_push_error');
+
+    var shipmentsByBatch = {};
+    for (var s = 1; s < shipmentsData.length; s++) {
+      var sBatch = shipmentsData[s][shipBatchIdCol];
+      if (!sBatch) continue;
+      (shipmentsByBatch[sBatch] = shipmentsByBatch[sBatch] || []).push(shipmentsData[s]);
+    }
+
+    var unitsByShipment = {};
+    var linesSheet = ss.getSheetByName('Vendor_Shipment_Lines');
+    var linesLastRow = linesSheet.getLastRow();
+    if (linesLastRow >= 2) {
+      var lh = linesSheet.getRange(1, 1, 1, linesSheet.getLastColumn()).getValues()[0];
+      var lineShipCol = lh.indexOf('shipment_id');
+      var lineQtyCol = lh.indexOf('invoice_qty');
+      if (lineShipCol !== -1 && lineQtyCol !== -1) {
+        var lineShipVals = linesSheet.getRange(2, lineShipCol + 1, linesLastRow - 1, 1).getValues();
+        var lineQtyVals = linesSheet.getRange(2, lineQtyCol + 1, linesLastRow - 1, 1).getValues();
+        for (var l = 0; l < lineShipVals.length; l++) {
+          var lSid = lineShipVals[l][0];
+          if (lSid === '' || lSid === null) continue;
+          unitsByShipment[lSid] = (unitsByShipment[lSid] || 0) + (Number(lineQtyVals[l][0]) || 0);
+        }
+      }
+    }
+
+    var vendorNameMap = getCachedVendorNameMap_(ss);
+    var tz = Session.getScriptTimeZone();
+    var cell_ = function(row, col) { return col >= 0 ? (row[col] || '') : ''; };
+
     var result = [];
 
     for (var i = 1; i < batchesData.length; i++) {
@@ -3212,7 +3274,29 @@ function getCnfEligibleBatches() {
       var batchTypeRaw = String(row[batchTypeCol] || 'sea').toLowerCase();
       var normalizedBatchType = batchTypeRaw.indexOf('air') !== -1 ? 'air' : 'sea';
 
-      var vendorShipments = buildVendorShipmentsForBatch_(batchId, ctx);
+      var vendorShipments = (shipmentsByBatch[batchId] || []).map(function(shipment) {
+        var shipmentId = shipment[shipmentIdCol];
+        var vendorCode = shipment[vendorCodeCol];
+        var invoiceNo = shipment[invoiceNoCol];
+        var invoiceDate = shipment[invoiceDateCol];
+        return {
+          shipment_id: shipmentId, vendor_code: vendorCode,
+          vendor_name: vendorNameMap[vendorCode] || vendorCode,
+          invoice_no: invoiceNo, invoiceId: invoiceNo,
+          invoice_date: invoiceDate ? Utilities.formatDate(new Date(invoiceDate), tz, 'yyyy-MM-dd') : '',
+          total_units: unitsByShipment[shipmentId] || 0,
+          carton_count: Number(shipment[cartonCountCol] || 0),
+          remarks: shipment[remarksCol] || '',
+          line_items: [],
+          drive_folder_id: cell_(shipment, driveFolderIdCol),
+          drive_folder_url: cell_(shipment, driveFolderUrlCol),
+          expected_delivery: expectedDeliveryColShip >= 0 && shipment[expectedDeliveryColShip]
+            ? Utilities.formatDate(new Date(shipment[expectedDeliveryColShip]), tz, 'yyyy-MM-dd') : '',
+          ee_po_status: cell_(shipment, eePoStatusCol),
+          ee_po_reference: cell_(shipment, eePoReferenceCol),
+          ee_push_error: cell_(shipment, eePushErrorCol)
+        };
+      });
 
       var qty = 0, cartons = 0;
       for (var v = 0; v < vendorShipments.length; v++) {

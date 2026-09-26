@@ -583,9 +583,25 @@ function doPost(e) {
         return r;
       }
 
-      case 'sync_shipments':
-        syncShipmentsToInvoices_();
+      case 'sync_shipments': {
+        // Every user's first Finance visit fires this. It appends
+        // PurchaseInvoices rows and auto-settles them, but used to take no
+        // lock — two users opening Finance together could both see an
+        // invoice as missing and both append it. Locked here, at the route,
+        // because Apps Script locks aren't safe to take twice in one
+        // execution. If a write already holds the lock, skip rather than
+        // wait: the sync is opportunistic and the next Finance load retries.
+        const syncLock = LockService.getScriptLock();
+        if (!syncLock.tryLock(5000)) {
+          return successResponse_({ message: 'Sync skipped — another write is in progress', skipped: true });
+        }
+        try {
+          syncShipmentsToInvoices_();
+        } finally {
+          syncLock.releaseLock();
+        }
         return successResponse_({ message: 'Synchronization triggered successfully' });
+      }
 
       case 'delete_row':
         return deleteRowByUniqueId_(payload.table, payload.idColumn, payload.targetId);

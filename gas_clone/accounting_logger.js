@@ -78,6 +78,26 @@ function settlementExists_(paymentId, invoiceId) {
   );
 }
 
+// Same check as settlementExists_, but for a loop: reads SettlementLedger once
+// (fresh, for the same reason settlementExists_ bypasses the cache) and
+// answers every (paymentId, invoiceId) lookup from memory. settlementExists_
+// used to be called once per invoice/wallet inside fifoLiquidate_ and
+// autoSettleAdvanceFromInvoice_ — a full SettlementLedger re-read per
+// iteration, all while holding the script lock. Callers must add() each pair
+// they append so later iterations see it, exactly as a re-read would have.
+function loadSettlementPairSet_() {
+  invalidateSheetCache_('SettlementLedger');
+  const pairs = {};
+  const key = (paymentId, invoiceId) => String(paymentId || '').trim() + '\u0001' + String(invoiceId || '').trim();
+  getSheetData_('SettlementLedger').forEach(row => {
+    pairs[key(row['Payment ID'], row['invoice_no'] || row['Invoice ID'])] = true;
+  });
+  return {
+    has: (paymentId, invoiceId) => pairs[key(paymentId, invoiceId)] === true,
+    add: (paymentId, invoiceId) => { pairs[key(paymentId, invoiceId)] = true; }
+  };
+}
+
 function generateTxnId_() {
   return 'TXN-' + Utilities.getUuid();
 }
@@ -226,17 +246,51 @@ function syncShipmentsToInvoices_() {
   invalidateSheetCache_('PurchaseInvoices');
 }
 
+// ─────────────────────────────────────────────────────────────
+// FX RATE LOOKUP SCRATCH SPACE
+// ─────────────────────────────────────────────────────────────
+// GOOGLEFINANCE only runs as a sheet formula, so a lookup writes a formula
+// into a cell, flushes, and reads the result back. This used to always use
+// cell Z1 of the FIRST sheet — shared by every concurrent execution, so two
+// lookups at once (e.g. AccountsView's rate preview, which takes no lock,
+// alongside an invoice being priced under the lock) could read or clear each
+// other's formula and write the wrong ER1 onto an invoice. Each lookup now
+// takes a randomly chosen 3-row block on a dedicated hidden sheet — 300
+// non-overlapping blocks, so two concurrent lookups collide 1 time in 300,
+// and far less often in practice now that historical rates are cached (see
+// getHistoricalClosingRate_). A block is 3 rows × 2 cols because a
+// single-date "close" lookup spills as a [Date, Close] header row + value row.
+var FX_SCRATCH_SHEET_ = 'FX_Scratch';
+var FX_SCRATCH_BLOCKS_ = 300;
+
+function getFxScratchBlock_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(FX_SCRATCH_SHEET_);
+  if (!sheet) {
+    try {
+      sheet = ss.insertSheet(FX_SCRATCH_SHEET_, ss.getNumSheets());
+      sheet.hideSheet();
+    } catch (e) {
+      // Another execution created it between the lookup and the insert.
+      sheet = ss.getSheetByName(FX_SCRATCH_SHEET_);
+      if (!sheet) throw e;
+    }
+  }
+  const row = 1 + Math.floor(Math.random() * FX_SCRATCH_BLOCKS_) * 3;
+  return { sheet: sheet, cell: sheet.getRange(row, 1), block: sheet.getRange(row, 1, 3, 2) };
+}
+
 function getLiveRate_() {
+  let scratch = null;
   try {
-    const ss       = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet    = ss.getSheets()[0];
-    const tempCell = sheet.getRange('Z1');
-    tempCell.setFormula('=GOOGLEFINANCE("CURRENCY:CNYINR")');
+    scratch = getFxScratchBlock_();
+    scratch.cell.setFormula('=GOOGLEFINANCE("CURRENCY:CNYINR")');
     SpreadsheetApp.flush();
-    const liveRate = parseFloat(tempCell.getValue());
-    tempCell.clearContent();
+    const liveRate = parseFloat(scratch.cell.getValue());
+    scratch.block.clearContent();
     return (!isNaN(liveRate) && liveRate > 0) ? liveRate : 0;
   } catch(e) {
+    try { if (scratch) scratch.block.clearContent(); } catch (clearErr) {}
     Logger.log('Error in getLiveRate_: ' + e.toString());
     return 11.5;
   }
@@ -260,18 +314,32 @@ function getHistoricalFxRates_(payload) {
 // VENDOR CURRENCY LOOKUP
 // ─────────────────────────────────────────────────────────────
 
+// vendor_code → currency, built once per execution. This used to re-read the
+// whole Vendor Masters sheet on every call — and a single payment calls it
+// several times (addPaymentLog, then fifoLiquidate_ once per allocation, then
+// runEodForInvoice_), all under the script lock. Apps Script globals live only
+// for one execution, so this can never serve a stale value across requests.
+// First row wins for a duplicated code, same as the old linear scan; an
+// unknown code still falls back to 'RMB'.
+var vendorCurrencyMemo_ = null;
+
 function getVendorCurrency_(vendorCode) {
-  const sheet = getSheet_(SHEET_NAMES.VENDOR_MASTERS);
-  const header = getHeaderMap_(sheet);
-  const data = sheet.getDataRange().getValues();
-  const vendorCodeCol = header.vendor_code;
-  const currencyCol = header.Currency;
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][vendorCodeCol] || '').trim() === String(vendorCode).trim()) {
-      return String(data[i][currencyCol] || '').trim() || 'RMB';
+  if (!vendorCurrencyMemo_) {
+    const sheet = getSheet_(SHEET_NAMES.VENDOR_MASTERS);
+    const header = getHeaderMap_(sheet);
+    const data = sheet.getDataRange().getValues();
+    const vendorCodeCol = header.vendor_code;
+    const currencyCol = header.Currency;
+    vendorCurrencyMemo_ = {};
+    for (let i = 1; i < data.length; i++) {
+      const code = String(data[i][vendorCodeCol] || '').trim();
+      if (!(code in vendorCurrencyMemo_)) {
+        vendorCurrencyMemo_[code] = String(data[i][currencyCol] || '').trim() || 'RMB';
+      }
     }
   }
-  return 'RMB';
+  const hit = vendorCurrencyMemo_[String(vendorCode).trim()];
+  return hit || 'RMB';
 }
 
 
@@ -656,12 +724,102 @@ function paymentIdExistsAnywhere_(paymentId) {
   return getSheetData_('PaymentLogs').some(row => String(row['Payment ID'] || '').trim() === String(paymentId).trim());
 }
 
+// ─────────────────────────────────────────────────────────────
+// HISTORICAL FX RATE CACHE
+// ─────────────────────────────────────────────────────────────
+// A live GOOGLEFINANCE lookup costs ~1.5s per attempt and walks back up to 10
+// days over weekends/holidays — and it used to run fresh for every invoice,
+// inside the script lock, even for a date already looked up minutes earlier.
+// A past date's CNY/INR close never changes, so each one is now looked up
+// live once and remembered in three layers: this execution (fxRateMemo_),
+// CacheService (6h), and the FX_Rates sheet (permanent, human-readable).
+// Only dates strictly before today are persisted — today's close may not
+// exist yet (the walk-back would resolve to yesterday), so caching it would
+// pin yesterday's rate onto today for good. Failed lookups are never cached.
+var FX_RATES_SHEET_ = 'FX_Rates';
+var FX_RATE_CACHE_TTL_SECONDS_ = 21600;
+var fxRateMemo_ = {};
+
+function getFxRatesSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(FX_RATES_SHEET_);
+  if (sheet) return sheet;
+  try {
+    sheet = ss.insertSheet(FX_RATES_SHEET_, ss.getNumSheets());
+    // Plain-text date columns, so '2026-03-01' is stored as written instead
+    // of being auto-converted to a Date (and shifted by timezone on read).
+    sheet.getRange('A:A').setNumberFormat('@');
+    sheet.getRange('C:C').setNumberFormat('@');
+    sheet.getRange(1, 1, 1, 4).setValues([['date', 'rate', 'resolved_date', 'fetched_at']]);
+  } catch (e) {
+    sheet = ss.getSheetByName(FX_RATES_SHEET_);
+    if (!sheet) throw e;
+  }
+  return sheet;
+}
+
+function fxDateCell_(v, tz) {
+  if (v instanceof Date) return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+  return String(v || '').trim();
+}
+
+function readCachedFxRate_(dateStr) {
+  if (fxRateMemo_[dateStr]) return fxRateMemo_[dateStr];
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('fxr_' + dateStr);
+  if (hit) {
+    try {
+      fxRateMemo_[dateStr] = JSON.parse(hit);
+      return fxRateMemo_[dateStr];
+    } catch (e) {}
+  }
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(FX_RATES_SHEET_);
+  if (!sheet) return null;
+  const tz = ss.getSpreadsheetTimeZone();
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (fxDateCell_(values[i][0], tz) !== dateStr) continue;
+    const rate = Number(values[i][1]);
+    if (!(rate > 0)) continue;
+    const found = { rate: rate, resolvedDate: fxDateCell_(values[i][2], tz) || dateStr, success: true };
+    fxRateMemo_[dateStr] = found;
+    try { cache.put('fxr_' + dateStr, JSON.stringify(found), FX_RATE_CACHE_TTL_SECONDS_); } catch (e) {}
+    return found;
+  }
+  return null;
+}
+
+function storeCachedFxRate_(dateStr, result) {
+  fxRateMemo_[dateStr] = result;
+  const tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  const today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || dateStr >= today) return;
+  try {
+    getFxRatesSheet_().appendRow([dateStr, result.rate, result.resolvedDate, new Date().toISOString()]);
+    CacheService.getScriptCache().put('fxr_' + dateStr, JSON.stringify(result), FX_RATE_CACHE_TTL_SECONDS_);
+  } catch (e) {
+    Logger.log('storeCachedFxRate_(' + dateStr + ') failed: ' + e.message);
+  }
+}
+
 function getHistoricalClosingRate_(dateStr) {
-  const ss    = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheets()[0];
-  const cell  = sheet.getRange('Z1');
+  const key = String(dateStr || '').trim();
+  if (!key) return { rate: 0, resolvedDate: key, success: false };
+  const cached = readCachedFxRate_(key);
+  if (cached) return cached;
+  const result = lookupHistoricalClosingRateLive_(key);
+  if (result.success && result.rate > 0) storeCachedFxRate_(key, result);
+  return result;
+}
+
+function lookupHistoricalClosingRateLive_(dateStr) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let scratch = null;
 
   try {
+    scratch = getFxScratchBlock_();
+    const cell = scratch.cell;
     let cursor = new Date(dateStr + 'T00:00:00');
     if (isNaN(cursor.getTime())) return { rate: 0, resolvedDate: dateStr, success: false };
 
@@ -673,10 +831,10 @@ function getHistoricalClosingRate_(dateStr) {
       SpreadsheetApp.flush();
       Utilities.sleep(1200);
 
-      // Single-date "close" lookups spill as [Date, Close] — read column AA (index 1)
-      // specifically, and sanity-bound it so a stray date serial can never be mistaken
-      // for a rate (CNY/INR will never be anywhere near the thousands).
-      const block = sheet.getRange('Z1:AA3').getValues();
+      // Single-date "close" lookups spill as [Date, Close] — read the block's second
+      // column (index 1) specifically, and sanity-bound it so a stray date serial can
+      // never be mistaken for a rate (CNY/INR will never be anywhere near the thousands).
+      const block = scratch.block.getValues();
       let found = 0;
       for (let r = 0; r < block.length; r++) {
         const v = block[r][1];
@@ -684,7 +842,7 @@ function getHistoricalClosingRate_(dateStr) {
       }
 
       if (found) {
-        sheet.getRange('Z1:AA3').clearContent();
+        scratch.block.clearContent();
         const resolvedDateStr = Utilities.formatDate(cursor, ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd');
         return { rate: found, resolvedDate: resolvedDateStr, success: true };
       }
@@ -692,10 +850,10 @@ function getHistoricalClosingRate_(dateStr) {
       cursor.setDate(cursor.getDate() - 1);
     }
 
-    sheet.getRange('Z1:AA3').clearContent();
+    scratch.block.clearContent();
     return { rate: 0, resolvedDate: dateStr, success: false };
   } catch (e) {
-    try { sheet.getRange('Z1:AA3').clearContent(); } catch (clearErr) {}
+    try { if (scratch) scratch.block.clearContent(); } catch (clearErr) {}
     Logger.log('getHistoricalClosingRate_ error for ' + dateStr + ': ' + e.toString());
     return { rate: 0, resolvedDate: dateStr, success: false };
   }
@@ -743,7 +901,13 @@ function runEodForInvoice_(invoiceId) {
   }
   if (rowIdx === -1) return;
 
-  const dateStr = (rawDate instanceof Date) ? rawDate.toISOString().split('T')[0] : String(rawDate || '').split('T')[0];
+  // Calendar date in the spreadsheet's own timezone (IST), not UTC. A date
+  // cell stored at IST midnight is 18:30Z the previous day, so the old
+  // .toISOString() read it as the day before and priced the invoice at the
+  // previous day's closing rate (29 of 88 invoices as of 2026-09-26).
+  const dateStr = (rawDate instanceof Date)
+    ? Utilities.formatDate(rawDate, ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd')
+    : String(rawDate || '').split('T')[0];
   const round2  = v => Math.round(v * 100) / 100;
 
   const isInrVendor = getVendorCurrency_(vCode) === 'INR';
@@ -966,11 +1130,14 @@ function syncPaymentsIntoPaymentLogs_() {
   return { synced, failed };
 }
 
-// Payment Entries tab (Accounts View) calls this to read PaymentLogs —
-// first syncing any not-yet-processed Payments rows for real (see
-// syncPaymentsIntoPaymentLogs_ above), then returning the up-to-date sheet.
+// Payment Entries tab (Accounts View) calls this to read PaymentLogs. It used
+// to run syncPaymentsIntoPaymentLogs_ first — a write (script lock + FIFO
+// settlement) hidden inside every read, retried forever for any legacy
+// Payments row that could never pass validation. PaymentLogs is the only real
+// payment record now (confirmed 2026-09-26; nothing in the app writes the old
+// Payments sheet any more), so reads are plain reads again.
+// syncPaymentsIntoPaymentLogs_ is kept above for a manual one-off run only.
 function getLinkedPaymentLogs_() {
-  syncPaymentsIntoPaymentLogs_();
   return getSheetData_('PaymentLogs');
 }
 
@@ -1426,11 +1593,12 @@ function fifoLiquidate_(vendorCode, date, paymentId, amountRmb, er2) {
   const invHeaders_ = invSheet.getDataRange().getValues()[0];
   const settledIdx = findHeaderIndex_(invHeaders_, 'Settled Amount');
   const balanceIdx = findHeaderIndex_(invHeaders_, 'Balance');
+  const settledPairs_ = loadSettlementPairSet_();
 
   for (const inv of invoices) {
     if (remainingPayment <= 0) break;
     const invoiceId = inv['invoice_no'] || inv['Invoice ID'] || inv['invoiceId'];
-    if (settlementExists_(paymentId, invoiceId)) continue;
+    if (settledPairs_.has(paymentId, invoiceId)) continue;
     const b = inv.Balance !== undefined && inv.Balance !== '' ? inv.Balance : inv.RMB;
     const currentBalance = parseFloat(b);
     if (isNaN(currentBalance) || currentBalance <= 0) continue;
@@ -1446,6 +1614,7 @@ function fifoLiquidate_(vendorCode, date, paymentId, amountRmb, er2) {
       round2(-Math.abs(settledAmount)), er1, er2,
       round2(Math.abs(settledAmount) * (er1 - er2)), 'FIFO Settlement'
     ]);
+    settledPairs_.add(paymentId, invoiceId);
     settledInvoiceIds_.push(invoiceId);
     remainingPayment -= settledAmount;
   }
@@ -1980,10 +2149,11 @@ function autoSettleAdvanceFromInvoice_(vendorCode, date, invoiceId, amountRmb) {
   const invoiceEr1Val = invEr1Idx !== -1 ? invData[invoiceRow - 1][invEr1Idx] : '';
   let invSettledAccum = invSettledIdx !== -1 ? (parseFloat(invData[invoiceRow - 1][invSettledIdx]) || 0) : 0;
   let invSettledTouched = false;
+  const settledPairs_ = loadSettlementPairSet_();
 
   for (const pay of payData) {
     if (remainingInvoiceBalance <= 0.01) break;
-    if (settlementExists_(pay['Payment ID'] || pay.paymentId, invoiceId)) continue;
+    if (settledPairs_.has(pay['Payment ID'] || pay.paymentId, invoiceId)) continue;
     const b = parseFloat(pay.Balance !== undefined && pay.Balance !== '' ? pay.Balance : (pay.RMB !== undefined && pay.RMB !== '' ? pay.RMB : pay['RMB Amount']));
     if (isNaN(b) || b <= 0) continue;
     const settledAmount = Math.min(remainingInvoiceBalance, b);
@@ -2001,6 +2171,7 @@ function autoSettleAdvanceFromInvoice_(vendorCode, date, invoiceId, amountRmb) {
       round2(-Math.abs(settledAmount)), er1, er2,
       round2(Math.abs(settledAmount) * (er1 - er2)), 'Auto-Settlement Advance Match'
     ]);
+    settledPairs_.add(pay['Payment ID'] || pay.paymentId, invoiceId);
     remainingInvoiceBalance -= settledAmount;
   }
 
