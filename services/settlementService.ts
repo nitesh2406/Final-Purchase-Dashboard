@@ -11,50 +11,27 @@ export const IS_DEVELOPMENT_MODE = true;
 const appsScriptUrl = APPS_SCRIPT_URL;
 
 /**
- * Helper to send table-scoped requests directly to Apps Script via client-side HTTP.
- * Meets requirements to not use proxies.
+ * Sends a table-scoped request to Apps Script. Now a thin wrapper over
+ * gasApi's callGas, so these ~36 finance/CNF calls get what the raw fetch
+ * here never had: a bounded wait (a stalled call used to hang ~180s), a
+ * clean error instead of handing Google's HTML error page back as if it were
+ * data, one retry for reads (never for writes), the shared read cache, and
+ * cache invalidation after writes. The appsScriptUrl / innerMethod params are
+ * kept only so existing call sites don't change — callGas always targets
+ * APPS_SCRIPT_URL via POST, which is what every caller passed anyway.
  */
 export async function executeAppsScriptProxy<T = any>(
-  appsScriptUrl: string,
+  _appsScriptUrl: string,
   action: string,
   table: string,
-  innerMethod: string = 'POST',
+  _innerMethod: string = 'POST',
   payload?: any
 ): Promise<T> {
-  const requestBody = {
-    action,
-    table,
-    ...(payload || {})
-  };
-
+  const isRead = /^(get|search|verify|ping|fetch)/i.test(action);
   try {
-    const resp = await fetch(appsScriptUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(requestBody)
-    });
-
-    const text = await resp.text();
-    let parsed: any = null;
-    try {
-      parsed = text ? JSON.parse(text) : null;
-    } catch (e) {
-      parsed = text;
-    }
-
-    if (!resp.ok) {
-      console.error('[AppsScript] Direct fetch responded with non-OK status', {
-        status: resp.status,
-        statusText: resp.statusText,
-        requestBody,
-        bodyText: text
-      });
-      throw new Error(`Apps Script responded with status ${resp.status}`);
-    }
-
-    return parsed as T;
+    return await callGas(action, { table, ...(payload || {}) }, isRead ? 1 : 0) as T;
   } catch (err: any) {
-    console.error('[AppsScript] Direct network or request error', { requestBody }, err);
+    console.error('[AppsScript] Request failed', { action, table }, err);
     throw err;
   }
 }
@@ -862,31 +839,28 @@ export async function rejectCnfInvoiceBatch(batchId: string, rejectionReason: st
  * CNF Goods Invoices match against it. See design doc:
  * docs/superpowers/specs/2026-09-25-cnf-advances-invoice-matching-design.md.
  */
+//
+// Throws on failure (like fetchCnfEligibleBatches) instead of returning [] —
+// an empty list here used to be indistinguishable from "no advances", got
+// cached by CnfAdvances.tsx, and made every already-invoiced shipment look
+// like it was still awaiting a CNF invoice. The caller shows the error.
 export async function fetchCnfAdvances(): Promise<CnfAdvance[]> {
-  try {
-    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_advances', 'CNF_Advances', 'POST');
-    if (response && response.status === 'success' && Array.isArray(response.advances)) {
-      return response.advances;
-    }
-  } catch (err) {
-    console.error('Failed to fetch CNF advances:', err);
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_advances', 'CNF_Advances', 'POST');
+  if (response && response.status === 'success' && Array.isArray(response.advances)) {
+    return response.advances;
   }
-  return [];
+  throw new Error((response && response.message) || 'Failed to fetch CNF advances');
 }
 
 /**
- * Fetches all logged CNF Goods Invoices.
+ * Fetches all logged CNF Goods Invoices. Throws on failure — see fetchCnfAdvances.
  */
 export async function fetchCnfGoodsInvoices(): Promise<CnfGoodsInvoice[]> {
-  try {
-    const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_goods_invoices', 'CNF_Goods_Invoices', 'POST');
-    if (response && response.status === 'success' && Array.isArray(response.invoices)) {
-      return response.invoices;
-    }
-  } catch (err) {
-    console.error('Failed to fetch CNF goods invoices:', err);
+  const response = await executeAppsScriptProxy<any>(appsScriptUrl, 'get_cnf_goods_invoices', 'CNF_Goods_Invoices', 'POST');
+  if (response && response.status === 'success' && Array.isArray(response.invoices)) {
+    return response.invoices;
   }
-  return [];
+  throw new Error((response && response.message) || 'Failed to fetch CNF goods invoices');
 }
 
 /**

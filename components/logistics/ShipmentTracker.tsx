@@ -18,7 +18,7 @@ import {
     CloudArrowUpIcon
 } from '../icons/Icons';
 import { Batch, BatchFilters, BatchMetrics, BatchVendorShipment, BatchLineItem, SkuCategory } from '../../types';
-import { callGasAuthed } from '../../services/gasApi';
+import { callGasAuthed, invalidateReadCache } from '../../services/gasApi';
 import { Button } from '../ui/Button';
 import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
 import { useSearchParams } from 'react-router-dom';
@@ -33,6 +33,10 @@ let batchListCache: {
 } | null = null;
 
 let categoryCache: SkuCategory[] | null = null;
+
+// How old batchListCache may get before a return visit re-reads it in the
+// background (see fetchData). Matches gasApi's shared read-cache window.
+const CACHE_REVALIDATE_MS = 60 * 1000;
 
 // Every status gets its own hue family (not just a lighter/darker shade of a
 // neighbor) so no two are confusable at a glance — In-Transit India and Out
@@ -510,13 +514,22 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
     const [savingFlagKey, setSavingFlagKey] = useState<string | null>(null);
 
     const fetchData = useCallback(async (forceRefresh = false) => {
+        // Returning to this screen shows the cached list instantly. It used to
+        // stop there for the rest of the session (other users' changes never
+        // appeared without a manual Refresh) — once the cache is older than
+        // CACHE_REVALIDATE_MS it's now also re-read quietly in the background.
+        let silent = false;
         if (!forceRefresh && batchListCache) {
             setBatches(batchListCache.batches);
             setMetrics(batchListCache.metrics);
-            return;
+            if (Date.now() - batchListCache.timestamp < CACHE_REVALIDATE_MS) return;
+            silent = true;
         }
-        setIsLoading(true);
-        setError(null);
+        if (forceRefresh) invalidateReadCache();
+        if (!silent) {
+            setIsLoading(true);
+            setError(null);
+        }
         const payload = { action: 'get_batches' };
         setLastRequest(payload);
         try {
@@ -533,9 +546,11 @@ export const ShipmentTracker: React.FC<ShipmentTrackerProps> = ({ isAdmin = fals
             }
         } catch (err: any) {
             console.error('Fetch error:', err);
-            setError(err.message || 'Network Failure');
+            // A failed background re-read keeps the cached list on screen; the
+            // app-wide data-error banner (App.tsx) still flags it.
+            if (!silent) setError(err.message || 'Network Failure');
         } finally {
-            setIsLoading(false);
+            if (!silent) setIsLoading(false);
         }
     }, []);
 

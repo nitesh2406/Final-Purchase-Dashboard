@@ -18,6 +18,7 @@ import {
 } from '../../services/settlementService';
 import { CnfAdvance, CnfGoodsInvoice, CnfEligibleBatch } from '../../types';
 import { LogCnfGoodsInvoiceModal, CnfShipmentOption } from './LogCnfGoodsInvoiceModal';
+import { invalidateReadCache } from '../../services/gasApi';
 
 type CnfAdvancesTab = 'advances' | 'awaiting' | 'invoices';
 
@@ -29,6 +30,10 @@ const fmtInr = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionD
 // doesn't re-run all 5 loadAll() round trips against Apps Script every time.
 // Only a forced refresh (post-write, the Retry banner, or the Refresh button)
 // bypasses it.
+// How old the cache below may get before a return visit re-reads it in the
+// background (see loadAll). Matches gasApi's shared read-cache window.
+const CACHE_REVALIDATE_MS = 60 * 1000;
+
 let cnfAdvDataCache: {
   advances: CnfAdvance[];
   invoices: CnfGoodsInvoice[];
@@ -50,6 +55,11 @@ export const CnfAdvances: React.FC = () => {
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
 
   const loadAll = async (forceRefresh = false) => {
+    // Cached data shows instantly; once it's older than CACHE_REVALIDATE_MS it
+    // is also re-read quietly in the background (it used to stay stale for
+    // the whole session — e.g. a payment logged on another screen never
+    // surfaced its new advance here without a manual Refresh).
+    let silent = false;
     if (!forceRefresh && cnfAdvDataCache) {
       setAdvances(cnfAdvDataCache.advances);
       setInvoices(cnfAdvDataCache.invoices);
@@ -57,10 +67,14 @@ export const CnfAdvances: React.FC = () => {
       setPurchaseInvoices(cnfAdvDataCache.purchaseInvoices);
       setSettlementRecords(cnfAdvDataCache.settlementRecords);
       setIsLoading(false);
-      return;
+      if (Date.now() - cnfAdvDataCache.timestamp < CACHE_REVALIDATE_MS) return;
+      silent = true;
     }
-    setIsLoading(true);
-    setLoadError(null);
+    if (forceRefresh) invalidateReadCache();
+    if (!silent) {
+      setIsLoading(true);
+      setLoadError(null);
+    }
     try {
       const [advList, invList, batches, pInvoices, settlements] = await Promise.all([
         fetchCnfAdvances(),
@@ -83,9 +97,9 @@ export const CnfAdvances: React.FC = () => {
         timestamp: Date.now()
       };
     } catch (err: any) {
-      setLoadError(err.message || 'Failed to load CNF Advances data.');
+      if (!silent) setLoadError(err.message || 'Failed to load CNF Advances data.');
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   };
 

@@ -29,7 +29,7 @@ import {
 import { extractInvoiceAmount } from '../../services/geminiService';
 import { CnfEligibleBatch, CnfLedgerEntry, CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfInvoiceBatch, CnfShipmentBillStatus, Batch } from '../../types';
 import { useSubmissionLock } from '../../hooks/useSubmissionLock';
-import { callGasAuthed } from '../../services/gasApi';
+import { callGasAuthed, invalidateReadCache } from '../../services/gasApi';
 
 type CnfTab = 'overview' | 'reconciliation';
 
@@ -82,6 +82,10 @@ const fmtRmb = (n: number) => `¥${n.toLocaleString('en-IN', { minimumFractionDi
 // doesn't re-run all 8 loadAll() round trips against Apps Script every time.
 // Only a forced refresh (post-write, the Retry banner, or the Refresh button)
 // bypasses it.
+// How old the cache below may get before a return visit re-reads it in the
+// background (see loadAll). Matches gasApi's shared read-cache window.
+const CACHE_REVALIDATE_MS = 60 * 1000;
+
 let cnfDataCache: {
   eligibleBatches: CnfEligibleBatch[];
   allBatches: Batch[];
@@ -122,6 +126,7 @@ export const CnfAgentAccounting: React.FC = () => {
   const [overviewMode, setOverviewMode] = useQueryParam<'sea' | 'air'>('cnfMode', 'sea');
 
   const loadAll = async (forceRefresh = false) => {
+    let silent = false;
     if (!forceRefresh && cnfDataCache) {
       setEligibleBatches(cnfDataCache.eligibleBatches);
       setAllBatches(cnfDataCache.allBatches);
@@ -136,10 +141,15 @@ export const CnfAgentAccounting: React.FC = () => {
       setInvoiceBatches(cnfDataCache.invoiceBatches);
       setShipmentBillStatus(cnfDataCache.shipmentBillStatus);
       setIsLoading(false);
-      return;
+      // Stale-while-revalidate — see CnfAdvances.tsx's loadAll for why.
+      if (Date.now() - cnfDataCache.timestamp < CACHE_REVALIDATE_MS) return;
+      silent = true;
     }
-    setIsLoading(true);
-    setLoadError(null);
+    if (forceRefresh) invalidateReadCache();
+    if (!silent) {
+      setIsLoading(true);
+      setLoadError(null);
+    }
     try {
       const [batches, batchesResult, invoices, settlements, entries, rates, airRates, partners, partnerDefaultsList, igst, invoiceBatchList, billStatusRows] = await Promise.all([
         fetchCnfEligibleBatches(),
@@ -187,9 +197,9 @@ export const CnfAgentAccounting: React.FC = () => {
         timestamp: Date.now()
       };
     } catch (err: any) {
-      setLoadError(err.message || 'Failed to load CNF Agent data.');
+      if (!silent) setLoadError(err.message || 'Failed to load CNF Agent data.');
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   };
 

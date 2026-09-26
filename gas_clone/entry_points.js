@@ -521,6 +521,9 @@ function doPost(e) {
         result = rejectCnfInvoiceBatch(payload);
         break;
 
+      case 'get_bundle':
+        return getBundle_(payload);
+
       case 'get_cnf_advances':
         return successResponse_({ advances: getCnfAdvances_() });
 
@@ -641,6 +644,48 @@ function doPost(e) {
       }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+
+// ─── get_bundle ───────────────────────────────────────────────────────────────
+// Runs several read actions in ONE execution and returns all their results.
+// Opening a screen used to fire ~13 separate requests at once (startup data +
+// the screen's own datasets); run concurrently they slowed each other down —
+// measured 36-38s each on 2026-09-26, versus ~5s for the same request alone —
+// and the long-running ones hit Google's intermittent redirect failures.
+// The frontend (services/gasApi.ts) now groups reads issued in the same
+// instant into one get_bundle call.
+//
+// Each sub-request goes through doPost itself, so it gets exactly the same
+// handler and response shape as if it had been sent on its own. Only the
+// read-only actions below are accepted — a bundle can never carry a write.
+var BUNDLE_READ_ACTIONS_ = {
+  get_drafts: true, get_pos: true, get_vendor_masters: true,
+  get_purchase_invoices: true, get_payment_logs: true, get_settlement_records: true,
+  get_vendor_ledger: true, get_vendor_shipments: true,
+  get_cnf_eligible_batches: true, get_cnf_advances: true, get_cnf_goods_invoices: true,
+  get_cnf_ledger: true, get_cnf_invoice_batches: true, get_cnf_shipment_bill_status: true,
+  get_batches: true
+};
+
+function getBundle_(payload) {
+  var requests = (payload && payload.requests) || [];
+  if (!Array.isArray(requests) || requests.length === 0) return errorResponse_('get_bundle: requests must be a non-empty array');
+  if (requests.length > 30) return errorResponse_('get_bundle: at most 30 requests per bundle');
+
+  var results = requests.map(function(req) {
+    var action = req && req.action;
+    if (!BUNDLE_READ_ACTIONS_[action]) {
+      return { status: 'error', message: 'get_bundle: action not allowed in a bundle: ' + action };
+    }
+    try {
+      var out = doPost({ postData: { contents: JSON.stringify(req) } });
+      return JSON.parse(out.getContent());
+    } catch (err) {
+      return { status: 'error', message: 'get_bundle: ' + action + ' failed: ' + (err && err.message) };
+    }
+  });
+  return successResponse_({ results: results });
 }
 
 

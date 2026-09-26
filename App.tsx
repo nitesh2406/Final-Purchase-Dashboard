@@ -48,7 +48,32 @@ import { SkeletonDashboard } from './components/feedback/SkeletonDashboard.tsx';
 import { SyncQueueManager, QueueItem } from './services/syncQueue.ts';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { viewToPath, matchPathToView } from './routes.ts';
-import { callGas } from './services/gasApi.ts';
+import { callGas, invalidateReadCache, subscribeDataLoadErrors, clearDataLoadErrors, DataLoadError } from './services/gasApi.ts';
+
+// Only these screens read the drafts / POs / vendor-master data that
+// fetchAllData loads at startup. Every other screen used to sit behind a
+// full-page skeleton until all three calls finished too (~4-5s on every page
+// load, since each Apps Script call costs ~3-4s) — now they render at once.
+const CORE_DATA_VIEWS: ViewType[] = [
+    'Draft Orders', 'Vendor Shipments', 'Payment Ledger', 'Settlement Ledger',
+    'Cross Vendor Settlement', 'Accounts View',
+];
+
+// Finance data used to load once per session and then go stale until someone
+// clicked Refresh. Returning to a finance screen after this long re-reads it
+// quietly in the background (same window as gasApi's shared read cache).
+const FINANCE_REVALIDATE_MS = 60 * 1000;
+
+// Human-readable names for the data-load error banner.
+const DATA_ACTION_LABELS: Record<string, string> = {
+    get_drafts: 'draft orders', get_pos: 'purchase orders', get_vendor_masters: 'vendors',
+    get_purchase_invoices: 'purchase invoices', get_payment_logs: 'payments',
+    get_settlement_records: 'settlements', get_vendor_ledger: 'vendor ledger',
+    get_vendor_shipments: 'vendor shipments', get_cnf_eligible_batches: 'CNF shipments',
+    get_cnf_advances: 'CNF advances', get_cnf_goods_invoices: 'CNF invoices',
+    get_cnf_ledger: 'CNF ledger', get_cnf_invoice_batches: 'CNF bills',
+    get_cnf_shipment_bill_status: 'CNF bill status', get_batches: 'shipment batches',
+};
 
 const TEST_LOGIN_BYPASS = import.meta.env.VITE_TEST_LOGIN_BYPASS === 'true';
 const DEV_USER = TEST_LOGIN_BYPASS ? { name: 'Dev User', email: 'dev@local', role: 'ADMIN', loggedInAt: Date.now() } : null;
@@ -168,6 +193,10 @@ const App: React.FC = () => {
 
     // Tracks whether finance data has been fetched this session (avoid re-fetching on tab switch)
     const financeDataLoaded = React.useRef(false);
+    const financeLoadedAt = React.useRef(0);
+
+    const [dataLoadErrors, setDataLoadErrors] = useState<DataLoadError[]>([]);
+    useEffect(() => subscribeDataLoadErrors(setDataLoadErrors), []);
 
     // Debounce timers for the sync-queue success callback below, keyed by item type — a
     // multi-line submission (e.g. a 3-way Cross-Vendor Settlement) queues one item per line,
@@ -388,6 +417,9 @@ const App: React.FC = () => {
     }, [vendorMasters, queue]);
 
     const fetchAllData = useCallback(async (silent = false) => {
+        // silent = a refresh (after a change, or a Refresh button), never the
+        // initial load — bypass the shared read cache so it's really fresh.
+        if (silent) invalidateReadCache();
         if (!silent) setIsLoading(true);
         setIsSyncing(true);
         setSyncSuccess(false);
@@ -456,9 +488,15 @@ const App: React.FC = () => {
     }, []);
 
     // Fetches finance-only data. Called lazily on first Finance tab visit, not on mount.
-    const fetchFinanceData = useCallback(async (force = false) => {
+    // force: an explicit refresh — bypasses the shared read cache and re-runs
+    // the shipment→invoice sync. revalidateOnly: the quiet background re-read
+    // when returning to a finance screen (see FINANCE_REVALIDATE_MS) — uses
+    // the shared cache normally and skips the sync, which is a server write.
+    const fetchFinanceData = useCallback(async (force = false, revalidateOnly = false) => {
         if (financeDataLoaded.current && !force) return;
+        if (force && !revalidateOnly) invalidateReadCache();
         financeDataLoaded.current = true; // prevent double-fire
+        financeLoadedAt.current = Date.now();
         try {
             const fetchDirect = fetchDirectFromGas;
 
@@ -529,6 +567,7 @@ const App: React.FC = () => {
                 setSettlementRecords(reconcileSettlements);
             }
 
+            if (revalidateOnly) return;
             setIsSyncingShipments(true);
             syncInvoicesFromShipments()
                 .then(async () => {
@@ -545,7 +584,9 @@ const App: React.FC = () => {
     const FINANCE_VIEWS = ['Finance', 'Payment Ledger', 'Accounts View', 'Settlement Ledger', 'Cross Vendor Settlement'];
     useEffect(() => {
         if (!user || user.role === 'CNF_AGENT') return;
-        if (FINANCE_VIEWS.includes(currentView)) fetchFinanceData();
+        if (!FINANCE_VIEWS.includes(currentView)) return;
+        if (!financeDataLoaded.current) fetchFinanceData();
+        else if (Date.now() - financeLoadedAt.current > FINANCE_REVALIDATE_MS) fetchFinanceData(true, true);
     }, [currentView, user, fetchFinanceData]);
 
     // Config fetches — serve from localStorage cache (1-hour TTL) to avoid a GAS call on every reload
@@ -686,7 +727,7 @@ const App: React.FC = () => {
         return <CnfAgentPortal user={{ email: user.email, name: user.name }} onLogout={handleLogout} />;
     }
 
-    if (!isInitialDataLoaded) {
+    if (!isInitialDataLoaded && CORE_DATA_VIEWS.includes(currentView)) {
         return (
             <div className="flex h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
                 <Sidebar
@@ -925,6 +966,28 @@ const App: React.FC = () => {
                     viewport and force the whole document to scroll instead
                     of just this panel. */}
                 <main className="flex-1 min-h-0 p-0 overflow-y-auto">
+                    {dataLoadErrors.length > 0 && (
+                        <div role="alert" className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-200">
+                            <span className="font-semibold">Some data couldn't load:</span>
+                            <span className="flex-1 min-w-0">
+                                {Array.from(new Set(dataLoadErrors.map(e => DATA_ACTION_LABELS[e.action] || e.action))).join(', ')}.
+                                {' '}What's on screen may be out of date or incomplete.
+                                <span className="block text-xs opacity-75 truncate" title={dataLoadErrors[0].message}>{dataLoadErrors[0].message}</span>
+                            </span>
+                            <button
+                                onClick={() => window.location.reload()}
+                                className="rounded-md bg-amber-600 px-3 py-1 text-xs font-bold text-white hover:bg-amber-700"
+                            >
+                                Reload
+                            </button>
+                            <button
+                                onClick={clearDataLoadErrors}
+                                className="text-xs underline opacity-75 hover:opacity-100"
+                            >
+                                Dismiss
+                            </button>
+                        </div>
+                    )}
                     {renderContent()}
                 </main>
             </div>

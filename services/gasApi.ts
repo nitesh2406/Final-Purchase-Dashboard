@@ -101,6 +101,210 @@ async function withGasRetry_<T>(attempt: () => Promise<T>, retries: number): Pro
   throw lastErr;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Shared read cache for the dataset reads that several screens make
+// independently (Finance loads PurchaseInvoices/SettlementLedger, and so do
+// CNF Advances, CNF Agent Accounting and Batch Detail). Every Apps Script
+// call costs ~3-4s however small its response, so the same request going out
+// from three screens is pure lag.
+//
+//  - an identical request already in flight is shared, not re-sent;
+//  - a SUCCESSFUL response is reused for READ_CACHE_TTL_MS (failures are
+//    never cached, so a blip can't get stuck on screen);
+//  - ANY write through callGas/callGasAuthed/executeAppsScriptProxy clears
+//    the whole cache, so a post-write refresh always reads the new data. A
+//    read already in flight when the write happens is not stored either
+//    (the generation counter), since it may predate the write.
+// Each caller gets its own deep copy, so one screen mutating a response can
+// never leak into another's. Another user's writes show up within the TTL,
+// or immediately on a screen's Refresh (force: true).
+// ─────────────────────────────────────────────────────────────
+
+const READ_CACHE_TTL_MS = 60 * 1000;
+
+const CACHEABLE_READ_ACTIONS = new Set([
+  'get_drafts', 'get_pos', 'get_vendor_masters',
+  'get_purchase_invoices', 'get_payment_logs', 'get_settlement_records', 'get_vendor_ledger',
+  'get_vendor_shipments',
+  'get_cnf_eligible_batches', 'get_cnf_advances', 'get_cnf_goods_invoices', 'get_cnf_ledger',
+  'get_cnf_invoice_batches', 'get_cnf_shipment_bill_status', 'get_batches',
+]);
+
+// Actions that only read. Anything else is treated as a write and clears the
+// read cache — erring toward clearing is safe (costs one refetch), erring the
+// other way would serve stale data after a write.
+const isReadAction_ = (action: string) => /^(get|search|verify|ping|fetch)/i.test(action);
+
+type ReadCacheEntry = { value?: any; fetchedAt: number; inflight?: Promise<any> };
+const readCache_ = new Map<string, ReadCacheEntry>();
+let readCacheGeneration_ = 0;
+
+export function invalidateReadCache(): void {
+  readCacheGeneration_++;
+  readCache_.clear();
+}
+
+const isSuccessResponse_ = (r: any) => !!r && (r.status === 'success' || r.success === true);
+
+const clone_ = <T,>(v: T): T => (v === undefined ? v : (typeof structuredClone === 'function' ? structuredClone(v) : JSON.parse(JSON.stringify(v))));
+
+// Data-load failures used to be swallowed by the fetch* wrappers in
+// settlementService.ts, which then showed a browser-saved copy or an empty
+// list with no sign anything went wrong. Every failed dataset read is now
+// reported here; App.tsx renders a banner while any is outstanding, and a
+// later successful read of the same action clears it.
+export type DataLoadError = { action: string; message: string; at: number };
+const dataLoadErrors_ = new Map<string, DataLoadError>();
+const dataErrorListeners_ = new Set<(errors: DataLoadError[]) => void>();
+
+function emitDataErrors_() {
+  const list = Array.from(dataLoadErrors_.values());
+  dataErrorListeners_.forEach(cb => cb(list));
+}
+
+export function subscribeDataLoadErrors(cb: (errors: DataLoadError[]) => void): () => void {
+  dataErrorListeners_.add(cb);
+  cb(Array.from(dataLoadErrors_.values()));
+  return () => { dataErrorListeners_.delete(cb); };
+}
+
+export function clearDataLoadErrors(): void {
+  dataLoadErrors_.clear();
+  emitDataErrors_();
+}
+
+function recordReadOutcome_(action: string, error: string | null) {
+  if (error) {
+    dataLoadErrors_.set(action, { action, message: error, at: Date.now() });
+  } else if (!dataLoadErrors_.has(action)) {
+    return;
+  } else {
+    dataLoadErrors_.delete(action);
+  }
+  emitDataErrors_();
+}
+
+async function throughReadCache_(
+  channel: string, action: string, payload: Record<string, any>, force: boolean, send: () => Promise<any>
+): Promise<any> {
+  if (!CACHEABLE_READ_ACTIONS.has(action)) {
+    if (isReadAction_(action)) return send();
+    // A write — clear cached reads once it's done, whatever the outcome: a
+    // write that errored or timed out may still have run server-side.
+    try {
+      return await send();
+    } finally {
+      invalidateReadCache();
+    }
+  }
+  const key = channel + '|' + action + '|' + JSON.stringify(payload);
+  const existing = readCache_.get(key);
+  if (!force && existing) {
+    if (existing.inflight) return clone_(await existing.inflight);
+    if (existing.value !== undefined && Date.now() - existing.fetchedAt < READ_CACHE_TTL_MS) return clone_(existing.value);
+  }
+  const generation = readCacheGeneration_;
+  const inflight = send().then(
+    result => {
+      const ok = isSuccessResponse_(result);
+      if (generation === readCacheGeneration_) {
+        if (ok) readCache_.set(key, { value: result, fetchedAt: Date.now() });
+        else readCache_.delete(key);
+      }
+      recordReadOutcome_(action, ok ? null : (result?.message || result?.error || 'Request failed'));
+      return result;
+    },
+    err => {
+      if (generation === readCacheGeneration_) readCache_.delete(key);
+      recordReadOutcome_(action, err?.message || String(err));
+      throw err;
+    }
+  );
+  readCache_.set(key, { value: existing?.value, fetchedAt: existing?.fetchedAt ?? 0, inflight });
+  return clone_(await inflight);
+}
+
+// A successful Apps Script response always carries `status` or `success`.
+// One without either is one of Google's intermittent redirect glitches (seen
+// live: a POST answered with the doGet default output) — treat it as a
+// retryable failure rather than handing it to a screen as data.
+const hasEnvelope_ = (r: any) => !!r && typeof r === 'object' && ('status' in r || 'success' in r);
+
+function assertEnvelope_(r: any): any {
+  if (!hasEnvelope_(r)) {
+    throw new GasResponseError('The server returned an unexpected response. Please try again.', true);
+  }
+  return r;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Request grouping. Opening a screen fires ~10-15 reads at once (startup
+// data + the screen's own datasets); Apps Script runs them concurrently and
+// they slow each other down badly — measured 36-38s each, versus ~5s for the
+// same read alone. Cacheable direct reads issued in the same instant are
+// therefore queued for one tick and sent as a single `get_bundle` request
+// (see getBundle_ in gas_clone/entry_points.js), which runs them one after
+// another in one execution. Callers are unaware — each still gets its own
+// result. If the bundle fails as a whole, or one item comes back malformed,
+// those reads fall back to being sent individually, exactly as before.
+// ─────────────────────────────────────────────────────────────
+
+type BundleItem = { req: Record<string, any>; resolve: (v: any) => void; reject: (e: any) => void; sendAlone: () => Promise<any> };
+let pendingBundle_: BundleItem[] = [];
+let bundleTimer_: ReturnType<typeof setTimeout> | null = null;
+const MAX_BUNDLE_SIZE = 30; // matches the backend's limit
+const BUNDLE_TIMEOUT_MS = 90 * 1000;
+
+function bundledSend_(req: Record<string, any>, sendAlone: () => Promise<any>): Promise<any> {
+  return new Promise((resolve, reject) => {
+    pendingBundle_.push({ req, resolve, reject, sendAlone });
+    if (!bundleTimer_) bundleTimer_ = setTimeout(flushBundle_, 0);
+  });
+}
+
+function flushBundle_() {
+  bundleTimer_ = null;
+  const items = pendingBundle_;
+  pendingBundle_ = [];
+  for (let i = 0; i < items.length; i += MAX_BUNDLE_SIZE) {
+    runBundle_(items.slice(i, i + MAX_BUNDLE_SIZE));
+  }
+}
+
+async function runBundle_(items: BundleItem[]) {
+  const sendAlone = (item: BundleItem) => item.sendAlone().then(item.resolve, item.reject);
+  if (items.length === 1) {
+    sendAlone(items[0]);
+    return;
+  }
+  let results: any[] | null = null;
+  try {
+    const response = await withGasRetry_(() => timedAttempt_(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'get_bundle', requests: items.map(i => i.req) })
+    }, BUNDLE_TIMEOUT_MS).then(r => {
+      if (!r || r.status !== 'success' || !Array.isArray(r.results) || r.results.length !== items.length) {
+        throw new GasResponseError('Malformed bundle response', true);
+      }
+      return r;
+    }), 1);
+    results = response.results;
+  } catch (err) {
+    console.warn('[gasApi] get_bundle failed — sending its reads individually', err);
+  }
+  items.forEach((item, idx) => {
+    const r = results?.[idx];
+    if (hasEnvelope_(r)) item.resolve(r);
+    else sendAlone(item);
+  });
+}
+
+// Dataset reads get a bounded wait by default so a stalled Apps Script call can't
+// hang a screen for minutes (measured at 180s — see timedAttempt_). Generous
+// on purpose: some reads legitimately take 20s+ when Apps Script is busy.
+const DEFAULT_READ_TIMEOUT_MS = 60 * 1000;
+
 // Calls the GAS backend directly (unauthenticated) — the pattern almost
 // every screen used to hand-rolled via `fetch(APPS_SCRIPT_URL, ...)` +
 // `response.json()`. Same request/response shape as that old pattern (the
@@ -113,13 +317,24 @@ async function withGasRetry_<T>(attempt: () => Promise<T>, retries: number): Pro
 //
 // `timeoutMs` (optional, reads only — see timedAttempt_) aborts an attempt
 // that hasn't completed in time; combined with `retries` the read is retried.
-export async function callGas(action: string, payload: Record<string, any> = {}, retries = 0, timeoutMs?: number): Promise<any> {
+//
+// `opts.force` bypasses the shared read cache (see throughReadCache_) — use it
+// for an explicit user Refresh. Reads with no `timeoutMs` get
+// DEFAULT_READ_TIMEOUT_MS when they are cached dataset reads (timed at
+// <30s); other reads and all writes keep no implicit timeout.
+export async function callGas(action: string, payload: Record<string, any> = {}, retries = 0, timeoutMs?: number, opts: { force?: boolean } = {}): Promise<any> {
   const body = JSON.stringify({ action, ...payload });
-  return withGasRetry_(() => timedAttempt_(APPS_SCRIPT_URL, {
+  const isDataset = CACHEABLE_READ_ACTIONS.has(action);
+  const effectiveTimeout = timeoutMs ?? (isDataset ? DEFAULT_READ_TIMEOUT_MS : undefined);
+  // Dataset reads are always safe to retry, and are checked for the
+  // success envelope so a redirect glitch gets retried, not displayed.
+  const sendAlone = () => withGasRetry_(() => timedAttempt_(APPS_SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body
-  }, timeoutMs), retries);
+  }, effectiveTimeout).then(r => (isDataset ? assertEnvelope_(r) : r)), isDataset ? Math.max(retries, 1) : retries);
+  return throughReadCache_('direct', action, payload, !!opts.force,
+    isDataset ? () => bundledSend_({ action, ...payload }, sendAlone) : sendAlone);
 }
 
 // Calls the GAS backend through /api/apps-script-proxy instead of hitting
@@ -135,9 +350,12 @@ export async function callGas(action: string, payload: Record<string, any> = {},
 // not a blanket replacement.
 //
 // Same retry contract as callGas: pass `retries` > 0 only for reads.
-export async function callGasAuthed(action: string, payload: Record<string, any> = {}, retries = 0, timeoutMs?: number): Promise<any> {
+export async function callGasAuthed(action: string, payload: Record<string, any> = {}, retries = 0, timeoutMs?: number, opts: { force?: boolean } = {}): Promise<any> {
   const innerBody = JSON.stringify({ action, ...payload });
-  return withGasRetry_(() => timedAttempt_('/api/apps-script-proxy', {
+  const effectiveTimeout = timeoutMs ?? (CACHEABLE_READ_ACTIONS.has(action) ? DEFAULT_READ_TIMEOUT_MS : undefined);
+  // 'authed' channel: the proxy stamps the caller's verified email, so the
+  // same action can legitimately return different data than a direct call.
+  return throughReadCache_('authed', action, payload, !!opts.force, () => withGasRetry_(() => timedAttempt_('/api/apps-script-proxy', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -148,5 +366,6 @@ export async function callGasAuthed(action: string, payload: Record<string, any>
       method: 'POST',
       body: innerBody
     })
-  }, timeoutMs), retries);
+  }, effectiveTimeout).then(r => (CACHEABLE_READ_ACTIONS.has(action) ? assertEnvelope_(r) : r)),
+  CACHEABLE_READ_ACTIONS.has(action) ? Math.max(retries, 1) : retries));
 }
