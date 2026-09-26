@@ -100,7 +100,25 @@ function doGet(e) {
 
 
 // ─── doPost ───────────────────────────────────────────────────────────────────
+// Thin wrapper: after any request that isn't a pure read, flush its sheet
+// writes and bump the batch-data version so the get_batches snapshot can't
+// outlive the change (see getBatchDataVersion_). The flush matters — Apps
+// Script can hold writes until the execution ends, and bumping first would let
+// a concurrent get_batches snapshot pre-write data under the NEW version.
 function doPost(e) {
+  var action = null;
+  try { action = JSON.parse((e && e.postData && e.postData.contents) || '{}').action; } catch (err) {}
+  try {
+    return doPostInner_(e);
+  } finally {
+    if (!isReadAction_(action)) {
+      try { SpreadsheetApp.flush(); } catch (err) {}
+      bumpBatchDataVersion_();
+    }
+  }
+}
+
+function doPostInner_(e) {
   // Master Barcode Suite storage actions (see BarcodeAppStore.js) — returns null for anything else.
   var barcodeStoreResponse = barcodeStoreHandle_(e);
   if (barcodeStoreResponse) return barcodeStoreResponse;
@@ -727,8 +745,96 @@ function errorResponse_(message) {
 var UNCACHED_SHEETS_ = {
   'Batches': true, 'FXRates': true, 'Vendor_Shipments': true, 'VendorAccounts': true,
   'AgentInvoices': true, 'InvoiceShipmentMap': true, 'ShipmentCosting': true,
-  'Vendor Masters': true, 'VendorLedger': true
+  'Vendor Masters': true, 'VendorLedger': true,
+  // These two were effectively uncached already — always far over the old
+  // single-key 95KB limit — and they're written from many places (SKU
+  // creation, EasyEcom sync, inventory commit...) not all of which invalidate.
+  // Listed explicitly now that chunking (below) would otherwise start caching
+  // them, so removing the size cap changes nothing for them.
+  'EE Product Master': true, 'Inventory Data': true
 };
+
+// ─── Chunked CacheService storage ─────────────────────────────────────────────
+// CacheService caps each value at 100KB, so anything bigger used to be simply
+// not cached (getSheetData_ skipped any sheet over 95KB — a silent cliff the
+// finance sheets would hit as they grow). This splits a string across several
+// keys. Chunks are 30,000 characters so even 3-byte UTF-8 text (Chinese vendor
+// names) stays under the per-value byte limit. Each write gets a fresh id and
+// the meta key is written LAST, so a reader can never stitch together chunks
+// from two different writes — it either sees a complete set or a miss.
+var CHUNK_CHARS_ = 30000;
+var MAX_CHUNKS_ = 60; // ~1.8M chars — anything larger just isn't cached
+
+function putChunkedCache_(key, str, ttlSeconds, extraMeta) {
+  try {
+    var n = Math.ceil(str.length / CHUNK_CHARS_);
+    if (n === 0 || n > MAX_CHUNKS_) return false;
+    var id = Utilities.getUuid().slice(0, 8);
+    var items = {};
+    for (var i = 0; i < n; i++) items[key + '__' + id + '__' + i] = str.substr(i * CHUNK_CHARS_, CHUNK_CHARS_);
+    var cache = CacheService.getScriptCache();
+    cache.putAll(items, ttlSeconds);
+    var meta = { id: id, n: n };
+    if (extraMeta) Object.keys(extraMeta).forEach(function(k) { meta[k] = extraMeta[k]; });
+    cache.put(key + '__meta', JSON.stringify(meta), ttlSeconds);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Returns { value, meta } or null on any miss (meta missing, a chunk evicted).
+function getChunkedCache_(key) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var metaRaw = cache.get(key + '__meta');
+    if (!metaRaw) return null;
+    var meta = JSON.parse(metaRaw);
+    var keys = [];
+    for (var i = 0; i < meta.n; i++) keys.push(key + '__' + meta.id + '__' + i);
+    var got = cache.getAll(keys);
+    var parts = [];
+    for (var j = 0; j < keys.length; j++) {
+      if (got[keys[j]] == null) return null;
+      parts.push(got[keys[j]]);
+    }
+    return { value: parts.join(''), meta: meta };
+  } catch (e) {
+    return null;
+  }
+}
+
+function removeChunkedCache_(key) {
+  try { CacheService.getScriptCache().remove(key + '__meta'); } catch (e) {}
+}
+
+// ─── Batch data version ───────────────────────────────────────────────────────
+// Stamp for the get_batches snapshot (see getBatches in PO+Shipment Codes.js).
+// doPost bumps it after every request that isn't a pure read, so a snapshot
+// built before a write is never served after it. A missing stamp (evicted) is
+// replaced with a fresh one, which likewise invalidates any old snapshot.
+var BATCH_DATA_VERSION_KEY_ = 'batch_data_version';
+
+function getBatchDataVersion_() {
+  var cache = CacheService.getScriptCache();
+  var v = cache.get(BATCH_DATA_VERSION_KEY_);
+  if (!v) {
+    v = Utilities.getUuid();
+    cache.put(BATCH_DATA_VERSION_KEY_, v, 21600);
+  }
+  return v;
+}
+
+function bumpBatchDataVersion_() {
+  try { CacheService.getScriptCache().put(BATCH_DATA_VERSION_KEY_, Utilities.getUuid(), 21600); } catch (e) {}
+}
+
+// Same classification as the frontend's (services/gasApi.ts isReadAction_).
+// Anything not matching is treated as a write — erring that way only costs a
+// snapshot rebuild.
+function isReadAction_(action) {
+  return /^(get|search|verify|ping|fetch)/i.test(String(action || ''));
+}
 
 /**
  * Reads all rows from a named sheet as plain objects keyed by header name.
@@ -739,12 +845,11 @@ var UNCACHED_SHEETS_ = {
  */
 function getSheetData_(sheetName) {
   const cacheable = !UNCACHED_SHEETS_[sheetName];
-  const cache = cacheable ? CacheService.getScriptCache() : null;
   const key = 'gsd_' + sheetName;
-  if (cache) {
-    const hit = cache.get(key);
+  if (cacheable) {
+    const hit = getChunkedCache_(key);
     if (hit) {
-      try { return JSON.parse(hit); } catch(e) {}
+      try { return JSON.parse(hit.value); } catch(e) {}
     }
   }
 
@@ -764,10 +869,9 @@ function getSheetData_(sheetName) {
       return obj;
     });
 
-  if (cache) {
+  if (cacheable) {
     try {
-      const serialized = JSON.stringify(result);
-      if (serialized.length < 95000) cache.put(key, serialized, 300); // 5-min TTL
+      putChunkedCache_(key, JSON.stringify(result), 300); // 5-min TTL, any size up to MAX_CHUNKS_
     } catch(e) {}
   }
 
@@ -776,6 +880,10 @@ function getSheetData_(sheetName) {
 
 /** Busts the CacheService entry for a sheet after a write. */
 function invalidateSheetCache_(sheetName) {
+  removeChunkedCache_('gsd_' + sheetName);
+  // Pre-chunking single-key entry — may still be in the cache for up to its
+  // 5-min TTL right after this deploy; nothing reads it any more, but clear
+  // it too so there's no doubt.
   try { CacheService.getScriptCache().remove('gsd_' + sheetName); } catch(e) {}
 }
 

@@ -177,7 +177,14 @@ function bsFindRow_(sheet, colsByName, wanted) {
  * Removing a key that doesn't exist (e.g. in the master project) is harmless.
  */
 function bsBustCache_(sheet) {
-  try { CacheService.getScriptCache().remove('gsd_' + sheet.getName()); } catch (err) {}
+  // That cache is now split across several keys (see putChunkedCache_ in the
+  // shipments project's entry_points.js), so removing the bare 'gsd_' key alone
+  // would no longer clear it — go through invalidateSheetCache_ when this
+  // project has it, and fall back to the bare key elsewhere.
+  try {
+    if (typeof invalidateSheetCache_ === 'function') invalidateSheetCache_(sheet.getName());
+    else CacheService.getScriptCache().remove('gsd_' + sheet.getName());
+  } catch (err) {}
 }
 
 function bsWithLock_(fn) {

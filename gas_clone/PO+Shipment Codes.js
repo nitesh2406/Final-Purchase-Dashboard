@@ -2366,7 +2366,30 @@ function getCachedVendorNameMap_(ss) {
 // forward, CNF Agent Accounting. Everything a batch row's accordion needs
 // (its shipments, and each shipment's SKU lines) is embedded in this one
 // response — the UI never makes a second call to expand a row.
+//
+// Served from a short-lived snapshot (~370KB, so chunked — see
+// putChunkedCache_ in entry_points.js). A snapshot is only used if it was
+// built under the current batch-data version, which doPost bumps after every
+// write request, so an app write is reflected on the very next load. Edits
+// made directly in the spreadsheet don't pass through doPost, so the TTL is
+// kept short to bound how long those can take to show up. The version is
+// read BEFORE building: if a write lands mid-build, the snapshot is stored
+// under the old version and simply never served.
+var BATCHES_SNAPSHOT_KEY_ = 'batches_snapshot';
+var BATCHES_SNAPSHOT_TTL_SECONDS_ = 60;
+
 function getBatches() {
+  var version = getBatchDataVersion_();
+  var hit = getChunkedCache_(BATCHES_SNAPSHOT_KEY_);
+  if (hit && hit.meta && hit.meta.version === version) {
+    try { return JSON.parse(hit.value); } catch (e) {}
+  }
+  var result = buildBatchesResponse_();
+  putChunkedCache_(BATCHES_SNAPSHOT_KEY_, JSON.stringify(result), BATCHES_SNAPSHOT_TTL_SECONDS_, { version: version });
+  return result;
+}
+
+function buildBatchesResponse_() {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var batchesSheet = ss.getSheetByName('Batches');
