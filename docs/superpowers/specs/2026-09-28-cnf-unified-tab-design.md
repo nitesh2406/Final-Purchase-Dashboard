@@ -93,11 +93,15 @@ A shipment is a `Vendor_Shipments` row (`shipment_id`, `batch_id`,
 Reuses the existing formula from the retired Log Entry form, charges part only
 (pre-GST, excluding goods), so it compares directly with the invoice's service
 charge:
-- Sea: batch goods INR (invoice RMB total × RMB-weighted settlement rate, as
-  `computeCnfBatchRate` does today) × category `ratePct` / 100.
+- Sea: batch goods INR (`total_value_rmb` × the persisted RMB-weighted
+  `blended_settlement_rate`) × category `ratePct` / 100.
 - Air: batch `total_weight_kg` × category `ratePerKg`.
-- Category = the batch carrier's shipment-partner default category. No default
-  configured → shown as "—" with a hint to set one in Settings.
+- Category = the batch carrier's shipment-partner default (carrier and
+  partner compared case-insensitively, spaces collapsed); if there is no
+  matching default and exactly one category exists for the mode, that one is
+  used. Otherwise shown as "—" with a hint to set a default in Settings.
+  (Live at design time: no partner defaults, one Sea category, no Air
+  categories, carriers spelled several ways.)
 
 ### CNF ledger (INR)
 
@@ -129,7 +133,7 @@ silently re-maps).
 
 `ID | CNF Invoice No | Invoice Date | File URL | Shipment Lines | Base Amount |
 Purchase Value | Service Charge | GST | Total | Status | Override Reason |
-Submitted By | Approved By | Decided At | Rejection Reason | Created At`
+Submitted By | Decided By | Decided At | Rejection Reason | Created At`
 
 - `Shipment Lines`: JSON `[{ batchId, shipmentId, vendorCode, invoiceNo, amount }]`.
 - `Purchase Value` = Σ line amounts; `Service Charge` = Base − Purchase. Both
@@ -147,8 +151,8 @@ Submitted By | Approved By | Decided At | Rejection Reason | Created At`
 | `get_cnf_ledger_statement` | New. `{ openingBalance, rows[], closingBalance }` per *CNF ledger*; optional `from`, `to`. |
 | `get_cnf_goods_invoices` | Returns the new shape. |
 | `log_cnf_goods_invoice` | New shape: `{ cnfInvoiceNo, invoiceDate, fileUrl, lines[{shipmentId, amount}], baseAmount, gst, total, overrideReason }`. Under the script lock re-reads and validates: invoice no present and not already logged (non-rejected); every shipment eligible; each amount > 0 and ≤ that shipment's remaining; Base + GST vs Total within ₹1 or override reason given; Service Charge < 0 needs an override reason. Appends a Pending Approval row. `Submitted By` = proxy-stamped `user_email`. |
-| `approve_cnf_goods_invoice` | Status → Approved, `Approved By` = `user_email`, `Decided At`. Idempotent; refuses a Rejected invoice. |
-| `reject_cnf_goods_invoice` | Reason required. Status → Rejected. No balance writes (values are derived). Refuses an Approved invoice. |
+| `approve_cnf_goods_invoice` | Status → Approved, `Decided By` = `user_email`, `Decided At`. Idempotent; refuses a Rejected invoice. |
+| `reject_cnf_goods_invoice` | Reason required. Status → Rejected, `Decided By` = `user_email`, `Decided At`. No balance writes (values are derived). Refuses an Approved invoice. |
 | `get_cnf_advances` | Removed. |
 | `fifoLiquidate_` | The `createCnfAdvance_` call is removed. Nothing else changes. |
 | Old commission-bill actions (`add_cnf_ledger_entry`, `request_cnf_bill`, CNF invoice-batch create/approve/reject, shipment bill status) | Unrouted from the UI; backend code left in place for this piece so history stays readable. |
