@@ -16,6 +16,13 @@ export const CnfAgentAccounting: React.FC = () => {
   // Old links carry the retired 'overview' / 'reconciliation' values.
   const tab: CnfTab = rawTab === 'invoices' || rawTab === 'ledger' ? rawTab : 'batches';
   const [refreshKey, setRefreshKey] = useState(0);
+  // Each view loads its data when it mounts, so unmounting it on every tab
+  // switch reloaded it each time. A view is mounted on first visit and then
+  // only hidden; Refresh Data reloads every mounted view.
+  const [visited, setVisited] = useState<ReadonlySet<CnfTab>>(() => new Set([tab]));
+  if (!visited.has(tab)) setVisited(new Set(visited).add(tab));
+  const pane = (t: CnfTab, view: React.ReactNode) =>
+    visited.has(t) ? <div className={tab === t ? undefined : 'hidden'}>{view}</div> : null;
 
   const tabClass = (t: CnfTab) =>
     `flex-1 md:flex-initial min-w-[160px] px-5 py-3 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2.5 ${
@@ -44,9 +51,9 @@ export const CnfAgentAccounting: React.FC = () => {
         <button onClick={() => setTab('ledger')} className={tabClass('ledger')}><CreditCardIcon className="w-4 h-4" /><span>CNF Ledger</span></button>
       </div>
 
-      {tab === 'batches' && <CnfBatchesView refreshKey={refreshKey} />}
-      {tab === 'invoices' && <CnfInvoicesView refreshKey={refreshKey} />}
-      {tab === 'ledger' && <CnfLedgerView refreshKey={refreshKey} />}
+      {pane('batches', <CnfBatchesView refreshKey={refreshKey} />)}
+      {pane('invoices', <CnfInvoicesView refreshKey={refreshKey} />)}
+      {pane('ledger', <CnfLedgerView refreshKey={refreshKey} />)}
     </div>
   );
 };
