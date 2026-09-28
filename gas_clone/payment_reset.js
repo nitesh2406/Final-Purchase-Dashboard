@@ -359,3 +359,49 @@ function paymentResetVerify_() {
                 note: 'Settlement row labels/dates may differ (auto-settlement rows become FIFO rows); only per-invoice totals are compared.' }
   };
 }
+
+// Puts the backup back. PaymentLogs, SettlementLedger, PurchaseInvoices and
+// VendorLedger are replaced wholesale; for Batches only the four payment
+// aggregate columns are restored (by batch_id), because other screens edit
+// batches (tracking, receiving) and those edits must survive. Refuses if a
+// real (non XFER-) invoice was added after the backup, so a vendor invoice
+// synced in the meantime is never silently dropped.
+function paymentResetRestore_(payload) {
+  var dryRun = !(payload && payload.dry_run === false);
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var bak = {};
+  PR_SHEETS_.forEach(function (n) { bak[n] = prBackupValues_(n); });
+
+  var invKey = function (o) { return String(prField_(o, 'invoice_no') || '').trim(); };
+  var backupInvoices = prIndexRows_(bak.PurchaseInvoices, invKey);
+  var added = Object.keys(prIndexRows_(ss.getSheetByName('PurchaseInvoices').getDataRange().getValues(), invKey))
+    .filter(function (k) { return k.indexOf('XFER-') !== 0 && !backupInvoices[k]; });
+  if (added.length) throw new Error('Invoices were added after the backup and would be lost: ' + added.join(', ') + '. Restore refused.');
+
+  var plan = PR_SHEETS_.map(function (n) { return { sheet: n, backupRows: bak[n].length - 1, liveRows: ss.getSheetByName(n).getLastRow() - 1 }; });
+  if (dryRun) return { status: 'success', dry_run: true, sheets: plan };
+
+  ['PaymentLogs', 'SettlementLedger', 'PurchaseInvoices', 'VendorLedger'].forEach(function (n) {
+    var sheet = ss.getSheetByName(n);
+    var values = bak[n];
+    var liveRows = sheet.getLastRow(), liveCols = sheet.getLastColumn();
+    if (liveRows > 0 && liveCols > 0) sheet.getRange(1, 1, liveRows, liveCols).clearContent();
+    sheet.getRange(1, 1, values.length, values[0].length).setValues(values);
+  });
+
+  var batches = ss.getSheetByName('Batches');
+  var live = batches.getDataRange().getValues(), h = live[0];
+  var bh = bak.Batches[0], bId = bh.indexOf('batch_id'), lId = h.indexOf('batch_id');
+  var byId = {};
+  bak.Batches.slice(1).forEach(function (r) { byId[String(r[bId] || '').trim()] = r; });
+  PR_BATCH_AGG_COLS_.forEach(function (c) {
+    var lc = h.indexOf(c), bc = bh.indexOf(c);
+    if (lc === -1 || bc === -1 || live.length < 2) return;
+    var col = live.slice(1).map(function (r) { var b = byId[String(r[lId] || '').trim()]; return [b ? b[bc] : r[lc]]; });
+    batches.getRange(2, lc + 1, col.length, 1).setValues(col);
+  });
+
+  PR_SHEETS_.forEach(function (n) { invalidateSheetCache_(n); });
+  bumpBatchDataVersion_();
+  return { status: 'success', dry_run: false, sheets: plan };
+}
