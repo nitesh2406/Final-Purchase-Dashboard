@@ -22,7 +22,9 @@ var CNF_INVOICE_HEADERS_ = [
   'Rejection Reason', 'Created At'
 ];
 // 1-based column numbers of the fields written after an invoice is created.
-var CNF_COL_STATUS_ = 11, CNF_COL_DECIDED_BY_ = 14, CNF_COL_DECIDED_AT_ = 15, CNF_COL_REJECTION_ = 16;
+// Decided By is followed by Decided At and Rejection Reason (columns 15, 16),
+// which approve/reject write in the same setValues call.
+var CNF_COL_STATUS_ = 11, CNF_COL_DECIDED_BY_ = 14;
 
 // Sheet dates are stored as IST midnight (18:30Z the day before), so
 // toISOString() reads them a day early. Always format in the script's zone.
@@ -329,6 +331,51 @@ function logCnfGoodsInvoice_(payload) {
       'Pending Approval', overrideReason, submittedBy, '', '', '', new Date().toISOString()
     ]);
     return { status: 'success', id: id, purchaseValue: purchaseValue, serviceCharge: serviceCharge };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function cnfFindInvoiceForDecision_(payload) {
+  var id = String((payload && payload.id) || '').trim();
+  if (!id) throw new Error('id is required');
+  var sheet = cnfInvoicesSheet_(true);
+  var inv = readCnfInvoices_().filter(function (x) { return x.id === id; })[0];
+  if (!inv) throw new Error('CNF invoice not found: ' + id);
+  return { sheet: sheet, inv: inv };
+}
+
+function approveCnfGoodsInvoice_(payload) {
+  var who = cnfRequireUser_(payload);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another CNF invoice is being updated. Try again in a moment.');
+  try {
+    var found = cnfFindInvoiceForDecision_(payload);
+    if (found.inv.status === 'Approved') return { status: 'success', id: found.inv.id, message: 'Already approved' };
+    if (found.inv.status === 'Rejected') throw new Error("A rejected invoice can't be approved. Log it again instead.");
+    found.sheet.getRange(found.inv.rowNumber, CNF_COL_STATUS_).setValue('Approved');
+    found.sheet.getRange(found.inv.rowNumber, CNF_COL_DECIDED_BY_, 1, 2).setValues([[who, new Date().toISOString()]]);
+    return { status: 'success', id: found.inv.id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// No balance writes: what a shipment has left to invoice is derived from the
+// non-rejected invoices, so flipping the status is enough to free it.
+function rejectCnfGoodsInvoice_(payload) {
+  var who = cnfRequireUser_(payload);
+  var reason = String((payload && payload.rejectionReason) || '').trim();
+  if (!reason) throw new Error('A rejection reason is required');
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another CNF invoice is being updated. Try again in a moment.');
+  try {
+    var found = cnfFindInvoiceForDecision_(payload);
+    if (found.inv.status === 'Rejected') return { status: 'success', id: found.inv.id, message: 'Already rejected' };
+    if (found.inv.status === 'Approved') throw new Error("An approved invoice can't be rejected.");
+    found.sheet.getRange(found.inv.rowNumber, CNF_COL_STATUS_).setValue('Rejected');
+    found.sheet.getRange(found.inv.rowNumber, CNF_COL_DECIDED_BY_, 1, 3).setValues([[who, new Date().toISOString(), reason]]);
+    return { status: 'success', id: found.inv.id };
   } finally {
     lock.releaseLock();
   }
