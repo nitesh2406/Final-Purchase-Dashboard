@@ -113,3 +113,139 @@ function readCnfInvoices_() {
   }
   return out;
 }
+
+// invoice_no → { settledRmb, paidInr } from SettlementLedger. Counts the same
+// rows the frontend's computeBatchSettlementStatus treats as invoice
+// settlements: TxnType 'Invoice Settlement', or no TxnType and an
+// invoice_no other than 'ADVANCE'. paidInr = Σ |RMB| × ER2 (the rate each
+// payment actually settled at).
+function cnfSettledByInvoice_() {
+  var t = cnfReadSheet_('SettlementLedger');
+  var out = {};
+  if (!t || t.values.length < 2) return out;
+  var invCol = findHeaderIndex_(t.headers, 'invoice_no');
+  var rmbCol = findHeaderIndex_(t.headers, 'RMB');
+  var er2Col = findHeaderIndex_(t.headers, 'ER2');
+  var typeCol = findHeaderIndex_(t.headers, 'TxnType');
+  for (var i = 1; i < t.values.length; i++) {
+    var row = t.values[i];
+    var inv = String(row[invCol] || '').trim();
+    if (!inv || inv.toUpperCase() === 'ADVANCE') continue;
+    var txnType = typeCol !== -1 ? String(row[typeCol] || '').trim() : '';
+    if (txnType && txnType !== 'Invoice Settlement') continue;
+    var rmb = Math.abs(Number(row[rmbCol]) || 0);
+    var er2 = Number(row[er2Col]) || 0;
+    var o = out[inv] || (out[inv] = { settledRmb: 0, paidInr: 0 });
+    o.settledRmb += rmb;
+    o.paidInr += rmb * er2;
+  }
+  return out;
+}
+
+// invoice_no → invoice RMB total, first row wins (same as the frontend's find()).
+function cnfInvoiceRmbByNo_() {
+  var t = cnfReadSheet_('PurchaseInvoices');
+  var out = {};
+  if (!t) return out;
+  var invCol = findHeaderIndex_(t.headers, 'invoice_no');
+  var rmbCol = findHeaderIndex_(t.headers, 'RMB');
+  for (var i = 1; i < t.values.length; i++) {
+    var inv = String(t.values[i][invCol] || '').trim();
+    if (inv && !Object.prototype.hasOwnProperty.call(out, inv)) out[inv] = Number(t.values[i][rmbCol]) || 0;
+  }
+  return out;
+}
+
+// shipmentId → INR already claimed by CNF invoices. Pending invoices count
+// too, so the same value can't be logged twice while one awaits approval;
+// a rejected invoice frees its value again.
+function cnfInvoicedByShipment_(invoices) {
+  var out = {};
+  invoices.forEach(function (inv) {
+    if (inv.status !== 'Pending Approval' && inv.status !== 'Approved') return;
+    (inv.lines || []).forEach(function (l) {
+      out[l.shipmentId] = (out[l.shipmentId] || 0) + (Number(l.amount) || 0);
+    });
+  });
+  return out;
+}
+
+// One row per shipment of a non-INR vendor, whatever its batch status. A
+// shipment can be CNF-invoiced once its batch is Delivered and its vendor
+// invoice is fully paid; its value is the INR actually paid to the vendor.
+// invoicedByShipment is optional (defaults to the live CNF invoices).
+function getCnfShipmentValues_(invoicedByShipment) {
+  var invoiced = invoicedByShipment || cnfInvoicedByShipment_(readCnfInvoices_());
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  var batchInfo = {};
+  var bt = cnfReadSheet_('Batches');
+  if (bt) {
+    var bIdCol = bt.headers.indexOf('batch_id');
+    var bStatusCol = bt.headers.indexOf('status');
+    var bTypeCol = bt.headers.indexOf('batch_type');
+    for (var i = 1; i < bt.values.length; i++) {
+      var id = String(bt.values[i][bIdCol] || '').trim();
+      if (!id) continue;
+      batchInfo[id] = {
+        status: String(bt.values[i][bStatusCol] || '').trim(),
+        type: String(bt.values[i][bTypeCol] || '').toLowerCase().indexOf('air') !== -1 ? 'air' : 'sea'
+      };
+    }
+  }
+
+  var st = cnfReadSheet_('Vendor_Shipments');
+  if (!st) return [];
+  var sIdCol = st.headers.indexOf('shipment_id');
+  var sBatchCol = st.headers.indexOf('batch_id');
+  var sVendorCol = st.headers.indexOf('vendor_code');
+  var sInvCol = st.headers.indexOf('invoice_no');
+  var ships = [];
+  var shipmentsPerInvoice = {};
+  for (var r = 1; r < st.values.length; r++) {
+    var row = st.values[r];
+    var sid = String(row[sIdCol] || '').trim();
+    var vendor = String(row[sVendorCol] || '').trim();
+    if (!sid || !vendor || getVendorCurrency_(vendor) === 'INR') continue;
+    var invNo = String(row[sInvCol] || '').trim();
+    ships.push({ shipmentId: sid, batchId: String(row[sBatchCol] || '').trim(), vendorCode: vendor, invoiceNo: invNo });
+    if (invNo) shipmentsPerInvoice[invNo] = (shipmentsPerInvoice[invNo] || 0) + 1;
+  }
+
+  var invoiceRmbByNo = cnfInvoiceRmbByNo_();
+  var settled = cnfSettledByInvoice_();
+  var names = getCachedVendorNameMap_(ss);
+
+  return ships.map(function (s) {
+    var b = batchInfo[s.batchId] || { status: '', type: 'sea' };
+    var invoiceRmb = s.invoiceNo && Object.prototype.hasOwnProperty.call(invoiceRmbByNo, s.invoiceNo) ? invoiceRmbByNo[s.invoiceNo] : null;
+    var paid = settled[s.invoiceNo] || { settledRmb: 0, paidInr: 0 };
+    var fullyPaid = invoiceRmb !== null && invoiceRmb > 0 && invoiceRmb - paid.settledRmb < 0.01;
+    var reason = '';
+    if (b.status !== 'Delivered') reason = 'Batch not delivered';
+    else if (!s.invoiceNo) reason = 'No vendor invoice on shipment';
+    else if (shipmentsPerInvoice[s.invoiceNo] > 1) reason = 'Vendor invoice ' + s.invoiceNo + ' is shared by ' + shipmentsPerInvoice[s.invoiceNo] + ' shipments';
+    else if (invoiceRmb === null) reason = 'Vendor invoice not in accounts yet';
+    else if (!fullyPaid) reason = 'Vendor invoice not fully paid';
+    var eligible = reason === '';
+    var paidInr = cnfRound2_(paid.paidInr);
+    var invoicedInr = cnfRound2_(invoiced[s.shipmentId] || 0);
+    return {
+      batchId: s.batchId,
+      batchStatus: b.status,
+      batchType: b.type,
+      shipmentId: s.shipmentId,
+      vendorCode: s.vendorCode,
+      vendorName: names[s.vendorCode] || s.vendorCode,
+      invoiceNo: s.invoiceNo,
+      invoiceRmb: invoiceRmb,
+      paidInr: paidInr,
+      fullyPaid: fullyPaid,
+      invoicedInr: invoicedInr,
+      remainingInr: eligible ? cnfRound2_(Math.max(0, paidInr - invoicedInr)) : 0,
+      invoiceStatus: invoicedInr < 0.01 ? 'Not invoiced' : (paidInr - invoicedInr < 1 ? 'Fully invoiced' : 'Part invoiced'),
+      eligible: eligible,
+      ineligibleReason: reason
+    };
+  });
+}
