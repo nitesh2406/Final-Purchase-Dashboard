@@ -12,7 +12,6 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   'Shipment Tracker': '/logistics/shipment-tracker',
   'Receive Shipment': '/logistics/receive-shipment',
   'CNF Agent Accounting': '/logistics/cnf-agent-accounting',
-  'CNF Advances': '/finance/cnf-advances',
   'Batch Detail': '/logistics/shipment-tracker/:batchId',
   'Finance': '/finance',
   'Inventory Analytics': '/inventory/analytics',
@@ -52,6 +51,9 @@ export function viewToPath(view: ViewType, params?: Record<string, string>): str
 // Reverse lookup used by the sidebar to determine which nav item is active
 // for the current URL, including detail sub-paths mapping back to their parent.
 export function matchPathToView(pathname: string): { view: ViewType; params: Record<string, string> } | null {
+  // The CNF Advances screen was merged into CNF Agent (2026-09-28); keep old
+  // bookmarks working.
+  if (pathname === '/finance/cnf-advances') return { view: 'CNF Agent Accounting', params: {} };
   for (const [view, template] of Object.entries(VIEW_ROUTES) as [ViewType, string][]) {
     const templateParts = template.split('/');
     const pathParts = pathname.split('/');
