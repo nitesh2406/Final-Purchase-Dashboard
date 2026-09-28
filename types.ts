@@ -755,39 +755,74 @@ export interface CnfInvoiceBatch {
   rejectionReason?: string;
 }
 
-// See docs/superpowers/specs/2026-09-25-cnf-advances-invoice-matching-design.md.
-// CNF is a pure payment rail: ME never pays an overseas vendor directly.
-// Paying CNF to settle a vendor's balance creates an advance here; CNF's
-// own tax invoice (goods value inflated with its service markup, GST on
-// top) is matched against outstanding advances later.
-export interface CnfAdvance {
-  id: string;
-  date: string;
-  vendorCode: string;        // the vendor this advance ultimately funded
-  linkedPaymentId: string;   // -> PaymentLogs Payment ID, for traceability
-  amount: number;            // INR
-  balance: number;           // INR - drawn down as CnfGoodsInvoices match against it
+// CNF unified tab — see docs/superpowers/specs/2026-09-28-cnf-unified-tab-design.md.
+// A shipment of a non-INR vendor, with what it is worth for CNF invoicing:
+// the INR actually paid to the vendor for it, and how much of that CNF has
+// already invoiced (pending + approved invoices).
+export interface CnfShipmentValue {
+  batchId: string;
+  batchStatus: string;
+  batchType: 'sea' | 'air';
+  shipmentId: string;
+  vendorCode: string;
+  vendorName: string;
+  invoiceNo: string;
+  invoiceRmb: number | null;
+  paidInr: number;
+  fullyPaid: boolean;
+  invoicedInr: number;
+  remainingInr: number;
+  invoiceStatus: 'Not invoiced' | 'Part invoiced' | 'Fully invoiced';
+  eligible: boolean;
+  ineligibleReason: string;
 }
 
+export interface CnfInvoiceLine {
+  batchId: string;
+  shipmentId: string;
+  vendorCode: string;
+  invoiceNo: string;
+  amount: number; // INR
+}
+
+// CNF's GST tax invoice. purchaseValue = Σ line amounts (goods value paid to
+// vendors); serviceCharge = baseAmount − purchaseValue. Both stored at log time.
 export interface CnfGoodsInvoice {
   id: string;
-  date: string;
-  fileUrl?: string;
-  lineItems: { batchId: string; shipmentIds: string[] }[]; // shipments this invoice covers
-  matchedAdvances: { advanceId: string; amountMatched: number }[]; // INR, many-to-many
-  statedBaseAmount: number;   // INR - CNF's stated taxable/base amount, already
-                               // inflated with their service markup, not itemized -
-                               // this is CNF's single "goods" line, as given.
-  expectedGoodsValue: number; // INR - sum of matchedAdvances.amountMatched
-  serviceCharge: number;      // INR, derived: statedBaseAmount - expectedGoodsValue
-  gst: number;                // INR, as stated on CNF's invoice
-  total: number;               // INR, as stated - statedBaseAmount + gst
-  residualLiability: number;  // INR - total - expectedGoodsValue (== serviceCharge + gst)
+  cnfInvoiceNo: string;
+  invoiceDate: string; // yyyy-mm-dd
+  fileUrl: string;
+  lines: CnfInvoiceLine[];
+  baseAmount: number;
+  purchaseValue: number;
+  serviceCharge: number;
+  gst: number;
+  total: number;
   status: 'Pending Approval' | 'Approved' | 'Rejected';
-  overrideReason?: string;
+  overrideReason: string;
   submittedBy: string;
-  approvedBy?: string;
-  rejectionReason?: string;
+  decidedBy: string;
+  decidedAt: string;
+  rejectionReason: string;
+  createdAt: string;
+}
+
+export interface CnfLedgerRow {
+  date: string; // yyyy-mm-dd
+  type: 'Payment for vendor' | 'Payment to CNF' | 'Tax invoice';
+  reference: string;
+  description: string;
+  paid: number;   // INR paid to CNF
+  billed: number; // INR billed by CNF
+  balance: number;
+  openAdvance: number | null;
+}
+
+export interface CnfLedgerStatement {
+  openingBalance: number;
+  rows: CnfLedgerRow[];
+  closingBalance: number;
+  totals: { paid: number; billed: number };
 }
 
 export interface InventoryValuationRow {
@@ -820,4 +855,4 @@ export type ViewType =
   | 'Inventory Analytics' | 'Inventory' | 'Settings'
   | 'Payment Ledger' | 'Accounts View' | 'Settlement Ledger' | 'Cross Vendor Settlement'
   | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU' | 'Audit Log'
-  | 'CNF Agent Accounting' | 'Receive Shipment' | 'CNF Advances';
+  | 'CNF Agent Accounting' | 'Receive Shipment';
