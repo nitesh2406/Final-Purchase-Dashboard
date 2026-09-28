@@ -551,11 +551,16 @@ function doPostInner_(e) {
       case 'get_bundle':
         return getBundle_(payload);
 
-      case 'get_cnf_advances':
-        return successResponse_({ advances: getCnfAdvances_() });
+      // CNF unified tab (cnf_unified.js). The CNF Advances ledger is gone —
+      // the CNF ledger is computed from PaymentLogs on read.
+      case 'get_cnf_shipment_values':
+        return successResponse_({ shipments: getCnfShipmentValues_() });
 
       case 'get_cnf_goods_invoices':
-        return successResponse_({ invoices: getCnfGoodsInvoices_() });
+        return successResponse_({ invoices: getCnfGoodsInvoicesForApi_() });
+
+      case 'get_cnf_ledger_statement':
+        return successResponse_(getCnfLedgerStatement_(payload));
 
       case 'log_cnf_goods_invoice':
         result = logCnfGoodsInvoice_(payload);
@@ -690,7 +695,8 @@ var BUNDLE_READ_ACTIONS_ = {
   get_drafts: true, get_pos: true, get_vendor_masters: true,
   get_purchase_invoices: true, get_payment_logs: true, get_settlement_records: true,
   get_vendor_ledger: true, get_vendor_shipments: true,
-  get_cnf_eligible_batches: true, get_cnf_advances: true, get_cnf_goods_invoices: true,
+  get_cnf_eligible_batches: true, get_cnf_shipment_values: true, get_cnf_goods_invoices: true,
+  get_cnf_ledger_statement: true,
   get_cnf_ledger: true, get_cnf_invoice_batches: true, get_cnf_shipment_bill_status: true,
   get_batches: true, get_product_master: true
 };

@@ -473,3 +473,11 @@ function getCnfLedgerStatement_(payload) {
     totals: { paid: cnfRound2_(paidTotal), billed: cnfRound2_(billedTotal) }
   };
 }
+
+function getCnfGoodsInvoicesForApi_() {
+  return readCnfInvoices_().map(function (inv) {
+    var copy = {};
+    Object.keys(inv).forEach(function (k) { if (k !== 'rowNumber') copy[k] = inv[k]; });
+    return copy;
+  });
+}
