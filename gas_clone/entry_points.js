@@ -574,6 +574,28 @@ function doPostInner_(e) {
         result = rejectCnfGoodsInvoice_(payload);
         break;
 
+      // Payment reset & replay (payment_reset.js) — admin tooling called with
+      // curl; see docs/superpowers/specs/2026-09-28-payment-reset-replay-design.md.
+      case 'payment_reset_backup':
+        result = paymentResetBackup_();
+        break;
+
+      case 'payment_reset_clear':
+        result = paymentResetClear_(payload);
+        break;
+
+      case 'payment_reset_replay':
+        result = paymentResetReplay_(payload);
+        break;
+
+      case 'payment_reset_verify':
+        result = paymentResetVerify_();
+        break;
+
+      case 'payment_reset_restore':
+        result = paymentResetRestore_(payload);
+        break;
+
 
       case 'get_historical_fx_rates':
         return getHistoricalFxRates_(payload);
