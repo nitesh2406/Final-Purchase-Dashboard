@@ -380,3 +380,96 @@ function rejectCnfGoodsInvoice_(payload) {
     lock.releaseLock();
   }
 }
+
+function cnfInvoiceDescription_(inv) {
+  var parts = (inv.lines || []).map(function (l) { return l.batchId + '/' + l.shipmentId + ' ' + cnfFmtInr_(l.amount); });
+  return 'CNF ' + inv.cnfInvoiceNo + ' · ' + parts.join(' + ') +
+    ' · goods ' + cnfFmtInr_(inv.purchaseValue) + ' · service ' + cnfFmtInr_(inv.serviceCharge) + ' · GST ' + cnfFmtInr_(inv.gst);
+}
+
+// Bank-statement view of the account with CNF, in INR. Paid to CNF (+):
+// direct payments (DP-) for non-INR vendors, and every payment logged under
+// CNF's own vendor code. Billed by CNF (−): approved CNF invoice totals.
+// openAdvance on a paid row = what is left of it after all approved billing
+// is applied to paid rows oldest-first. Optional from/to (yyyy-mm-dd): rows
+// before `from` fold into openingBalance; rows after `to` are left out.
+function getCnfLedgerStatement_(payload) {
+  var from = payload && payload.from ? String(payload.from).trim() : '';
+  var to = payload && payload.to ? String(payload.to).trim() : '';
+  var names = getCachedVendorNameMap_(SpreadsheetApp.getActiveSpreadsheet());
+  var entries = [];
+
+  var pay = cnfReadSheet_('PaymentLogs');
+  if (pay && pay.values.length > 1) {
+    var dateCol = findHeaderIndex_(pay.headers, 'Date');
+    var idCol = findHeaderIndex_(pay.headers, 'Payment ID');
+    var vendorCol = findHeaderIndex_(pay.headers, 'Vendor Code');
+    var inrCol = findHeaderIndex_(pay.headers, 'INR Amount');
+    if (inrCol === -1) inrCol = findHeaderIndex_(pay.headers, 'INR');
+    for (var i = 1; i < pay.values.length; i++) {
+      var row = pay.values[i];
+      var paymentId = String(row[idCol] || '').trim();
+      var vendor = String(row[vendorCol] || '').trim();
+      var inr = cnfRound2_(row[inrCol]);
+      if (!paymentId || !(inr > 0)) continue;
+      var toCnf = vendor === CNF_VENDOR_CODE_;
+      var direct = /^DP-/i.test(paymentId) && getVendorCurrency_(vendor) !== 'INR';
+      if (!toCnf && !direct) continue;
+      entries.push({
+        date: cnfYmd_(row[dateCol]), order: 0,
+        type: toCnf ? 'Payment to CNF' : 'Payment for vendor',
+        reference: paymentId,
+        description: toCnf ? paymentId + ' · payment to CNF' : paymentId + ' · for ' + vendor + ' (' + (names[vendor] || vendor) + ')',
+        paid: inr, billed: 0
+      });
+    }
+  }
+
+  readCnfInvoices_().forEach(function (inv) {
+    if (inv.status !== 'Approved') return;
+    entries.push({
+      date: inv.invoiceDate, order: 1, type: 'Tax invoice', reference: inv.cnfInvoiceNo,
+      description: cnfInvoiceDescription_(inv), paid: 0, billed: cnfRound2_(inv.total)
+    });
+  });
+
+  entries.sort(function (a, b) {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    if (a.order !== b.order) return a.order - b.order;
+    return a.reference < b.reference ? -1 : a.reference > b.reference ? 1 : 0;
+  });
+
+  var billedLeft = entries.reduce(function (s, e) { return s + e.billed; }, 0);
+  entries.forEach(function (e) {
+    if (e.paid > 0) {
+      var used = Math.min(e.paid, billedLeft);
+      billedLeft -= used;
+      e.openAdvance = cnfRound2_(e.paid - used);
+    } else {
+      e.openAdvance = null;
+    }
+  });
+
+  var opening = 0;
+  var rows = [];
+  entries.forEach(function (e) {
+    if (to && e.date > to) return;
+    if (from && e.date < from) { opening += e.paid - e.billed; return; }
+    rows.push(e);
+  });
+  opening = cnfRound2_(opening);
+  var running = opening, paidTotal = 0, billedTotal = 0;
+  rows.forEach(function (e) {
+    running = cnfRound2_(running + e.paid - e.billed);
+    e.balance = running;
+    paidTotal += e.paid;
+    billedTotal += e.billed;
+    delete e.order;
+  });
+  return {
+    openingBalance: opening,
+    rows: rows,
+    closingBalance: running,
+    totals: { paid: cnfRound2_(paidTotal), billed: cnfRound2_(billedTotal) }
+  };
+}
