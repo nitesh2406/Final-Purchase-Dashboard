@@ -648,3 +648,40 @@ function paymentResetResettle_(payload) {
     lock.releaseLock();
   }
 }
+
+// One-off repair (2026-09-28): 120 VendorLedger rows lost their Date during
+// the first reset attempt. Writes the dates sent in the payload
+// ([{ txn, date: 'yyyy-MM-dd' }], from a snapshot taken before the reset),
+// matched by Transaction ID, and only into cells that are blank. Refuses the
+// whole list if any id is unknown or any date malformed.
+function paymentResetFixVendorLedgerDates_(payload) {
+  var p = payload || {};
+  var dryRun = p.dry_run !== false;
+  var list = p.dates || [];
+  if (!list.length) throw new Error('No dates sent.');
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('VendorLedger');
+  var values = sheet.getDataRange().getValues(), h = values[0];
+  var idCol = findHeaderIndex_(h, 'Transaction ID'), dateCol = findHeaderIndex_(h, 'Date');
+  if (idCol === -1 || dateCol === -1) throw new Error('VendorLedger is missing Transaction ID / Date');
+  var rowById = {};
+  for (var i = 1; i < values.length; i++) { var id = String(values[i][idCol] || '').trim(); if (id) rowById[id] = i; }
+
+  var fill = [], alreadyDated = 0, notFound = [], bad = [];
+  list.forEach(function (d) {
+    var txn = String((d && d.txn) || '').trim(), date = String((d && d.date) || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { bad.push(txn + ' ' + date); return; }
+    var r = rowById[txn];
+    if (r === undefined) { notFound.push(txn); return; }
+    var cur = values[r][dateCol];
+    if (cur !== '' && cur !== null) { alreadyDated++; return; }
+    fill.push({ row: r + 1, date: date });
+  });
+  if (bad.length) throw new Error('Dates must be yyyy-MM-dd: ' + bad.slice(0, 5).join(', '));
+  if (notFound.length) throw new Error('Transaction ID not found in VendorLedger: ' + notFound.slice(0, 5).join(', ') + (notFound.length > 5 ? ' …' : ''));
+  if (dryRun) return { status: 'success', dry_run: true, toFill: fill.length, alreadyDated: alreadyDated, sample: fill.slice(0, 5) };
+
+  // Same form logToVendorLedger_ writes: a yyyy-MM-dd string, stored by Sheets as a date.
+  fill.forEach(function (f) { sheet.getRange(f.row, dateCol + 1).setValue(f.date); });
+  invalidateSheetCache_('VendorLedger');
+  return { status: 'success', dry_run: false, filled: fill.length, alreadyDated: alreadyDated };
+}

@@ -600,6 +600,10 @@ function doPostInner_(e) {
         result = paymentResetResettle_(payload);
         break;
 
+      case 'payment_reset_fix_vl_dates':
+        result = paymentResetFixVendorLedgerDates_(payload);
+        break;
+
 
       case 'get_historical_fx_rates':
         return getHistoricalFxRates_(payload);
