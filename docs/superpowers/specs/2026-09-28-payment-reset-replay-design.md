@@ -158,3 +158,81 @@ Vendor Masters and batch/shipment data:
   failing entry and resumes cleanly afterwards; a repeat call adds nothing.
 - `node --check` on every gas_clone file; existing CNF / PO / Draft Orders
   harnesses still pass.
+
+## Resettle (added 2026-09-28, after the first live attempt)
+
+### Why
+The first live replay (backup → clear → replay) stopped at 39 of 68 (the
+~270 s chunk outlived Google's web-request limit) and diverged from the
+harness: no `XFER-` shortfall invoices survived, and invoice dates were
+blanked. Everything was restored from `BAK-2026-09-28` (verify: 0
+differences). The cause of the divergence was not found in the code. The user
+then corrected LEO's opening balance (`LEO-OPENINGBAL` ¥1,64,662 → ¥68,762,
+ER1 13.14437, INR ₹9,03,833.17) and moved both opening balances to
+2026-01-01, and chose a narrower redo.
+
+### Decisions (user, 2026-09-28)
+| # | Decision |
+|---|---|
+| 5 | Keep every payment (68 rows: IDs, RMB, rates) and every `XFER-` invoice (29) exactly as logged. Rebuild only the settlements. |
+| 6 | Settlement logic stays the app's own ("the previous code and logic were working fine"): `fifoLiquidate_`, `autoSettleAdvanceFromInvoice_`, the wallet draw of `settleViaWalletTransfer_`. |
+| 7 | As in decision 3, a payment settles its vendor's oldest open invoices regardless of invoice date. |
+
+### `payment_reset_resettle` (dry run by default)
+Rebuilds SettlementLedger, invoice `Settled Amount`/`Balance`, wallet
+`Balance` in PaymentLogs and the batch payment columns. Adds or removes no
+row; VendorLedger is untouched (its Payment/Adjustment rows record money
+moved, not settlement). The CNF ledger is computed from PaymentLogs, so it is
+unaffected.
+
+- Refuses unless a backup from today exists, PaymentLogs and PurchaseInvoices
+  have the same row counts as that backup, neither has a blank row mid-sheet
+  (`fifoLiquidate_` locates rows by position), every `XFER-` invoice belongs
+  to a transfer in PaymentLogs, and the conversion charge matches the one the
+  payments were logged at.
+- First call: SettlementLedger emptied; every non-`XFER-` invoice fully open;
+  every wallet and every `XFER-` invoice held at Balance 0; batch payment
+  columns blank.
+- Then PaymentLogs in row order:
+  - **DP-**: wallet opened (Balance = RMB), `fifoLiquidate_` at
+    ER2 ÷ (1 + charge%) — the unrounded rate `addPaymentLog` settled with.
+  - **IDP-**: from the source vendor's open wallets (oldest Date first) draw
+    only what the transfer originally drew = RMB − its `XFER-` invoice; stop
+    if they don't cover it. Open its `XFER-` invoice, and let
+    `autoSettleAdvanceFromInvoice_` pay it from any wallet the source still
+    has (this is where LEO's ¥95,900 lower opening balance goes). Then open
+    the IDP- wallet and `fifoLiquidate_` it at INR Amount ÷ RMB (the
+    unrounded blended rate).
+- Chunked (`budget_ms` default 120 000, `limit`), holding the script lock;
+  progress is kept in Script Property `PAYMENT_RESET_RESETTLE`, so calling
+  again resumes, and a call after completion changes nothing. After the last
+  entry: `backfillBatchSettlementAggregates_()`, cache invalidation, and a
+  per-vendor summary (open invoices, unspent wallets).
+- On any error it stops and says to restore from the backup before retrying.
+
+`payment_reset_backup` no longer refuses a second backup the same day: it
+becomes `BAK-yyyy-MM-dd-2` (then -3, …) and the current backup for every
+action. Clear accepts it.
+
+### Tested (scratchpad harness)
+- On this morning's data (LEO ¥1,64,662): every wallet and invoice balance
+  equals the original books; verify shows exactly the 6 known differences of
+  the replay above.
+- On the live data after the LEO correction: all 68 processed; payments,
+  invoice amounts and VendorLedger unchanged; every invoice Settled + Balance
+  = RMB; no wallet negative or above its RMB; wallet spend = settled + transfer
+  draws; SettlementLedger totals = each invoice's Settled Amount; LEO ends
+  with no open invoice and ¥41,345.30 unspent (¥95,900 − the ¥54,554.70 of
+  `XFER-` that was open).
+- Chunked run identical to one pass; dry run writes nothing; every refusal
+  above; suffixed backup accepted by resettle and clear; routed via doPost.
+
+### Run sequence
+1. Deploy (fresh pull + diff first). Ops team stays paused; nobody edits the
+   spreadsheet by hand until the run is done.
+2. `payment_reset_backup` → `BAK-2026-09-28-2` (this morning's tabs stay).
+3. `payment_reset_resettle` dry run → user go-ahead.
+4. User repeats the real call until `"done":true`.
+5. `payment_reset_verify` (differences vs the new backup are expected:
+   settlements now follow the corrected LEO balance) and the per-vendor
+   summary; the user checks the result against their books.

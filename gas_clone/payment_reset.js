@@ -28,21 +28,27 @@ function prBackupValues_(sheetName) {
   return sheet.getDataRange().getValues();
 }
 
+// A backup taken today, including a same-day second backup (BAK-yyyy-MM-dd-2).
+function prBackupIsToday_(prefix) {
+  var today = 'BAK-' + prToday_();
+  return prefix === today || String(prefix).indexOf(today + '-') === 0;
+}
+
+// Never overwrites: a second backup the same day becomes BAK-yyyy-MM-dd-2 (then
+// -3, ...) and becomes the one every other action uses. Earlier tabs stay
+// until the user deletes them by hand.
 function paymentResetBackup_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var prefix = 'BAK-' + prToday_();
-  PR_SHEETS_.forEach(function (n) {
-    if (!ss.getSheetByName(n)) throw new Error('Sheet not found: ' + n);
-    if (ss.getSheetByName(prTabName_(prefix, n))) {
-      throw new Error('Backup tab already exists: ' + prTabName_(prefix, n) + '. Delete today\'s backup tabs first if you really want a new backup.');
-    }
-  });
+  PR_SHEETS_.forEach(function (n) { if (!ss.getSheetByName(n)) throw new Error('Sheet not found: ' + n); });
+  var base = 'BAK-' + prToday_(), prefix = base;
+  var taken = function (p) { return PR_SHEETS_.some(function (n) { return ss.getSheetByName(prTabName_(p, n)); }); };
+  for (var k = 2; taken(prefix); k++) prefix = base + '-' + k;
   var tabs = PR_SHEETS_.map(function (n) {
     var copy = ss.getSheetByName(n).copyTo(ss);
     copy.setName(prTabName_(prefix, n));
     return { sheet: n, tab: copy.getName(), rows: copy.getLastRow() };
   });
-  var file = DriveApp.getFileById(ss.getId()).makeCopy('App Building Sheets — before payment reset ' + prToday_());
+  var file = DriveApp.getFileById(ss.getId()).makeCopy('App Building Sheets — before payment reset ' + prefix.slice(4));
   PropertiesService.getScriptProperties().setProperty(PR_PROP_, prefix);
   return { status: 'success', prefix: prefix, tabs: tabs, driveCopyUrl: file.getUrl() };
 }
@@ -60,7 +66,7 @@ function prRewriteRows_(sheet, width, keptRows, originalDataRows) {
 function prPlanClear_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var prefix = prBackupPrefix_();
-  if (prefix !== 'BAK-' + prToday_()) throw new Error('The backup (' + prefix + ') is not from today. Take a fresh backup first.');
+  if (!prBackupIsToday_(prefix)) throw new Error('The backup (' + prefix + ') is not from today. Take a fresh backup first.');
   var live = {};
   PR_SHEETS_.forEach(function (n) { live[n] = ss.getSheetByName(n).getDataRange().getValues(); });
   var backupPayments = prBackupValues_('PaymentLogs');
@@ -404,4 +410,241 @@ function paymentResetRestore_(payload) {
   PR_SHEETS_.forEach(function (n) { invalidateSheetCache_(n); });
   bumpBatchDataVersion_();
   return { status: 'success', dry_run: false, sheets: plan };
+}
+
+// ─────────────────────────────────────────────────────────────
+// RESETTLE — rebuilds every settlement from the payments and invoices exactly
+// as logged, without re-entering any payment (see the "Resettle" section of
+// the design doc). Nothing is added or removed: every payment row (IDs, RMB,
+// rates) and every XFER- shortfall invoice stays as it is. What is rebuilt:
+// SettlementLedger, invoice Settled Amount / Balance, wallet Balance in
+// PaymentLogs, and the batch payment aggregates.
+//
+// Payments are walked in PaymentLogs row order through the same code the app
+// uses: a DP- opens its wallet and fifoLiquidate_ settles it (as addPaymentLog
+// does). An IDP- draws from its source vendor's wallets only the part it
+// originally drew (its RMB minus its XFER- invoice), oldest wallet first as in
+// settleViaWalletTransfer_; its XFER- invoice only becomes open at that point
+// and autoSettleAdvanceFromInvoice_ lets any wallet the source vendor still has
+// pay it; then the IDP- wallet opens and fifoLiquidate_ settles it (as
+// addAdjustmentEntry does). Wallets and XFER- invoices are held at Balance 0
+// until their turn, so nothing settles against money or debt that did not
+// exist yet.
+// ─────────────────────────────────────────────────────────────
+
+var PR_RESETTLE_PROP_ = 'PAYMENT_RESET_RESETTLE';
+
+function prResettlePlan_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var prefix = prBackupPrefix_();
+  if (!prBackupIsToday_(prefix)) throw new Error('The backup (' + prefix + ') is not from today. Take a fresh backup first.');
+  var pay = ss.getSheetByName('PaymentLogs').getDataRange().getValues();
+  var inv = ss.getSheetByName('PurchaseInvoices').getDataRange().getValues();
+  var bakPay = prBackupValues_('PaymentLogs'), bakInv = prBackupValues_('PurchaseInvoices');
+  if (bakPay.length !== pay.length || bakInv.length !== inv.length) {
+    throw new Error('PaymentLogs or PurchaseInvoices changed since the backup (' + (bakPay.length - 1) + '/' + (bakInv.length - 1) +
+      ' rows in the backup, ' + (pay.length - 1) + '/' + (inv.length - 1) + ' now). Take a fresh backup first.');
+  }
+  // fifoLiquidate_ and autoSettleAdvanceFromInvoice_ locate rows by position
+  // in getSheetData_, which skips blank rows — a blank row mid-sheet would make
+  // them write to the wrong row.
+  [['PaymentLogs', pay], ['PurchaseInvoices', inv]].forEach(function (s) {
+    for (var i = 1; i < s[1].length; i++) {
+      if (!s[1][i].some(function (v) { return v !== '' && v !== null; })) throw new Error(s[0] + ' row ' + (i + 1) + ' is blank. Remove blank rows first.');
+    }
+  });
+
+  var ph = pay[0], col = function (n) { return findHeaderIndex_(ph, n); };
+  var c = { id: col('Payment ID'), vendor: col('Vendor Code'), rmb: col('RMB'), date: col('Date'), bal: col('Balance'),
+            er2: col('ER2'), settled: col('Settled ER2'), source: col('Source Vendor'), inr: col('INR Amount') };
+  if (c.id === -1 || c.vendor === -1 || c.rmb === -1 || c.date === -1 || c.bal === -1) throw new Error('PaymentLogs is missing Date / Payment ID / Vendor Code / RMB / Balance');
+  var chargePct = getConversionChargePercent_();
+  var ih = inv[0];
+  var ic = { no: findHeaderIndex_(ih, 'invoice_no'), rmb: findHeaderIndex_(ih, 'RMB'), settled: findHeaderIndex_(ih, 'Settled Amount'), bal: findHeaderIndex_(ih, 'Balance') };
+  if (ic.no === -1 || ic.rmb === -1 || ic.settled === -1 || ic.bal === -1) throw new Error('PurchaseInvoices is missing invoice_no / RMB / Settled Amount / Balance');
+
+  var xfer = {};
+  for (var j = 1; j < inv.length; j++) {
+    var no = String(inv[j][ic.no] || '').trim();
+    if (no.indexOf('XFER-') === 0) xfer[no] = { row: j + 1, rmb: prRound2_(inv[j][ic.rmb]), used: false };
+  }
+
+  var entries = [];
+  for (var i = 1; i < pay.length; i++) {
+    var r = pay[i], id = String(r[c.id] || '').trim();
+    var kind = /^DP-/i.test(id) ? 'DP' : /^IDP-/i.test(id) ? 'IDP' : null;
+    if (!kind) throw new Error('PaymentLogs row ' + (i + 1) + ': unexpected payment id ' + id);
+    var e = {
+      index: entries.length, row: i + 1, paymentId: id, kind: kind, vendorCode: String(r[c.vendor] || '').trim(),
+      sourceVendor: c.source !== -1 ? String(r[c.source] || '').trim() : '', rmb: prRound2_(r[c.rmb]), date: cnfYmd_(r[c.date]),
+      er2: c.er2 !== -1 ? Number(r[c.er2]) || 0 : 0, settledEr2: c.settled !== -1 ? Number(r[c.settled]) || 0 : 0
+    };
+    // The rate the app settled with when the payment was logged, which is
+    // unrounded — the sheet's Settled ER2 is rounded to 2 dp. A DP- used
+    // ER2 / (1 + charge%) (addPaymentLog); an IDP- used its blended rate, which
+    // its INR Amount (RMB × rate, 2 dp) recovers.
+    var inr = c.inr !== -1 ? Number(r[c.inr]) || 0 : 0;
+    if (kind === 'DP' && e.er2 > 0) e.rate = (chargePct > 0 && getVendorCurrency_(e.vendorCode) !== 'INR') ? e.er2 / (1 + chargePct / 100) : e.er2;
+    else if (kind === 'IDP' && e.rmb > 0 && inr > 0) e.rate = inr / e.rmb;
+    else e.rate = resolveSettledRate_({ 'Settled ER2': e.settledEr2, ER2: e.er2 });
+    if (kind === 'IDP') {
+      if (!e.sourceVendor) throw new Error('PaymentLogs row ' + (i + 1) + ': transfer ' + id + ' has no Source Vendor');
+      var x = xfer['XFER-' + id + '-' + e.vendorCode];
+      e.xferId = x ? 'XFER-' + id + '-' + e.vendorCode : '';
+      e.xferRmb = x ? x.rmb : 0;
+      if (x) x.used = true;
+      e.walletPortion = prRound2_(e.rmb - e.xferRmb);
+      if (e.walletPortion < -0.01) throw new Error(e.xferId + ' (¥' + e.xferRmb + ') is larger than its transfer ' + id + ' (¥' + e.rmb + ')');
+    }
+    entries.push(e);
+  }
+  var orphans = Object.keys(xfer).filter(function (k) { return !xfer[k].used; });
+  if (orphans.length) throw new Error('XFER- invoices with no matching transfer in PaymentLogs: ' + orphans.join(', '));
+  var implied = prImpliedChargePct_(entries);
+  if (implied !== null && Math.abs(implied - chargePct) > 0.1) {
+    throw new Error('Conversion charge is ' + chargePct + '% now but the payments were logged at about ' + implied + '%. Set it back before resettling.');
+  }
+  return { prefix: prefix, entries: entries, c: c, ic: ic, xfer: xfer, payRows: pay.length - 1 };
+}
+
+// Holds every wallet and XFER- invoice at Balance 0 (opened in turn by
+// prResettleEntry_), opens every other invoice fully, and empties
+// SettlementLedger and the batch payment columns.
+function prResettleReset_(plan) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sl = ss.getSheetByName('SettlementLedger'), slv = sl.getDataRange().getValues();
+  prRewriteRows_(sl, slv[0].length, [], slv.length - 1);
+
+  var invSheet = ss.getSheetByName('PurchaseInvoices'), inv = invSheet.getDataRange().getValues(), ic = plan.ic;
+  var settled = [], bal = [];
+  inv.slice(1).forEach(function (r) {
+    settled.push([0]);
+    bal.push([String(r[ic.no] || '').trim().indexOf('XFER-') === 0 ? 0 : prRound2_(r[ic.rmb])]);
+  });
+  invSheet.getRange(2, ic.settled + 1, settled.length, 1).setValues(settled);
+  invSheet.getRange(2, ic.bal + 1, bal.length, 1).setValues(bal);
+
+  var zeros = [];
+  for (var i = 0; i < plan.payRows; i++) zeros.push([0]);
+  ss.getSheetByName('PaymentLogs').getRange(2, plan.c.bal + 1, plan.payRows, 1).setValues(zeros);
+
+  var batches = ss.getSheetByName('Batches'), bv = batches.getDataRange().getValues();
+  if (bv.length > 1) {
+    var blank = [];
+    for (var b = 1; b < bv.length; b++) blank.push(['']);
+    PR_BATCH_AGG_COLS_.forEach(function (name) { var k = bv[0].indexOf(name); if (k !== -1) batches.getRange(2, k + 1, blank.length, 1).setValues(blank); });
+  }
+  PR_SHEETS_.forEach(function (n) { invalidateSheetCache_(n); });
+}
+
+// The wallet draw of settleViaWalletTransfer_ (source vendor's wallets with
+// Balance > 0.01, oldest Date first, row order on ties), for a fixed amount.
+// Checks the wallets cover it before writing anything.
+function prResettleDraw_(plan, e) {
+  if (e.walletPortion <= 0.01) return;
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('PaymentLogs');
+  var v = sheet.getDataRange().getValues(), c = plan.c;
+  var wallets = [];
+  for (var i = 1; i < v.length; i++) {
+    var b = Number(v[i][c.bal]) || 0;
+    if (String(v[i][c.vendor] || '').trim() === e.sourceVendor && b > 0.01) wallets.push({ row: i + 1, bal: b, t: new Date(v[i][c.date]).getTime() });
+  }
+  wallets.sort(function (a, b) { return a.t - b.t; });
+  var available = wallets.reduce(function (s, w) { return s + w.bal; }, 0);
+  if (available < e.walletPortion - 0.01) {
+    throw new Error(e.sourceVendor + ' has ¥' + prRound2_(available) + ' in open wallets but ' + e.paymentId + ' originally drew ¥' + e.walletPortion + ' from them');
+  }
+  var remaining = e.walletPortion;
+  for (var k = 0; k < wallets.length && remaining > 0.01; k++) {
+    var draw = Math.min(remaining, wallets[k].bal);
+    sheet.getRange(wallets[k].row, c.bal + 1).setValue(prRound2_(wallets[k].bal - draw));
+    remaining -= draw;
+  }
+  invalidateSheetCache_('PaymentLogs');
+}
+
+function prResettleEntry_(plan, e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (e.kind === 'IDP') {
+    prResettleDraw_(plan, e);
+    if (e.xferId) {
+      ss.getSheetByName('PurchaseInvoices').getRange(plan.xfer[e.xferId].row, plan.ic.bal + 1).setValue(e.xferRmb);
+      invalidateSheetCache_('PurchaseInvoices');
+      autoSettleAdvanceFromInvoice_(e.sourceVendor, e.date, e.xferId, e.xferRmb);
+    }
+  }
+  ss.getSheetByName('PaymentLogs').getRange(e.row, plan.c.bal + 1).setValue(e.rmb);
+  invalidateSheetCache_('PaymentLogs');
+  fifoLiquidate_(e.vendorCode, e.date, e.paymentId, e.rmb, e.rate);
+}
+
+// Per vendor after the run: what is still owed and what is still unspent.
+function prResettleSummary_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), out = {};
+  var add = function (v, k, x) { if (!v) return; var o = out[v] || (out[v] = { openInvoices: 0, unspentWallet: 0 }); o[k] = prRound2_(o[k] + x); };
+  var inv = ss.getSheetByName('PurchaseInvoices').getDataRange().getValues(), ih = inv[0];
+  var iv = findHeaderIndex_(ih, 'Vendor Code'), ib = findHeaderIndex_(ih, 'Balance');
+  inv.slice(1).forEach(function (r) { add(String(r[iv] || '').trim(), 'openInvoices', Number(r[ib]) || 0); });
+  var pay = ss.getSheetByName('PaymentLogs').getDataRange().getValues(), ph = pay[0];
+  var pv = findHeaderIndex_(ph, 'Vendor Code'), pb = findHeaderIndex_(ph, 'Balance');
+  pay.slice(1).forEach(function (r) { add(String(r[pv] || '').trim(), 'unspentWallet', Number(r[pb]) || 0); });
+  return out;
+}
+
+function paymentResetResettle_(payload) {
+  var p = payload || {};
+  var dryRun = p.dry_run !== false;
+  var limit = Number(p.limit) > 0 ? Number(p.limit) : 100000;
+  var budgetMs = Number(p.budget_ms) > 0 ? Number(p.budget_ms) : 120000;
+  var plan = prResettlePlan_();
+  var props = PropertiesService.getScriptProperties();
+  var progress = null;
+  try { progress = JSON.parse(props.getProperty(PR_RESETTLE_PROP_) || 'null'); } catch (err) {}
+  if (progress && progress.prefix !== plan.prefix) progress = null;
+
+  if (dryRun) {
+    return {
+      status: 'success', dry_run: true, prefix: plan.prefix, total: plan.entries.length, xferInvoices: Object.keys(plan.xfer).length, progress: progress,
+      entries: plan.entries.map(function (e) {
+        return { index: e.index, paymentId: e.paymentId, kind: e.kind, vendor: e.vendorCode, source: e.sourceVendor, rmb: e.rmb, date: e.date,
+                 rate: e.rate, walletPortion: e.walletPortion, xferId: e.xferId };
+      })
+    };
+  }
+  if (progress && progress.done) return { status: 'success', dry_run: false, done: true, alreadyDone: true, total: plan.entries.length, summary: prResettleSummary_() };
+
+  // One run at a time: a repeated curl while a chunk is still running would
+  // otherwise settle the same entries twice.
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another resettle chunk (or a payment) is still running. Wait for it to finish, then call again.');
+  try {
+    if (!progress) {
+      prResettleReset_(plan);
+      progress = { prefix: plan.prefix, next: 0 };
+      props.setProperty(PR_RESETTLE_PROP_, JSON.stringify(progress));
+    }
+    var start = new Date().getTime(), processed = 0;
+    for (var k = progress.next; k < plan.entries.length; k++) {
+      if (processed >= limit || new Date().getTime() - start > budgetMs) {
+        return { status: 'success', dry_run: false, done: false, processed: processed, nextIndex: k, remaining: plan.entries.length - k };
+      }
+      var e = plan.entries[k];
+      try {
+        prResettleEntry_(plan, e);
+      } catch (err) {
+        return { status: 'error', message: 'Resettle stopped at #' + k + ' ' + e.paymentId + ': ' + err.message + '. Restore from the backup before retrying.', stoppedAt: e, processed: processed };
+      }
+      processed++;
+      progress.next = k + 1;
+      props.setProperty(PR_RESETTLE_PROP_, JSON.stringify(progress));
+    }
+    backfillBatchSettlementAggregates_();
+    PR_SHEETS_.forEach(function (n) { invalidateSheetCache_(n); });
+    bumpBatchDataVersion_();
+    progress.done = true;
+    props.setProperty(PR_RESETTLE_PROP_, JSON.stringify(progress));
+    return { status: 'success', dry_run: false, done: true, processed: processed, total: plan.entries.length, summary: prResettleSummary_() };
+  } finally {
+    lock.releaseLock();
+  }
 }

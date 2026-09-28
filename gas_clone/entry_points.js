@@ -596,6 +596,10 @@ function doPostInner_(e) {
         result = paymentResetRestore_(payload);
         break;
 
+      case 'payment_reset_resettle':
+        result = paymentResetResettle_(payload);
+        break;
+
 
       case 'get_historical_fx_rates':
         return getHistoricalFxRates_(payload);
