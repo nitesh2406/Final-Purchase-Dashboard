@@ -249,3 +249,87 @@ function getCnfShipmentValues_(invoicedByShipment) {
     };
   });
 }
+
+function cnfRequireUser_(payload) {
+  var who = String((payload && payload.user_email) || '').trim();
+  if (!who) throw new Error('Your identity could not be verified. Sign in again and retry.');
+  return who;
+}
+
+// payload: { cnfInvoiceNo, invoiceDate (yyyy-mm-dd), fileUrl, lines:
+// [{ shipmentId, amount }], baseAmount, gst, total, overrideReason,
+// user_email (stamped by the proxy) }. Everything is re-validated under the
+// script lock against fresh sheet data; the screen's own caps are only a
+// convenience.
+function logCnfGoodsInvoice_(payload) {
+  var p = payload || {};
+  var submittedBy = cnfRequireUser_(p);
+  var cnfInvoiceNo = String(p.cnfInvoiceNo || '').trim();
+  var invoiceDate = String(p.invoiceDate || '').trim();
+  var fileUrl = String(p.fileUrl || '').trim();
+  var baseAmount = Number(p.baseAmount);
+  var gst = Number(p.gst);
+  var total = Number(p.total);
+  var overrideReason = String(p.overrideReason || '').trim();
+  var linesIn = Array.isArray(p.lines) ? p.lines : [];
+
+  if (!cnfInvoiceNo) throw new Error('CNF invoice number is required');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)) throw new Error('Invoice date must be yyyy-mm-dd');
+  if (!fileUrl) throw new Error('Attach the CNF invoice file');
+  if (!(baseAmount > 0)) throw new Error('Base amount must be a positive number');
+  if (isNaN(gst) || gst < 0) throw new Error('GST must be zero or more');
+  if (!(total > 0)) throw new Error('Total must be a positive number');
+  if (linesIn.length === 0) throw new Error('Pick at least one shipment');
+
+  var seen = {};
+  var requested = linesIn.map(function (l, i) {
+    var sid = String((l && l.shipmentId) || '').trim();
+    var amount = cnfRound2_(l && l.amount);
+    if (!sid) throw new Error('Line ' + (i + 1) + ' has no shipment');
+    if (seen[sid]) throw new Error('Shipment ' + sid + ' is listed twice');
+    seen[sid] = true;
+    if (!(amount > 0)) throw new Error('Amount for shipment ' + sid + ' must be positive');
+    return { shipmentId: sid, amount: amount };
+  });
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another CNF invoice is being saved. Try again in a moment.');
+  try {
+    var sheet = cnfInvoicesSheet_(true);
+    var existing = readCnfInvoices_();
+    var duplicate = existing.some(function (inv) {
+      return inv.status !== 'Rejected' && inv.cnfInvoiceNo.toLowerCase() === cnfInvoiceNo.toLowerCase();
+    });
+    if (duplicate) throw new Error('CNF invoice ' + cnfInvoiceNo + ' is already logged');
+
+    var byShipment = {};
+    getCnfShipmentValues_(cnfInvoicedByShipment_(existing)).forEach(function (v) { byShipment[v.shipmentId] = v; });
+
+    var lines = requested.map(function (l) {
+      var v = byShipment[l.shipmentId];
+      if (!v) throw new Error('Shipment ' + l.shipmentId + ' not found');
+      if (!v.eligible) throw new Error('Shipment ' + l.shipmentId + " can't be CNF-invoiced: " + v.ineligibleReason);
+      if (l.amount > v.remainingInr + 0.01) {
+        throw new Error('Shipment ' + l.shipmentId + ' has only ' + cnfFmtInr_(v.remainingInr) + ' left to invoice');
+      }
+      return { batchId: v.batchId, shipmentId: v.shipmentId, vendorCode: v.vendorCode, invoiceNo: v.invoiceNo, amount: l.amount };
+    });
+
+    var purchaseValue = cnfRound2_(lines.reduce(function (s, l) { return s + l.amount; }, 0));
+    var serviceCharge = cnfRound2_(baseAmount - purchaseValue);
+    var totalMismatch = Math.abs(baseAmount + gst - total) >= 1;
+    if (totalMismatch && !overrideReason) throw new Error("Base + GST doesn't match Total. Give an override reason to save anyway.");
+    if (serviceCharge < 0 && !overrideReason) throw new Error('Service charge is negative (CNF billed less than the goods value). Give an override reason to save anyway.');
+
+    // Row count keeps ids unique even for two saves in the same millisecond.
+    var id = 'CGI-' + new Date().getTime() + '-' + (existing.length + 1);
+    sheet.appendRow([
+      id, cnfInvoiceNo, invoiceDate, fileUrl, JSON.stringify(lines),
+      cnfRound2_(baseAmount), purchaseValue, serviceCharge, cnfRound2_(gst), cnfRound2_(total),
+      'Pending Approval', overrideReason, submittedBy, '', '', '', new Date().toISOString()
+    ]);
+    return { status: 'success', id: id, purchaseValue: purchaseValue, serviceCharge: serviceCharge };
+  } finally {
+    lock.releaseLock();
+  }
+}
