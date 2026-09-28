@@ -45,11 +45,19 @@ Facts that shape the replay:
   had already been spent). Every IDP is replayed as its own transfer.
 - No "Settle Invoice" (invoice-targeted) transfers exist; all settlements are
   FIFO or auto-settlement.
-- Known risk: an `XFER-` shortfall invoice is priced by
-  `getHistoricalClosingRate_(date)`, falling back to the live rate when the
-  historical lookup fails. If a lookup fell back originally, or does on
-  replay, that invoice's ER1/INR can differ. Verify compares `XFER-` ER1/INR
-  explicitly, so any such case is reported, not hidden.
+- Shortfall rates (found in testing): an `XFER-` shortfall invoice is priced
+  by `getHistoricalClosingRate_(date)`. Rates for *today* are never cached,
+  so a transfer entered on its own date got an intraday rate; production's
+  cached close now differs on 7 of 29 shortfalls (08-04, 08-19, 08-25, 08-26;
+  about 0.07%, net −₹1,171). To replay exactly, the replay **pins each
+  transfer's original rate** (backup `XFER-` INR ÷ RMB, full precision) in the
+  per-execution `fxRateMemo_` only, restoring the memo right after that
+  transfer. Nothing is persisted and no core logic changes.
+- Expected differences after replay (live snapshot, tested): exactly 6, all
+  explained — DJJ110926 and MY0917CL56 (originally paid by auto-settlement)
+  get a slightly different wallet mix: same RMB, INR +₹9.70 / −₹2.72; their
+  batches S-26017 / S-26018 follow; A-26023's stored status "Not Invoiced" was
+  stale and is recomputed as "Unpaid". Anything beyond these is a stop.
 
 ## Actions
 
@@ -117,10 +125,13 @@ Compares live against the backup tabs, tolerance ¥0.01 / ₹1:
 Returns matched counts per area and the list of differences.
 
 ### 5. `payment_reset_restore` (dry run by default)
-Copies each backup tab's values over the live sheet (clear contents, then
-`setValues` of the backup range, same dimensions), then cache invalidation.
-For use only if verify shows a problem. Backup tabs stay until the user
-deletes them by hand.
+Copies the backup values over PaymentLogs, SettlementLedger, PurchaseInvoices
+and VendorLedger (clear contents, then `setValues` of the backup range). For
+Batches only the four payment columns are restored, by `batch_id`, so
+tracking/receiving edits made in the meantime survive. Refuses if a real (non
+`XFER-`) invoice was added after the backup, so a newly synced vendor invoice
+is never silently dropped. Cache invalidation after. For use only if verify
+shows a problem. Backup tabs stay until the user deletes them by hand.
 
 ## Run sequence
 
