@@ -132,3 +132,84 @@ function paymentResetClear_(payload) {
   bumpBatchDataVersion_();
   return { status: 'success', dry_run: false, counts: plan.counts };
 }
+
+function prParseResponse_(out) {
+  try { return JSON.parse(out.getContent()); } catch (e) { return { status: 'error', message: 'Unreadable response: ' + e.message }; }
+}
+
+function prReplayEntries_() {
+  var rows = prBackupValues_('PaymentLogs'), h = rows[0];
+  var col = function (n) { return findHeaderIndex_(h, n); };
+  var c = { date: col('Date'), id: col('Payment ID'), vendor: col('Vendor Code'), rmb: col('RMB'), er2: col('ER2'),
+            settled: col('Settled ER2'), mode: col('Payment Mode'), ref: col('Reference No'), source: col('Source Vendor') };
+  if (c.id === -1 || c.vendor === -1 || c.rmb === -1 || c.date === -1) throw new Error('Backup PaymentLogs is missing Date / Payment ID / Vendor Code / RMB');
+  var entries = [];
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    var id = String(r[c.id] || '').trim();
+    if (!id) continue;
+    var kind = /^DP-/i.test(id) ? 'DP' : /^IDP-/i.test(id) ? 'IDP' : null;
+    if (!kind) throw new Error('Backup row ' + (i + 1) + ': unexpected payment id ' + id);
+    var e = {
+      index: entries.length, paymentId: id, kind: kind, date: cnfYmd_(r[c.date]),
+      vendorCode: String(r[c.vendor] || '').trim(), rmb: Number(r[c.rmb]) || 0,
+      er2: c.er2 !== -1 ? Number(r[c.er2]) || 0 : 0, settledEr2: c.settled !== -1 ? Number(r[c.settled]) || 0 : 0,
+      mode: c.mode !== -1 ? String(r[c.mode] || '') : '', ref: c.ref !== -1 ? String(r[c.ref] || '') : '',
+      sourceVendor: c.source !== -1 ? String(r[c.source] || '').trim() : ''
+    };
+    if (kind === 'IDP' && !e.sourceVendor) throw new Error('Backup row ' + (i + 1) + ': transfer ' + id + ' has no Source Vendor');
+    entries.push(e);
+  }
+  return entries;
+}
+
+// Charge implied by the backup's direct payments (ER2 vs stored Settled ER2),
+// median so a rounding outlier can't skew it. null if there are none.
+function prImpliedChargePct_(entries) {
+  var v = entries.filter(function (e) { return e.kind === 'DP' && e.er2 > 0 && e.settledEr2 > 0; })
+    .map(function (e) { return (e.er2 / e.settledEr2 - 1) * 100; }).sort(function (a, b) { return a - b; });
+  if (!v.length) return null;
+  return Math.round(v[Math.floor(v.length / 2)] * 1000) / 1000;
+}
+
+function paymentResetReplay_(payload) {
+  var p = payload || {};
+  var dryRun = p.dry_run !== false;
+  var limit = Number(p.limit) > 0 ? Number(p.limit) : 100000;
+  var budgetMs = Number(p.budget_ms) > 0 ? Number(p.budget_ms) : 270000;
+  var entries = prReplayEntries_();
+  var implied = prImpliedChargePct_(entries);
+  var current = getConversionChargePercent_();
+  var preflight = { impliedChargePct: implied, currentChargePct: current, ok: implied === null || Math.abs(implied - current) <= 0.1 };
+  if (dryRun) {
+    return { status: 'success', dry_run: true, preflight: preflight, total: entries.length, entries: entries };
+  }
+  if (!preflight.ok) {
+    throw new Error('Conversion charge is ' + current + '% now but the payments were logged at about ' + implied + '%. Set it back before replaying.');
+  }
+
+  var live = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('PaymentLogs').getDataRange().getValues();
+  var lh = live[0], lId = findHeaderIndex_(lh, 'Payment ID'), lVendor = findHeaderIndex_(lh, 'Vendor Code');
+  var present = {};
+  for (var i = 1; i < live.length; i++) present[String(live[i][lId] || '').trim() + '|' + String(live[i][lVendor] || '').trim()] = true;
+
+  var start = new Date().getTime(), processed = 0, skipped = 0;
+  for (var k = 0; k < entries.length; k++) {
+    var e = entries[k];
+    if (present[e.paymentId + '|' + e.vendorCode]) { skipped++; continue; }
+    if (processed >= limit || new Date().getTime() - start > budgetMs) {
+      return { status: 'success', dry_run: false, done: false, processed: processed, skipped: skipped, nextIndex: k, remaining: entries.length - k };
+    }
+    var res = e.kind === 'DP'
+      ? prParseResponse_(addPaymentLog({ record: { paymentId: e.paymentId, date: e.date, vendorCode: e.vendorCode, rmb: e.rmb, er2: e.er2, paymentMode: e.mode, referenceNo: e.ref } }))
+      : prParseResponse_(addAdjustmentEntry({ record: { txnType: 'Transfer', paymentId: e.paymentId, sourceVendor: e.sourceVendor, targetVendor: e.vendorCode, amountRmb: e.rmb, date: e.date } }));
+    if (!res || res.status !== 'success') {
+      return { status: 'error', message: 'Replay stopped at #' + e.index + ' ' + e.paymentId + ': ' + ((res && res.message) || 'no response'), stoppedAt: e, processed: processed, skipped: skipped };
+    }
+    processed++;
+  }
+  backfillBatchSettlementAggregates_();
+  PR_SHEETS_.forEach(function (n) { invalidateSheetCache_(n); });
+  bumpBatchDataVersion_();
+  return { status: 'success', dry_run: false, done: true, processed: processed, skipped: skipped, total: entries.length };
+}
