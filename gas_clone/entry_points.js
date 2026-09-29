@@ -130,7 +130,9 @@ function doPost(e) {
 // open. With no key configured the actions are refused, never left open.
 var PROXY_KEY_ALWAYS_ = {
   log_cnf_goods_invoice: true, approve_cnf_goods_invoice: true, reject_cnf_goods_invoice: true,
-  save_cnf_draft_invoice: true, payment_reset_backup: true, log_vendor_discount: true
+  save_cnf_draft_invoice: true, payment_reset_backup: true, log_vendor_discount: true,
+  save_shipping_partner: true, set_batch_shipping_partner: true, log_partner_bill: true,
+  approve_partner_bill: true, reject_partner_bill: true, log_partner_payment: true, void_partner_payment: true
 };
 var PROXY_KEY_WHEN_REAL_ = {
   payment_reset_clear: true, payment_reset_replay: true, payment_reset_restore: true,
@@ -580,6 +582,54 @@ function doPostInner_(e) {
         result = logVendorDiscount_(payload);
         break;
 
+      // Air shipping partners + Ledgers (shipping_partners.js) — see
+      // docs/superpowers/specs/2026-09-29-air-shipping-partner-design.md.
+      case 'get_shipping_partners':
+        return successResponse_({ partners: readShippingPartners_().map(spStrip_) });
+
+      case 'get_batch_shipping_partners':
+        return successResponse_({ assignments: getBatchShippingPartners_() });
+
+      case 'get_partner_bills':
+        return successResponse_({ bills: getPartnerBills_(payload) });
+
+      case 'get_partner_payments':
+        return successResponse_({ payments: getPartnerPayments_(payload) });
+
+      case 'get_party_ledgers':
+        return successResponse_({ parties: getPartyLedgers_() });
+
+      case 'get_partner_ledger_statement':
+        return successResponse_(getPartnerLedgerStatement_(payload));
+
+      case 'save_shipping_partner':
+        result = saveShippingPartner_(payload);
+        break;
+
+      case 'set_batch_shipping_partner':
+        result = setBatchShippingPartner_(payload);
+        break;
+
+      case 'log_partner_bill':
+        result = logPartnerBill_(payload);
+        break;
+
+      case 'approve_partner_bill':
+        result = approvePartnerBill_(payload);
+        break;
+
+      case 'reject_partner_bill':
+        result = rejectPartnerBill_(payload);
+        break;
+
+      case 'log_partner_payment':
+        result = logPartnerPayment_(payload);
+        break;
+
+      case 'void_partner_payment':
+        result = voidPartnerPayment_(payload);
+        break;
+
       // Payment reset & replay (payment_reset.js) — admin tooling called with
       // curl; see docs/superpowers/specs/2026-09-28-payment-reset-replay-design.md.
       case 'payment_reset_backup':
@@ -733,7 +783,9 @@ var BUNDLE_READ_ACTIONS_ = {
   get_vendor_ledger: true, get_vendor_shipments: true,
   get_cnf_shipment_values: true, get_cnf_goods_invoices: true,
   get_cnf_ledger_statement: true, get_cnf_draft_invoices: true,
-  get_batches: true, get_product_master: true
+  get_batches: true, get_product_master: true,
+  get_shipping_partners: true, get_batch_shipping_partners: true, get_partner_bills: true,
+  get_partner_payments: true, get_party_ledgers: true, get_partner_ledger_statement: true
 };
 
 function getBundle_(payload) {
