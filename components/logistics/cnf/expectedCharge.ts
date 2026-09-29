@@ -11,10 +11,23 @@ type BatchForCharge = Pick<Batch, 'batch_type' | 'carrier' | 'total_value_rmb' |
 const norm = (s: string) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+// The batch's rate category: the carrier's shipment-partner default, else the
+// only category for the mode if exactly one exists.
+export function defaultCnfCategory(
+  batch: Pick<Batch, 'batch_type' | 'carrier'>,
+  seaRates: CnfCommissionRate[],
+  airCategories: CnfAirRateCategory[],
+  partnerDefaults: CnfShipmentPartnerDefault[]
+): CnfCommissionRate | CnfAirRateCategory | undefined {
+  const pool: (CnfCommissionRate | CnfAirRateCategory)[] = batch.batch_type === 'air' ? airCategories : seaRates;
+  const carrier = norm(batch.carrier || '');
+  const def = carrier ? partnerDefaults.find(d => norm(d.partner) === carrier) : undefined;
+  return (def && pool.find(c => c.id === def.defaultCategoryId)) || (pool.length === 1 ? pool[0] : undefined);
+}
+
 // Estimate of CNF's service charge for a batch (pre-GST, excluding goods),
 // from Settings > CNF rates. Only a sanity check next to the service charge
-// on CNF's actual invoice. Category: the carrier's shipment-partner default;
-// failing that, the only category for the mode if exactly one exists.
+// on CNF's actual invoice. Category: see defaultCnfCategory.
 export function computeExpectedCnfCharge(
   batch: BatchForCharge,
   seaRates: CnfCommissionRate[],
@@ -22,10 +35,7 @@ export function computeExpectedCnfCharge(
   partnerDefaults: CnfShipmentPartnerDefault[]
 ): ExpectedCnfCharge {
   const isAir = batch.batch_type === 'air';
-  const pool: { id: string; label: string }[] = isAir ? airCategories : seaRates;
-  const carrier = norm(batch.carrier || '');
-  const def = carrier ? partnerDefaults.find(d => norm(d.partner) === carrier) : undefined;
-  const category = (def && pool.find(c => c.id === def.defaultCategoryId)) || (pool.length === 1 ? pool[0] : undefined);
+  const category = defaultCnfCategory(batch, seaRates, airCategories, partnerDefaults);
   if (!category) {
     return { amount: null, categoryLabel: null, note: `Set a ${isAir ? 'Air' : 'Sea'} default category for this carrier in Settings` };
   }
