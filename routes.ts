@@ -19,6 +19,7 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   'Settings': '/settings',
   'Log Invoice': '/finance/log-invoice',
   'Log Payment': '/finance/log-payment',
+  'Log Discount': '/finance/log-discount',
   'Log Settlement': '/finance/log-settlement',
   'Accounts View': '/finance/accounts',
   'Amazon Forecasting': '/amazon/forecasting',

@@ -39,6 +39,7 @@ import { AuditLogScreen } from './components/dashboard/AuditLogScreen.tsx';
 import { PaymentLedger } from './components/finance/PaymentLedger.tsx';
 import { AccountsView } from './components/finance/AccountsView.tsx';
 import { LogInvoice } from './components/finance/LogInvoice.tsx';
+import { LogDiscount } from './components/finance/LogDiscount.tsx';
 import { CrossVendorSettlement } from './components/finance/CrossVendorSettlement.tsx';
 import { Sku, PurchaseOrder, Shipment, Invoice, Vendor, Notification, DraftOrder, VendorMaster } from './types.ts';
 import { APPS_SCRIPT_URL, API_ACTIONS } from './constants.ts';
@@ -54,7 +55,7 @@ import { callGas, invalidateReadCache, subscribeDataLoadErrors, clearDataLoadErr
 // full-page skeleton until all three calls finished too (~4-5s on every page
 // load, since each Apps Script call costs ~3-4s) — now they render at once.
 const CORE_DATA_VIEWS: ViewType[] = [
-    'Draft Orders', 'Vendor Shipments', 'Log Invoice', 'Log Payment', 'Log Settlement', 'Accounts View',
+    'Draft Orders', 'Vendor Shipments', 'Log Invoice', 'Log Payment', 'Log Discount', 'Log Settlement', 'Accounts View',
 ];
 
 // Finance data used to load once per session and then go stale until someone
@@ -587,7 +588,7 @@ const App: React.FC = () => {
         }
     }, []);
 
-    const FINANCE_VIEWS = ['Finance', 'Log Invoice', 'Log Payment', 'Accounts View', 'Log Settlement'];
+    const FINANCE_VIEWS = ['Finance', 'Log Invoice', 'Log Payment', 'Log Discount', 'Accounts View', 'Log Settlement'];
     useEffect(() => {
         if (!user || user.role === 'CNF_AGENT') return;
         if (!FINANCE_VIEWS.includes(currentView)) return;
@@ -830,6 +831,14 @@ const App: React.FC = () => {
             case 'Log Payment':
                 return <PaymentLedger
                     onNavigate={(v) => setCurrentView(v)}
+                    vendors={displayVendorMasters}
+                    onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}
+                />;
+            case 'Log Discount':
+                return <LogDiscount
+                    invoices={displayPurchaseInvoices}
+                    paymentLogs={displayPaymentLogs}
+                    settlementRecords={displaySettlementRecords}
                     vendors={displayVendorMasters}
                     onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}
                 />;
