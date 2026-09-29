@@ -882,6 +882,13 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                                         Settle
                                       </button>
                                     )}
+                                    <button
+                                      type="button"
+                                      onClick={() => navigate(`${viewToPath('Log Discount')}?vendor=${encodeURIComponent(inv.vendorCode)}&invoice=${encodeURIComponent(inv.invoiceId)}`)}
+                                      className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                                    >
+                                      Add discount
+                                    </button>
                                   </div>
                                 );
                               })()}
@@ -1102,7 +1109,9 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                           <td className="px-5 py-4">
                             <div className="space-y-1 max-w-[240px]">
                               <p className="text-gray-900 dark:text-gray-200 font-bold leading-none truncate">
-                                Mode: {log.paymentMode || 'Bank Transfer'}
+                                {/^DSC-/i.test(log.paymentId)
+                                  ? <><span className="inline-block px-1.5 py-0.5 mr-1 rounded bg-amber-100 text-amber-700 text-[9px] font-black uppercase tracking-wider">Discount</span>{log.sourceInvoice ? `on ${log.sourceInvoice}` : ''}</>
+                                  : <>Mode: {log.paymentMode || 'Bank Transfer'}</>}
                               </p>
                               {log.referenceNo && (
                                 <p className="text-[10px] text-gray-400 font-mono truncate">
