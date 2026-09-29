@@ -126,8 +126,8 @@ const CACHEABLE_READ_ACTIONS = new Set([
   'get_drafts', 'get_pos', 'get_vendor_masters',
   'get_purchase_invoices', 'get_payment_logs', 'get_settlement_records', 'get_vendor_ledger',
   'get_vendor_shipments',
-  'get_cnf_eligible_batches', 'get_cnf_shipment_values', 'get_cnf_goods_invoices', 'get_cnf_ledger_statement', 'get_cnf_ledger', 'get_cnf_draft_invoices',
-  'get_cnf_invoice_batches', 'get_cnf_shipment_bill_status', 'get_batches',
+  'get_cnf_shipment_values', 'get_cnf_goods_invoices', 'get_cnf_ledger_statement', 'get_cnf_draft_invoices',
+  'get_batches',
   'get_product_master',
 ]);
 

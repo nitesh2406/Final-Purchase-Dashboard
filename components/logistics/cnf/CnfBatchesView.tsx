@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { useQueryParam } from '../../../hooks/useQueryParam';
@@ -6,19 +6,16 @@ import { callGasAuthed, invalidateReadCache } from '../../../services/gasApi';
 import {
   fetchPurchaseInvoices,
   fetchSettlementRecords,
-  fetchCnfCommissionRates,
-  fetchCnfAirRateCategories,
-  fetchShipmentPartnerDefaults,
-  fetchIgstRate,
   computeBatchSettlementStatus,
   PurchaseInvoice,
   SettlementRecord,
 } from '../../../services/settlementService';
-import { fetchCnfShipmentValues, fetchCnfDraftInvoices } from '../../../services/cnfService';
+import { fetchCnfShipmentValues, fetchCnfDraftInvoices, fetchCnfRateConfig } from '../../../services/cnfService';
 import type { Batch, CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentValue, CnfDraftInvoice } from '../../../types';
 import { CnfDraftInvoiceModal } from './CnfDraftInvoiceModal';
 import { computeExpectedCnfCharge } from './expectedCharge';
-import { fmtInr, fmtRmb } from './cnfFormat';
+import { draftStaleness } from './draftInvoice';
+import { fmtInr, fmtRmb, fmtIstDate } from './cnfFormat';
 import { readViewCache, writeViewCache } from './viewCache';
 
 type PaymentStatus = 'Paid' | 'Partial' | 'Unpaid' | 'Not Invoiced';
@@ -48,38 +45,46 @@ interface LoadedData {
   igstPct: number;
 }
 
-export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey }) => {
+export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () => void }> = ({ refreshKey, onDataChanged }) => {
   const [mode, setMode] = useQueryParam<'sea' | 'air'>('cnfMode', 'sea');
   const [filter, setFilter] = useState<Filter>('all');
   const [data, setData] = useState<LoadedData | null>(() => readViewCache<LoadedData>('batches') ?? null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftFor, setDraftFor] = useState<string | null>(null);
+  const loadSeq = useRef(0);
 
+  // Only the newest load may update the screen (a Refresh while one is in
+  // flight must not be overwritten by the older response).
   const load = async (force: boolean) => {
+    const mine = ++loadSeq.current;
     if (force) invalidateReadCache();
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [batchesRes, shipments, purchaseInvoices, settlements, seaRates, airCategories, partnerDefaults, drafts, igstPct] = await Promise.all([
+      const [batchesRes, shipments, rates, drafts] = await Promise.all([
         callGasAuthed('get_batches', {}, 1),
         fetchCnfShipmentValues(),
-        fetchPurchaseInvoices(),
-        fetchSettlementRecords(),
-        fetchCnfCommissionRates(),
-        fetchCnfAirRateCategories(),
-        fetchShipmentPartnerDefaults(),
+        fetchCnfRateConfig(),
         fetchCnfDraftInvoices(),
-        fetchIgstRate(),
       ]);
       if (!batchesRes || batchesRes.status !== 'success') throw new Error((batchesRes && batchesRes.message) || 'Failed to load batches');
-      const loaded = { batches: batchesRes.batches || [], shipments, purchaseInvoices, settlements, seaRates, airCategories, partnerDefaults, drafts, igstPct };
+      const batches: Batch[] = batchesRes.batches || [];
+      // Batches carry a stored payment_status, kept current by the settlement
+      // code. Only a batch without one needs the full PurchaseInvoices and
+      // SettlementLedger to work it out, so those are fetched only then.
+      const needStatus = batches.some(b => !b.payment_status);
+      const [purchaseInvoices, settlements] = needStatus
+        ? await Promise.all([fetchPurchaseInvoices(), fetchSettlementRecords()])
+        : [[] as PurchaseInvoice[], [] as SettlementRecord[]];
+      if (mine !== loadSeq.current) return;
+      const loaded: LoadedData = { batches, shipments, purchaseInvoices, settlements, ...rates, drafts };
       writeViewCache('batches', loaded);
       setData(loaded);
     } catch (err: any) {
-      setLoadError(err.message || 'Failed to load batches');
+      if (mine === loadSeq.current) setLoadError(err.message || 'Failed to load batches');
     } finally {
-      setIsLoading(false);
+      if (mine === loadSeq.current) setIsLoading(false);
     }
   };
 
@@ -110,7 +115,8 @@ export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey })
         // Same test save_cnf_draft_invoice applies on the server.
         const canDraft = b.status === 'Delivered' && batchShipments.length > 0 && batchShipments.every(s => s.eligible);
         const draft = draftsByBatch.get(b.batch_id);
-        return { batch: b, paymentStatus, eligibleValue, invoiced, invoicedTotal, openToInvoice, expected, canDraft, draft };
+        const stale = draft ? draftStaleness(draft, { goods: eligibleValue, shipmentIds: batchShipments.map(s => s.shipmentId) }) : null;
+        return { batch: b, paymentStatus, eligibleValue, invoiced, invoicedTotal, openToInvoice, expected, canDraft, draft, stale };
       });
   }, [data, mode]);
 
@@ -171,7 +177,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey })
                 <tr><td colSpan={mode === 'air' ? 9 : 8} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
               ) : visibleRows.length === 0 ? (
                 <tr><td colSpan={mode === 'air' ? 9 : 8} className="px-4 py-8 text-center text-slate-400">No batches match.</td></tr>
-              ) : visibleRows.map(({ batch, paymentStatus, eligibleValue, invoiced, invoicedTotal, expected, canDraft, draft }) => (
+              ) : visibleRows.map(({ batch, paymentStatus, eligibleValue, invoiced, invoicedTotal, expected, canDraft, draft, stale }) => (
                 <tr key={batch.batch_id}>
                   <td className="px-4 py-3 font-mono">{batch.batch_id}</td>
                   <td className="px-4 py-3">
@@ -199,8 +205,9 @@ export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey })
                       <>
                         <div className="font-mono">{fmtInr(invoicedTotal)} of {fmtInr(draft.total)}</div>
                         <div className="text-[10px] text-slate-400">
-                          goods {fmtInr(draft.goodsValue)} · charge {fmtInr(draft.charge)} · GST {fmtInr(draft.gst)} · draft by {draft.generatedBy}, {draft.generatedAt.slice(0, 10)}
+                          goods {fmtInr(draft.goodsValue)} · charge {fmtInr(draft.charge)} · GST {fmtInr(draft.gst)} · draft by {draft.generatedBy}, {fmtIstDate(draft.generatedAt)}
                         </div>
+                        {stale && <div className="text-[10px] font-semibold text-amber-600" data-testid={`draft-stale-${batch.batch_id}`}>{stale}</div>}
                       </>
                     ) : eligibleValue > 0 ? (
                       <>
@@ -233,7 +240,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey })
             partnerDefaults={data.partnerDefaults}
             existing={row.draft}
             onClose={() => setDraftFor(null)}
-            onSaved={() => { setDraftFor(null); load(true); }}
+            onSaved={() => { setDraftFor(null); onDataChanged(); }}
           />
         );
       })()}

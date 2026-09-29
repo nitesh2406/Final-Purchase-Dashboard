@@ -3,7 +3,7 @@ import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { saveCnfDraftInvoice } from '../../../services/cnfService';
 import type { Batch, CnfAirRateCategory, CnfCommissionRate, CnfDraftInvoice, CnfShipmentPartnerDefault } from '../../../types';
-import { computeDraftInvoice } from './draftInvoice';
+import { computeDraftInvoice, initialDraftCategoryId } from './draftInvoice';
 import { defaultCnfCategory } from './expectedCharge';
 import { fmtInr } from './cnfFormat';
 
@@ -26,9 +26,10 @@ export const CnfDraftInvoiceModal: React.FC<{
     const c = categories.find(x => x.id === id);
     return c ? String(isAir ? (c as CnfAirRateCategory).ratePerKg : (c as CnfCommissionRate).ratePct) : '';
   };
-  const initialId = existing?.categoryId ?? defaultCnfCategory(batch, seaRates, airCategories, partnerDefaults)?.id ?? '';
+  const initialId = initialDraftCategoryId(existing?.categoryId, categories, defaultCnfCategory(batch, seaRates, airCategories, partnerDefaults)?.id);
   const [categoryId, setCategoryId] = useState(initialId);
-  const [rate, setRate] = useState(existing ? String(existing.rate) : rateOf(initialId));
+  // Keep the draft's own (possibly edited) rate only while its category still exists.
+  const [rate, setRate] = useState(existing && initialId === existing.categoryId ? String(existing.rate) : rateOf(initialId));
   const [weight, setWeight] = useState(String(existing?.weightKg ?? batch.total_weight_kg ?? ''));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);

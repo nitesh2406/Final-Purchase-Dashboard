@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { invalidateReadCache } from '../../../services/gasApi';
@@ -18,7 +18,7 @@ const STATUS_BADGE: Record<string, string> = {
 };
 const badge = (s: string) => `px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${STATUS_BADGE[s] || 'bg-slate-100 text-slate-500'}`;
 
-export const CnfInvoicesView: React.FC<{ refreshKey: number }> = ({ refreshKey }) => {
+export const CnfInvoicesView: React.FC<{ refreshKey: number; onDataChanged: () => void }> = ({ refreshKey, onDataChanged }) => {
   const cached = readViewCache<{ shipments: CnfShipmentValue[]; invoices: CnfGoodsInvoice[] }>('invoices');
   const [shipments, setShipments] = useState<CnfShipmentValue[]>(cached?.shipments ?? []);
   const [invoices, setInvoices] = useState<CnfGoodsInvoice[]>(cached?.invoices ?? []);
@@ -30,19 +30,24 @@ export const CnfInvoicesView: React.FC<{ refreshKey: number }> = ({ refreshKey }
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const loadSeq = useRef(0);
+
+  // Only the newest load may update the screen.
   const load = async (force: boolean) => {
+    const mine = ++loadSeq.current;
     if (force) invalidateReadCache();
     setIsLoading(true);
     setLoadError(null);
     try {
       const [s, i] = await Promise.all([fetchCnfShipmentValues(), fetchCnfGoodsInvoices()]);
+      if (mine !== loadSeq.current) return;
       writeViewCache('invoices', { shipments: s, invoices: i });
       setShipments(s);
       setInvoices(i);
     } catch (err: any) {
-      setLoadError(err.message || 'Failed to load CNF invoices');
+      if (mine === loadSeq.current) setLoadError(err.message || 'Failed to load CNF invoices');
     } finally {
-      setIsLoading(false);
+      if (mine === loadSeq.current) setIsLoading(false);
     }
   };
 
@@ -64,7 +69,7 @@ export const CnfInvoicesView: React.FC<{ refreshKey: number }> = ({ refreshKey }
     try {
       if (kind === 'approve') await approveCnfGoodsInvoice(inv.id);
       else await rejectCnfGoodsInvoice(inv.id, reason);
-      await load(true);
+      onDataChanged();
     } catch (err: any) {
       setActionError(err.message || `Failed to ${kind}`);
     } finally {
@@ -187,7 +192,7 @@ export const CnfInvoicesView: React.FC<{ refreshKey: number }> = ({ refreshKey }
         <LogCnfInvoiceModal
           shipments={openToInvoice}
           onClose={() => setIsModalOpen(false)}
-          onSaved={() => { setIsModalOpen(false); load(true); }}
+          onSaved={() => { setIsModalOpen(false); onDataChanged(); }}
         />
       )}
     </div>

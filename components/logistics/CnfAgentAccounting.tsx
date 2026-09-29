@@ -23,6 +23,10 @@ export const CnfAgentAccounting: React.FC = () => {
   if (!visited.has(tab)) setVisited(new Set(visited).add(tab));
   const pane = (t: CnfTab, view: React.ReactNode) =>
     visited.has(t) ? <div className={tab === t ? undefined : 'hidden'}>{view}</div> : null;
+  // A write on one sub-tab (log / approve / reject an invoice, save a draft)
+  // changes what the others show; the hidden ones stay mounted, so reload
+  // every mounted view — the same as Refresh Data.
+  const onDataChanged = () => setRefreshKey(k => k + 1);
 
   const tabClass = (t: CnfTab) =>
     `flex-1 md:flex-initial min-w-[160px] px-5 py-3 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2.5 ${
@@ -51,8 +55,8 @@ export const CnfAgentAccounting: React.FC = () => {
         <button onClick={() => setTab('ledger')} className={tabClass('ledger')}><CreditCardIcon className="w-4 h-4" /><span>CNF Ledger</span></button>
       </div>
 
-      {pane('batches', <CnfBatchesView refreshKey={refreshKey} />)}
-      {pane('invoices', <CnfInvoicesView refreshKey={refreshKey} />)}
+      {pane('batches', <CnfBatchesView refreshKey={refreshKey} onDataChanged={onDataChanged} />)}
+      {pane('invoices', <CnfInvoicesView refreshKey={refreshKey} onDataChanged={onDataChanged} />)}
       {pane('ledger', <CnfLedgerView refreshKey={refreshKey} />)}
     </div>
   );

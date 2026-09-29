@@ -1,16 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { invalidateReadCache } from '../../../services/gasApi';
 import { fetchCnfLedgerStatement } from '../../../services/cnfService';
 import type { CnfLedgerStatement } from '../../../types';
-import { fmtInr } from './cnfFormat';
+import { fmtInr, csvCell } from './cnfFormat';
 import { readViewCache, writeViewCache } from './viewCache';
-
-const csvCell = (v: string | number | null) => {
-  const s = v === null || v === undefined ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
 
 export const CnfLedgerView: React.FC<{ refreshKey: number }> = ({ refreshKey }) => {
   const [from, setFrom] = useState('');
@@ -19,18 +14,24 @@ export const CnfLedgerView: React.FC<{ refreshKey: number }> = ({ refreshKey }) 
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const loadSeq = useRef(0);
+
+  // Changing From/To quickly starts overlapping loads; only the newest may
+  // update the screen, so the statement always matches the chosen range.
   const load = async (force: boolean) => {
+    const mine = ++loadSeq.current;
     if (force) invalidateReadCache();
     setIsLoading(true);
     setLoadError(null);
     try {
       const s = await fetchCnfLedgerStatement({ from, to });
+      if (mine !== loadSeq.current) return;
       writeViewCache(`ledger|${from}|${to}`, s);
       setStatement(s);
     } catch (err: any) {
-      setLoadError(err.message || 'Failed to load the CNF ledger');
+      if (mine === loadSeq.current) setLoadError(err.message || 'Failed to load the CNF ledger');
     } finally {
-      setIsLoading(false);
+      if (mine === loadSeq.current) setIsLoading(false);
     }
   };
 

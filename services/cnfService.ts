@@ -2,7 +2,10 @@
 // Reads go direct (and through gasApi's shared read cache); writes go
 // through the authenticated proxy so the backend records the verified user.
 import { callGas, callGasAuthed } from './gasApi';
-import type { CnfShipmentValue, CnfGoodsInvoice, CnfLedgerStatement, CnfDraftInvoice } from '../types';
+import type {
+  CnfShipmentValue, CnfGoodsInvoice, CnfLedgerStatement, CnfDraftInvoice,
+  CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault,
+} from '../types';
 
 function ensureOk(response: any, what: string): any {
   if (!response || response.status !== 'success') {
@@ -51,6 +54,34 @@ export async function approveCnfGoodsInvoice(id: string): Promise<void> {
 
 export async function rejectCnfGoodsInvoice(id: string, rejectionReason: string): Promise<void> {
   ensureOk(await callGasAuthed('reject_cnf_goods_invoice', { id, rejectionReason }), 'reject the CNF invoice');
+}
+
+export interface CnfRateConfig {
+  seaRates: CnfCommissionRate[];
+  airCategories: CnfAirRateCategory[];
+  partnerDefaults: CnfShipmentPartnerDefault[];
+  igstPct: number;
+}
+
+// Settings the CNF tab computes with. Unlike the settlementService fetchers
+// (which fall back to [] / 5% so the Settings screen still opens), a failure
+// here throws: a silent empty list showed a false "set up Settings" hint, and
+// a silent 5% IGST made the draft preview disagree with what the server saves.
+export async function fetchCnfRateConfig(): Promise<CnfRateConfig> {
+  const [sea, air, defaults, igst] = await Promise.all([
+    callGas('get_cnf_commission_rates', {}, 1),
+    callGas('get_cnf_air_rate_categories', {}, 1),
+    callGas('get_shipment_partner_defaults', {}, 1),
+    callGas('get_igst_rate', {}, 1),
+  ]);
+  const igstPct = Number(ensureOk(igst, 'load the IGST rate').igstPercent);
+  if (!(igstPct >= 0)) throw new Error('Failed to load the IGST rate');
+  return {
+    seaRates: ensureOk(sea, 'load the Sea rate categories').rates || [],
+    airCategories: ensureOk(air, 'load the Air rate categories').categories || [],
+    partnerDefaults: ensureOk(defaults, 'load the carrier defaults').defaults || [],
+    igstPct,
+  };
 }
 
 export async function fetchCnfDraftInvoices(): Promise<CnfDraftInvoice[]> {

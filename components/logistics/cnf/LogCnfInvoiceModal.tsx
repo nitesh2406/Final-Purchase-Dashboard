@@ -4,8 +4,7 @@ import { Button } from '../../ui/Button';
 import { getSessionAuthHeaders } from '../../../services/authToken';
 import { extractInvoiceAmount } from '../../../services/geminiService';
 import { callGasAuthed } from '../../../services/gasApi';
-import { fetchCnfCommissionRates, fetchCnfAirRateCategories, fetchShipmentPartnerDefaults } from '../../../services/settlementService';
-import { logCnfGoodsInvoice } from '../../../services/cnfService';
+import { logCnfGoodsInvoice, fetchCnfRateConfig } from '../../../services/cnfService';
 import type { Batch, CnfShipmentValue } from '../../../types';
 import { computeExpectedCnfCharge, ExpectedCnfCharge } from './expectedCharge';
 import { computeInvoiceSplit } from './invoiceSplit';
@@ -40,15 +39,10 @@ export const LogCnfInvoiceModal: React.FC<{
     let cancelled = false;
     (async () => {
       try {
-        const [batchesRes, seaRates, airCategories, partnerDefaults] = await Promise.all([
-          callGasAuthed('get_batches', {}, 1),
-          fetchCnfCommissionRates(),
-          fetchCnfAirRateCategories(),
-          fetchShipmentPartnerDefaults(),
-        ]);
+        const [batchesRes, rates] = await Promise.all([callGasAuthed('get_batches', {}, 1), fetchCnfRateConfig()]);
         if (cancelled || !batchesRes || batchesRes.status !== 'success') return;
         const map: Record<string, ExpectedCnfCharge> = {};
-        (batchesRes.batches as Batch[] || []).forEach(b => { map[b.batch_id] = computeExpectedCnfCharge(b, seaRates, airCategories, partnerDefaults); });
+        (batchesRes.batches as Batch[] || []).forEach(b => { map[b.batch_id] = computeExpectedCnfCharge(b, rates.seaRates, rates.airCategories, rates.partnerDefaults); });
         setExpectedByBatch(map);
       } catch {
         // estimate only — the form works without it

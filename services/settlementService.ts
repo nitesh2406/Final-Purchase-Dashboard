@@ -1,7 +1,7 @@
 import { APPS_SCRIPT_URL } from '../constants.ts';
 import { SyncQueueManager } from './syncQueue.ts';
 import { callGas } from './gasApi';
-import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfEligibleBatch, CnfInvoiceBatch, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentBillStatus } from '../types';
+import type { VendorMaster, CnfCommissionRate, CnfLedgerEntry, CnfInvoiceBatch, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentBillStatus } from '../types';
 export type { VendorMaster } from '../types';
 
 export const IS_DEVELOPMENT_MODE = true;
@@ -578,23 +578,6 @@ export async function fetchShipmentPartners(): Promise<string[]> {
     console.warn('Could not fetch shipment partners:', error);
   }
   return [];
-}
-
-/**
- * Fetches all CNF-eligible batches (batches that have completed vendor shipments and are
- * candidates for a CNF ledger entry). Uses gasApi's callGas (parseGasResponse_ + retry)
- * rather than a raw fetch+response.json(), and throws on failure instead of swallowing it —
- * a silent [] here used to zero out "N shipments eligible" and hide every row's Log Entry
- * button with no indication anything had gone wrong. The caller (CnfAgentAccounting's
- * loadAll) is responsible for catching this and surfacing/retrying.
- */
-export async function fetchCnfEligibleBatches(): Promise<CnfEligibleBatch[]> {
-  if (!appsScriptUrl) return [];
-  const result = await callGas('get_cnf_eligible_batches', {}, 1);
-  if (result.status === 'success' && Array.isArray(result.batches)) {
-    return result.batches;
-  }
-  throw new Error(result.message || 'Failed to fetch CNF-eligible batches');
 }
 
 /**
