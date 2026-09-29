@@ -361,3 +361,188 @@ function rejectPartnerBill_(payload) {
     lock.releaseLock();
   }
 }
+
+// ── Payments ────────────────────────────────────────────────
+
+// payload: { partnerId? } — every bill (or one partner's) with settled and balance.
+function getPartnerBills_(payload) {
+  var partnerId = String((payload && payload.partnerId) || '').trim();
+  return spBillsWithBalance_(readPartnerBills_(), readPartnerPayments_())
+    .filter(function (b) { return !partnerId || b.partnerId === partnerId; })
+    .map(spStrip_);
+}
+
+function getPartnerPayments_(payload) {
+  var partnerId = String((payload && payload.partnerId) || '').trim();
+  return readPartnerPayments_()
+    .filter(function (x) { return !partnerId || x.partnerId === partnerId; })
+    .map(spStrip_);
+}
+
+// payload: { billId, date (yyyy-mm-dd), amount, tds?, reference?, notes?, user_email (proxy) }.
+// Settles one approved bill in part or in full: amount + TDS ≤ its balance.
+function logPartnerPayment_(payload) {
+  var p = payload || {};
+  var who = cnfRequireUser_(p);
+  var billId = String(p.billId || '').trim();
+  var date = String(p.date || '').trim();
+  var amount = Number(p.amount);
+  var tds = p.tds === undefined || p.tds === null || p.tds === '' ? 0 : Number(p.tds);
+  var reference = String(p.reference || '').trim();
+  var notes = String(p.notes || '').trim();
+  if (!billId) throw new Error('Pick the bill this payment settles');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Payment date must be yyyy-mm-dd');
+  if (!(amount > 0)) throw new Error('Amount must be above 0');
+  if (isNaN(tds) || tds < 0) throw new Error('TDS must be zero or more');
+
+  var lock = spLock_('partner payment');
+  try {
+    var payments = readPartnerPayments_();
+    var bill = spBillsWithBalance_(readPartnerBills_(), payments).filter(function (b) { return b.id === billId; })[0];
+    if (!bill) throw new Error('Partner bill not found: ' + billId);
+    if (bill.status !== 'Approved') throw new Error('Bill ' + bill.billNo + ' is not approved (' + bill.status + ')');
+    amount = cnfRound2_(amount);
+    tds = cnfRound2_(tds);
+    if (amount + tds > bill.balance + 0.01) {
+      throw new Error('Amount + TDS (' + cnfFmtInr_(amount + tds) + ') is more than the ' + cnfFmtInr_(bill.balance) + ' left on bill ' + bill.billNo);
+    }
+    var sheet = spSheet_(SP_PAYMENTS_SHEET_, SP_PAYMENT_HEADERS_, true);
+    var id = 'SPP-' + new Date().getTime() + '-' + (payments.length + 1);
+    sheet.appendRow([id, bill.partnerId, bill.id, date, amount, tds, reference, notes, 'Active', who,
+      new Date().toISOString(), '', '', '']);
+    return { status: 'success', id: id, balance: cnfRound2_(bill.balance - amount - tds) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// payload: { paymentId, reason, user_email (proxy) }. Payments are never deleted.
+function voidPartnerPayment_(payload) {
+  var who = cnfRequireUser_(payload);
+  var paymentId = String((payload && payload.paymentId) || '').trim();
+  var reason = String((payload && payload.reason) || '').trim();
+  if (!paymentId) throw new Error('paymentId is required');
+  if (!reason) throw new Error('A void reason is required');
+  var lock = spLock_('partner payment');
+  try {
+    var pm = readPartnerPayments_().filter(function (x) { return x.id === paymentId; })[0];
+    if (!pm) throw new Error('Partner payment not found: ' + paymentId);
+    if (pm.status === 'Voided') return { status: 'success', id: pm.id, message: 'Already voided' };
+    var sheet = spSheet_(SP_PAYMENTS_SHEET_, SP_PAYMENT_HEADERS_, true);
+    sheet.getRange(pm.rowNumber, SP_PAY_COL_STATUS_).setValue('Voided');
+    sheet.getRange(pm.rowNumber, SP_PAY_COL_VOIDED_BY_, 1, 3).setValues([[who, new Date().toISOString(), reason]]);
+    return { status: 'success', id: pm.id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ── Ledgers ─────────────────────────────────────────────────
+
+// payload: { partnerId, from?, to? } (yyyy-mm-dd). Same shape as
+// getCnfLedgerStatement_ plus TDS: approved bills are billed (−), active
+// payments are paid (+) with their TDS (+). Balance = paid + TDS − billed, so
+// a negative balance is what we owe the partner. Rows before `from` fold into
+// openingBalance; rows after `to` are left out.
+function getPartnerLedgerStatement_(payload) {
+  var p = payload || {};
+  var partnerId = String(p.partnerId || '').trim();
+  var from = p.from ? String(p.from).trim() : '';
+  var to = p.to ? String(p.to).trim() : '';
+  if (!partnerId) throw new Error('partnerId is required');
+  if (partnerId === CNF_VENDOR_CODE_) throw new Error("KREIZ's ledger comes from get_cnf_ledger_statement");
+  var partner = readShippingPartners_().filter(function (x) { return x.id === partnerId; })[0];
+  if (!partner) throw new Error('Shipping partner not found: ' + partnerId);
+
+  var bills = readPartnerBills_();
+  var billNoById = {};
+  bills.forEach(function (b) { billNoById[b.id] = b.billNo; });
+  var entries = [];
+  bills.forEach(function (b) {
+    if (b.partnerId !== partnerId || b.status !== 'Approved') return;
+    entries.push({
+      date: b.billDate, order: 0, type: 'Bill', reference: b.billNo,
+      description: 'Bill ' + b.billNo + ' · batch ' + b.batchId + ' · fee ' + cnfFmtInr_(b.fee) + ' + GST ' + cnfFmtInr_(b.gst),
+      paid: 0, tds: 0, billed: cnfRound2_(b.total)
+    });
+  });
+  readPartnerPayments_().forEach(function (pm) {
+    if (pm.partnerId !== partnerId || pm.status !== 'Active') return;
+    entries.push({
+      date: pm.date, order: 1, type: 'Payment', reference: pm.id,
+      description: 'Payment for bill ' + (billNoById[pm.billId] || pm.billId) + (pm.reference ? ' · ref ' + pm.reference : ''),
+      paid: pm.amount, tds: pm.tds, billed: 0
+    });
+  });
+  entries.sort(function (a, b) {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    if (a.order !== b.order) return a.order - b.order;
+    return a.reference < b.reference ? -1 : a.reference > b.reference ? 1 : 0;
+  });
+
+  var opening = 0;
+  var rows = [];
+  entries.forEach(function (e) {
+    if (to && e.date > to) return;
+    if (from && e.date < from) { opening += e.paid + e.tds - e.billed; return; }
+    rows.push(e);
+  });
+  opening = cnfRound2_(opening);
+  var running = opening, paid = 0, tds = 0, billed = 0;
+  rows.forEach(function (e) {
+    running = cnfRound2_(running + e.paid + e.tds - e.billed);
+    e.balance = running;
+    paid += e.paid;
+    tds += e.tds;
+    billed += e.billed;
+    delete e.order;
+  });
+  return {
+    partnerId: partnerId, openingBalance: opening, rows: rows, closingBalance: running,
+    totals: { paid: cnfRound2_(paid), tds: cnfRound2_(tds), billed: cnfRound2_(billed) }
+  };
+}
+
+// One row per tax-invoice party for the Ledgers screen: KREIZ first (figures
+// from the CNF ledger), then the partners by name. A party whose figures
+// can't be computed carries `error` instead; the others still come back.
+function getPartyLedgers_() {
+  var parties = [];
+  var kreiz = { partyId: CNF_VENDOR_CODE_, name: CNF_VENDOR_CODE_, kind: 'cnf', gstin: '', ratePerKg: null, active: true };
+  try {
+    var s = getCnfLedgerStatement_({});
+    var pending = readCnfInvoices_().filter(function (i) { return i.status === 'Pending Approval'; }).length;
+    parties.push(Object.assign(kreiz, {
+      billed: s.totals.billed, paid: s.totals.paid, tds: 0, balance: s.closingBalance, pendingBills: pending, unpaidBills: null
+    }));
+  } catch (e) {
+    parties.push(Object.assign(kreiz, { error: e.message || String(e) }));
+  }
+
+  var partners = readShippingPartners_().sort(function (a, b) {
+    var x = a.name.toLowerCase(), y = b.name.toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
+  var bills = [], payments = [], readError = '';
+  try {
+    payments = readPartnerPayments_();
+    bills = spBillsWithBalance_(readPartnerBills_(), payments);
+  } catch (e) {
+    readError = e.message || String(e);
+  }
+  var sum = function (list, key) { return cnfRound2_(list.reduce(function (t, x) { return t + x[key]; }, 0)); };
+  partners.forEach(function (pt) {
+    var row = { partyId: pt.id, name: pt.name, kind: 'partner', gstin: pt.gstin, ratePerKg: pt.ratePerKg, active: pt.active };
+    if (readError) { row.error = readError; parties.push(row); return; }
+    var mine = bills.filter(function (b) { return b.partnerId === pt.id; });
+    var approved = mine.filter(function (b) { return b.status === 'Approved'; });
+    var pays = payments.filter(function (x) { return x.partnerId === pt.id && x.status === 'Active'; });
+    var billed = sum(approved, 'total'), paid = sum(pays, 'amount'), tds = sum(pays, 'tds');
+    parties.push(Object.assign(row, {
+      billed: billed, paid: paid, tds: tds, balance: cnfRound2_(paid + tds - billed),
+      pendingBills: mine.filter(function (b) { return b.status === 'Pending Approval'; }).length,
+      unpaidBills: approved.filter(function (b) { return b.balance >= 0.01; }).length
+    }));
+  });
+  return parties;
+}
