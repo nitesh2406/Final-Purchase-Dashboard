@@ -6,7 +6,7 @@ import {
   CurrencyDollarIcon, ChartBarIcon, Cog6ToothIcon, ChevronDoubleLeftIcon, BeakerIcon,
   PresentationChartLineIcon, DocumentTextIcon, ClipboardDocumentIcon, ListBulletIcon, CloudArrowUpIcon,
   CreditCardIcon, BuildingLibraryIcon, PencilSquareIcon, DocumentDuplicateIcon, DocumentArrowDownIcon,
-  ClipboardDocumentCheckIcon, ArchiveBoxIcon, CheckBadgeIcon,
+  ClipboardDocumentCheckIcon, ArchiveBoxIcon, CheckBadgeIcon, ScaleIcon,
   GlobeAltIcon as MapIcon, BoxIcon as PackageIcon
 } from '../icons/Icons';
 
@@ -40,6 +40,7 @@ const navItems: { name: ViewType; label?: string; icon: React.ReactNode; wip?: b
   { name: 'Receive Shipment', icon: <CheckBadgeIcon className="w-6 h-6" />, group: 'Logistics' },
 
   { name: 'CNF Agent Accounting', label: 'CNF Agent', icon: <CurrencyDollarIcon className="w-6 h-6" />, group: 'Finance' },
+  { name: 'Ledgers', icon: <ScaleIcon className="w-6 h-6" />, group: 'Finance' },
   { name: 'Log Invoice', icon: <DocumentDuplicateIcon className="w-6 h-6" />, group: 'Finance', wip: true },
   { name: 'Log Payment', icon: <CreditCardIcon className="w-6 h-6" />, group: 'Finance', wip: true },
   { name: 'Log Discount', icon: <DocumentArrowDownIcon className="w-6 h-6" />, group: 'Finance', wip: true },

@@ -40,6 +40,7 @@ import { PaymentLedger } from './components/finance/PaymentLedger.tsx';
 import { AccountsView } from './components/finance/AccountsView.tsx';
 import { LogInvoice } from './components/finance/LogInvoice.tsx';
 import { LogDiscount } from './components/finance/LogDiscount.tsx';
+import { Ledgers } from './components/finance/ledgers/Ledgers.tsx';
 import { CrossVendorSettlement } from './components/finance/CrossVendorSettlement.tsx';
 import { Sku, PurchaseOrder, Shipment, Invoice, Vendor, Notification, DraftOrder, VendorMaster } from './types.ts';
 import { APPS_SCRIPT_URL, API_ACTIONS } from './constants.ts';
@@ -801,6 +802,8 @@ const App: React.FC = () => {
                 return <ReceiveShipment isAdmin={user?.role === 'ADMIN'} />;
             case 'CNF Agent Accounting':
                 return <CnfAgentAccounting />;
+            case 'Ledgers':
+                return <Ledgers />;
             case 'Batch Detail':
                 return selectedBatchId ? (
                     <BatchDetail
