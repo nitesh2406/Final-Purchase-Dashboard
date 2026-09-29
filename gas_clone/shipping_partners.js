@@ -229,3 +229,135 @@ function setBatchShippingPartner_(payload) {
     lock.releaseLock();
   }
 }
+
+// ── Bills ───────────────────────────────────────────────────
+
+function readPartnerPayments_() {
+  return spRows_(SP_PAYMENTS_SHEET_).map(function (x) {
+    var r = x.r;
+    return {
+      id: String(r[0]), partnerId: String(r[1] || ''), billId: String(r[2] || ''), date: cnfYmd_(r[3]),
+      amount: Number(r[4]) || 0, tds: Number(r[5]) || 0, reference: String(r[6] || ''), notes: String(r[7] || ''),
+      status: String(r[8] || ''), recordedBy: String(r[9] || ''), recordedAt: spIso_(r[10]),
+      voidedBy: String(r[11] || ''), voidedAt: spIso_(r[12]), voidReason: String(r[13] || ''), rowNumber: x.rowNumber
+    };
+  });
+}
+
+// Bills with settled (active payments + their TDS) and balance (total − settled).
+function spBillsWithBalance_(bills, payments) {
+  var settled = {};
+  payments.forEach(function (p) {
+    if (p.status === 'Active') settled[p.billId] = (settled[p.billId] || 0) + p.amount + p.tds;
+  });
+  return bills.map(function (b) {
+    var s = cnfRound2_(settled[b.id] || 0);
+    return Object.assign({}, b, { settled: s, balance: cnfRound2_(b.total - s) });
+  });
+}
+
+// payload: { partnerId, batchId, billNo, billDate (yyyy-mm-dd), fileUrl, weightKg,
+// fee, gst, total, overrideReason?, user_email (proxy) }. The rate is the
+// partner's at logging time and is stored on the bill.
+function logPartnerBill_(payload) {
+  var p = payload || {};
+  var who = cnfRequireUser_(p);
+  var partnerId = String(p.partnerId || '').trim();
+  var batchId = String(p.batchId || '').trim();
+  var billNo = String(p.billNo || '').trim();
+  var billDate = String(p.billDate || '').trim();
+  var fileUrl = String(p.fileUrl || '').trim();
+  var overrideReason = String(p.overrideReason || '').trim();
+  var weight = Number(p.weightKg), fee = Number(p.fee), gst = Number(p.gst), total = Number(p.total);
+  if (partnerId === CNF_VENDOR_CODE_) throw new Error("KREIZ's bills are logged as CNF invoices, not partner bills");
+  if (!partnerId) throw new Error('partnerId is required');
+  if (!batchId) throw new Error('Pick the batch this bill is for');
+  if (!billNo) throw new Error('Bill number is required');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(billDate)) throw new Error('Bill date must be yyyy-mm-dd');
+  if (!fileUrl) throw new Error('Attach the bill file');
+  if (!(weight > 0)) throw new Error('Weight must be above 0');
+  if (!(fee > 0)) throw new Error('Fee must be above 0');
+  if (isNaN(gst) || gst < 0) throw new Error('GST must be zero or more');
+  if (!(total > 0)) throw new Error('Total must be above 0');
+
+  var lock = spLock_('partner bill');
+  try {
+    var partner = readShippingPartners_().filter(function (x) { return x.id === partnerId; })[0];
+    if (!partner) throw new Error('Shipping partner not found: ' + partnerId);
+    var assigned = spPartnerByBatch_()[batchId];
+    if (!assigned) throw new Error('Batch ' + batchId + "'s shipping partner is not set. Set it on CNF Agent → Batches first.");
+    if (assigned !== partnerId) {
+      throw new Error('Batch ' + batchId + "'s shipping partner is " + (spPartnerNames_()[assigned] || assigned) + ', not ' + partner.name);
+    }
+    var bills = readPartnerBills_();
+    var live = bills.filter(function (b) { return b.status !== 'Rejected'; });
+    var sameBatch = live.filter(function (b) { return b.batchId === batchId; })[0];
+    if (sameBatch) throw new Error('Batch ' + batchId + ' already has bill ' + sameBatch.billNo + ' (' + sameBatch.status + ')');
+    var sameNo = live.filter(function (b) { return b.partnerId === partnerId && b.billNo.toLowerCase() === billNo.toLowerCase(); })[0];
+    if (sameNo) throw new Error('Bill ' + sameNo.billNo + ' from ' + partner.name + ' is already logged');
+
+    var expectedFee = cnfRound2_(weight * partner.ratePerKg);
+    var feeOff = Math.abs(fee - expectedFee) >= 1;
+    var totalOff = Math.abs(fee + gst - total) >= 1;
+    if ((feeOff || totalOff) && !overrideReason) {
+      throw new Error((feeOff
+        ? 'Fee ' + cnfFmtInr_(fee) + ' differs from the expected ' + cnfFmtInr_(expectedFee) + ' (' + weight + ' kg × ₹' + partner.ratePerKg + '/kg)'
+        : "Fee + GST doesn't match Total") + '. Give an override reason to save anyway.');
+    }
+
+    var sheet = spSheet_(SP_BILLS_SHEET_, SP_BILL_HEADERS_, true);
+    // Row count keeps ids unique even for two saves in the same millisecond.
+    var id = 'SPB-' + new Date().getTime() + '-' + (bills.length + 1);
+    sheet.appendRow([id, partnerId, batchId, billNo, billDate, fileUrl, weight, partner.ratePerKg, expectedFee,
+      cnfRound2_(fee), cnfRound2_(gst), cnfRound2_(total), overrideReason, 'Pending Approval', who, '', '', '',
+      new Date().toISOString()]);
+    return { status: 'success', id: id, expectedFee: expectedFee };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function spFindBill_(payload) {
+  var id = String((payload && payload.id) || '').trim();
+  if (!id) throw new Error('id is required');
+  var bill = readPartnerBills_().filter(function (b) { return b.id === id; })[0];
+  if (!bill) throw new Error('Partner bill not found: ' + id);
+  return bill;
+}
+
+function approvePartnerBill_(payload) {
+  var who = cnfRequireUser_(payload);
+  var lock = spLock_('partner bill');
+  try {
+    var bill = spFindBill_(payload);
+    if (bill.status === 'Approved') return { status: 'success', id: bill.id, message: 'Already approved' };
+    if (bill.status === 'Rejected') throw new Error("A rejected bill can't be approved. Log it again instead.");
+    var sheet = spSheet_(SP_BILLS_SHEET_, SP_BILL_HEADERS_, true);
+    sheet.getRange(bill.rowNumber, SP_BILL_COL_STATUS_).setValue('Approved');
+    sheet.getRange(bill.rowNumber, SP_BILL_COL_DECIDED_BY_, 1, 2).setValues([[who, new Date().toISOString()]]);
+    return { status: 'success', id: bill.id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Unlike a CNF invoice, an approved bill can still be rejected (to correct
+// it) as long as no active payment is recorded against it.
+function rejectPartnerBill_(payload) {
+  var who = cnfRequireUser_(payload);
+  var reason = String((payload && payload.rejectionReason) || '').trim();
+  if (!reason) throw new Error('A rejection reason is required');
+  var lock = spLock_('partner bill');
+  try {
+    var bill = spFindBill_(payload);
+    if (bill.status === 'Rejected') return { status: 'success', id: bill.id, message: 'Already rejected' };
+    var paid = readPartnerPayments_().filter(function (x) { return x.billId === bill.id && x.status === 'Active'; });
+    if (paid.length) throw new Error('Bill ' + bill.billNo + ' has ' + paid.length + ' payment(s) recorded; void them first');
+    var sheet = spSheet_(SP_BILLS_SHEET_, SP_BILL_HEADERS_, true);
+    sheet.getRange(bill.rowNumber, SP_BILL_COL_STATUS_).setValue('Rejected');
+    sheet.getRange(bill.rowNumber, SP_BILL_COL_DECIDED_BY_, 1, 3).setValues([[who, new Date().toISOString(), reason]]);
+    return { status: 'success', id: bill.id };
+  } finally {
+    lock.releaseLock();
+  }
+}
