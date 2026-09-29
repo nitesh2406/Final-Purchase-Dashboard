@@ -39,6 +39,14 @@ form (`2026-09-29-finance-entry-tabs-design.md`), the CNF Agent tab
     `XFER-` invoice is fully settled, almost entirely by DP-.
   - SettlementLedger payment IDs are only DP- (46) and IDP- (72). No IDP- ID
     is shared across vendors.
+- Replay of the new valuation on a live snapshot (2026-09-29, before deploy):
+  - Total CNF goods value rises from ₹1,87,84,039 to ₹1,93,69,678
+    (+₹5,85,640, +3.12%). No shipment decreases. The CNF ledger closing
+    balance is unchanged.
+  - Shipments paid through a shortfall-funded transfer rise by more than 2%
+    (up to +7.5%). The old value priced the shortfall at the market rate on
+    the transfer day, while LEO later paid it at its actual DP- rate. For
+    example, IDP-00037 was priced at 14.12, but DP-00014 paid it at 15.18.
 
 ## Decisions (user, 2026-09-29)
 
@@ -194,7 +202,8 @@ invoice is derived.
 - `getPartnerGstPercent_()` / `setPartnerGstPercent_()` on `SP_GST_PERCENT`
   (default 18, ≥ 0).
 - Routes `get_partner_gst_rate` (read) and `save_partner_gst_rate` (admin
-  write, proxy key like the other settings writes).
+  write; needs the proxy key, unlike the older settings saves, because it
+  feeds a money check).
 - `logPartnerBill_` gains the matching check: |GST − Fee × partner GST %|
   ≥ ₹1 needs an override reason.
 
