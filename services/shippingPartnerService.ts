@@ -89,3 +89,15 @@ export async function logPartnerPayment(input: LogPartnerPaymentInput): Promise<
 export async function voidPartnerPayment(paymentId: string, reason: string): Promise<void> {
   ensureOk(await callGasAuthed('void_partner_payment', { paymentId, reason }), 'void the payment');
 }
+
+// Shipping partner GST % (Settings → Charges & Taxes). Throws on failure so a
+// silent default can't make the bill form disagree with the server.
+export async function fetchPartnerGstRate(): Promise<number> {
+  const pct = Number(ensureOk(await callGas('get_partner_gst_rate', {}, 1), 'load the shipping partner GST %').partnerGstPercent);
+  if (!(pct >= 0)) throw new Error('Failed to load the shipping partner GST %');
+  return pct;
+}
+
+export async function savePartnerGstRate(partnerGstPercent: number): Promise<number> {
+  return Number(ensureOk(await callGasAuthed('save_partner_gst_rate', { partnerGstPercent }), 'save the shipping partner GST %').partnerGstPercent);
+}

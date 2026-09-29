@@ -1,26 +1,30 @@
 import type { BatchShippingPartner, PartnerBill } from '../../../types';
 
-// A shipping partner's bill is its fee + 18% GST.
+// A shipping partner's bill is its fee + GST (Settings → partner GST %,
+// default PARTNER_GST_PCT).
 export const PARTNER_GST_PCT = 18;
 
 const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 
 export interface PartnerBillCheck {
   expectedFee: number; // weight × the partner's ₹/kg
-  defaultGst: number;  // 18% of the fee, what the GST field starts at
+  defaultGst: number;  // gstPct of the fee, what the GST field starts at
   feeOff: boolean;     // fee differs from expected by ₹1 or more
   totalOff: boolean;   // fee + GST differs from total by ₹1 or more
+  gstOff: boolean;     // GST differs from gstPct of the fee by ₹1 or more
   needsOverride: boolean;
 }
 
 // Same rule as logPartnerBill_ in gas_clone/shipping_partners.js, which
 // re-checks on save — this is the form's live preview.
-export function checkPartnerBill(i: { weightKg: number; ratePerKg: number; fee: number; gst: number; total: number }): PartnerBillCheck {
+export function checkPartnerBill(i: { weightKg: number; ratePerKg: number; fee: number; gst: number; total: number; gstPct?: number }): PartnerBillCheck {
+  const pct = i.gstPct ?? PARTNER_GST_PCT;
   const expectedFee = round2(i.weightKg * i.ratePerKg);
-  const defaultGst = round2(i.fee * PARTNER_GST_PCT / 100);
+  const defaultGst = round2(i.fee * pct / 100);
   const feeOff = Math.abs(i.fee - expectedFee) >= 1;
   const totalOff = Math.abs(i.fee + i.gst - i.total) >= 1;
-  return { expectedFee, defaultGst, feeOff, totalOff, needsOverride: feeOff || totalOff };
+  const gstOff = Math.abs(i.gst - defaultGst) >= 1;
+  return { expectedFee, defaultGst, feeOff, totalOff, gstOff, needsOverride: feeOff || totalOff || gstOff };
 }
 
 // Same rule as logPartnerPayment_: amount > 0, TDS ≥ 0, amount + TDS ≤ balance.

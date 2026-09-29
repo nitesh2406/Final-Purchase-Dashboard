@@ -781,6 +781,25 @@ export interface CnfShipmentValue {
   ineligibleReason: string;
 }
 
+// An ancillary vendor invoice (a service paid through CNF) and how much of
+// what we paid for it CNF has billed. See
+// docs/superpowers/specs/2026-09-29-ancillary-cnf-invoices-design.md.
+export interface CnfAncillaryValue {
+  invoiceNo: string;
+  vendorCode: string;
+  vendorName: string;
+  date: string; // yyyy-mm-dd
+  notes: string;
+  invoiceRmb: number;
+  paidInr: number;
+  fullyPaid: boolean;
+  invoicedInr: number;
+  remainingInr: number;
+  invoiceStatus: 'Not invoiced' | 'Part invoiced' | 'Fully invoiced';
+  eligible: boolean;
+  ineligibleReason: string;
+}
+
 // A batch's saved draft CNF invoice (CNF_Draft_Invoices). See
 // docs/superpowers/specs/2026-09-29-cnf-draft-invoice-design.md.
 export interface CnfDraftInvoice {
@@ -801,9 +820,11 @@ export interface CnfDraftInvoice {
   shippingPartnerId: string; // the air batch's partner when drafted; '' for sea
 }
 
+// A CNF invoice line. Goods lines name a shipment (batchId/shipmentId) and
+// its vendor invoice; ancillary lines name only the vendor invoice.
 export interface CnfInvoiceLine {
-  batchId: string;
-  shipmentId: string;
+  batchId?: string;
+  shipmentId?: string;
   vendorCode: string;
   invoiceNo: string;
   amount: number; // INR
@@ -829,11 +850,12 @@ export interface CnfGoodsInvoice {
   decidedAt: string;
   rejectionReason: string;
   createdAt: string;
+  kind: 'Goods' | 'Ancillary';
 }
 
 export interface CnfLedgerRow {
   date: string; // yyyy-mm-dd
-  type: 'Payment for vendor' | 'Payment to CNF' | 'Tax invoice';
+  type: 'Payment for vendor' | 'Payment to CNF' | 'Tax invoice' | 'Tax invoice (ancillary)';
   reference: string;
   description: string;
   paid: number;   // INR paid to CNF

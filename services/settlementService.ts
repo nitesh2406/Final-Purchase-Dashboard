@@ -145,6 +145,7 @@ export interface PurchaseInvoice {
   vendorCode: string;    // VARCHAR
   rmb: number;           // DECIMAL
   notes?: string;        // TEXT / Nullable (retains user notes)
+  invoiceType?: 'Goods' | 'Ancillary'; // Invoice Type column; blank = Goods
   er1?: number;          // DECIMAL / Nullable - Exchange Rate 1 (EOD)
   inr?: number;          // DECIMAL / Nullable - Base currency valuation (EOD)
   status: 'Pending EOD' | 'Processed';
@@ -244,6 +245,7 @@ export async function submitPurchaseInvoice(payload: {
   vendorCode: string;
   rmb: number;
   notes?: string;
+  invoiceType: 'Goods' | 'Ancillary';
 }): Promise<{ success: boolean; status: string; message: string; data?: PurchaseInvoice }> {
   // Construct the targeted schema payload
   const tableRecord: PurchaseInvoice = {
@@ -252,6 +254,7 @@ export async function submitPurchaseInvoice(payload: {
     vendorCode: payload.vendorCode,
     rmb: payload.rmb,
     notes: payload.notes || undefined,
+    invoiceType: payload.invoiceType,
     status: 'Pending EOD',
     settledAmount: 0,
     balance: payload.rmb
@@ -328,6 +331,7 @@ export async function fetchPurchaseInvoices(): Promise<PurchaseInvoice[]> {
         vendorCode: row.vendor_code || row.VendorCode || row.vendorCode || row['Vendor Code'] || '',
         rmb: parseFloat(row.RMB || row.rmb || row['RMB Amount'] || row['Amount RMB'] || '0') || 0,
         notes: row.Notes || row.notes || row['Notes'] || row['Reference'] || '',
+        invoiceType: String(row['Invoice Type'] || '').trim() === 'Ancillary' ? 'Ancillary' : 'Goods',
         er1: row.ER1 !== undefined && row.ER1 !== null && row.ER1 !== '' ? parseFloat(row.ER1) :
              row.Er1 !== undefined && row.Er1 !== null && row.Er1 !== '' ? parseFloat(row.Er1) :
              row.er1 !== undefined && row.er1 !== null && row.er1 !== '' ? parseFloat(row.er1) :

@@ -4,7 +4,7 @@ import { Button } from '../../ui/Button';
 import { callGas, invalidateReadCache } from '../../../services/gasApi';
 import {
   fetchShippingPartners, fetchBatchShippingPartners, fetchPartnerBills, fetchPartnerPayments,
-  fetchPartnerLedgerStatement, approvePartnerBill, rejectPartnerBill, voidPartnerPayment,
+  fetchPartnerLedgerStatement, approvePartnerBill, rejectPartnerBill, voidPartnerPayment, fetchPartnerGstRate,
 } from '../../../services/shippingPartnerService';
 import type { ShippingPartner, BatchShippingPartner, PartnerBill, PartnerPayment, PartnerLedgerStatement } from '../../../types';
 import { fmtInr } from '../../logistics/cnf/cnfFormat';
@@ -19,6 +19,7 @@ interface Loaded {
   payments: PartnerPayment[];
   assignments: BatchShippingPartner[];
   weights: Record<string, number | null>;
+  gstPct: number; // Settings → shipping partner GST %
 }
 
 const BILL_BADGE: Record<string, string> = {
@@ -59,14 +60,14 @@ export const PartnerLedgerView: React.FC<{ partnerId: string; refreshKey: number
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [partners, statement, bills, payments, assignments, weights] = await Promise.all([
+      const [partners, statement, bills, payments, assignments, weights, gstPct] = await Promise.all([
         fetchShippingPartners(), fetchPartnerLedgerStatement(partnerId, { from, to }), fetchPartnerBills(partnerId),
-        fetchPartnerPayments(partnerId), fetchBatchShippingPartners(), loadWeights(),
+        fetchPartnerPayments(partnerId), fetchBatchShippingPartners(), loadWeights(), fetchPartnerGstRate(),
       ]);
       if (mine !== loadSeq.current) return;
       const partner = partners.find(x => x.id === partnerId);
       if (!partner) throw new Error(`Shipping partner ${partnerId} not found`);
-      setData({ partner, statement, bills, payments, assignments, weights });
+      setData({ partner, statement, bills, payments, assignments, weights, gstPct });
     } catch (err: any) {
       if (mine === loadSeq.current) setLoadError(err.message || 'Failed to load the ledger');
     } finally {
@@ -128,7 +129,7 @@ export const PartnerLedgerView: React.FC<{ partnerId: string; refreshKey: number
                 {data.partner.name}{!data.partner.active && <span className="ml-2 text-xs text-slate-400">(inactive)</span>}
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                GSTIN {data.partner.gstin || '—'} · {fmtInr(data.partner.ratePerKg)}/kg · one bill per air batch: fee + 18% GST
+                GSTIN {data.partner.gstin || '—'} · {fmtInr(data.partner.ratePerKg)}/kg · one bill per air batch: fee + {data.gstPct}% GST
               </p>
             </div>
             <div className="flex items-center gap-4">
@@ -285,7 +286,7 @@ export const PartnerLedgerView: React.FC<{ partnerId: string; refreshKey: number
           </Card>
 
           {logging && (
-            <LogPartnerBillModal partner={data.partner} batchIds={billable} weights={data.weights}
+            <LogPartnerBillModal partner={data.partner} batchIds={billable} weights={data.weights} gstPct={data.gstPct}
               onClose={() => setLogging(false)} onSaved={() => { setLogging(false); load(true); }} />
           )}
           {payingBill && (

@@ -7,6 +7,7 @@ import {
     fetchCnfAirRateCategories, saveCnfAirRateCategories,
     fetchShipmentPartners, fetchShipmentPartnerDefaults, saveShipmentPartnerDefaults,
 } from '../../services/settlementService';
+import { fetchPartnerGstRate, savePartnerGstRate } from '../../services/shippingPartnerService';
 import { CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault } from '../../types';
 
 export const ChargesConfig: React.FC = () => {
@@ -22,6 +23,15 @@ export const ChargesConfig: React.FC = () => {
     const [isIgstSaving, setIsIgstSaving] = useState(false);
     const [igstError, setIgstError] = useState<string | null>(null);
     const [igstSuccessMessage, setIgstSuccessMessage] = useState<string | null>(null);
+
+    // Shipping partner GST % (not KREIZ). null = not loaded (the save stays off
+    // until a value is typed, so a failed load can't overwrite it with a default).
+    const [partnerGst, setPartnerGst] = useState<string>('');
+    const [savedPartnerGst, setSavedPartnerGst] = useState<number | null>(null);
+    const [isPartnerGstLoading, setIsPartnerGstLoading] = useState(true);
+    const [isPartnerGstSaving, setIsPartnerGstSaving] = useState(false);
+    const [partnerGstError, setPartnerGstError] = useState<string | null>(null);
+    const [partnerGstSuccess, setPartnerGstSuccess] = useState<string | null>(null);
 
     const [commissionRates, setCommissionRates] = useState<CnfCommissionRate[]>([]);
     const [isRatesLoading, setIsRatesLoading] = useState(true);
@@ -51,9 +61,23 @@ export const ChargesConfig: React.FC = () => {
                 setIgstPercent(String(igst));
                 setSavedIgstPercent(igst);
             } catch {
-                setError('Could not load current conversion charge % or IGST %. Defaulting to 0 and 5 respectively.');
+                setError('Could not load current conversion charge % or CNF GST %. Defaulting to 0 and 5 respectively.');
             } finally {
                 setIsLoading(false);
+            }
+        })();
+    }, []);
+
+    useEffect(() => {
+        (async () => {
+            try {
+                const pct = await fetchPartnerGstRate();
+                setPartnerGst(String(pct));
+                setSavedPartnerGst(pct);
+            } catch {
+                setPartnerGstError('Could not load the shipping partner GST %.');
+            } finally {
+                setIsPartnerGstLoading(false);
             }
         })();
     }, []);
@@ -134,11 +158,32 @@ export const ChargesConfig: React.FC = () => {
             const saved = await saveIgstRate(igstParsed);
             setSavedIgstPercent(saved);
             setIgstPercent(String(saved));
-            setIgstSuccessMessage('IGST % updated. Applies to CNF entries logged from now on.');
+            setIgstSuccessMessage('CNF GST % updated.');
         } catch (err: any) {
-            setIgstError(err.message || 'Failed to save IGST %.');
+            setIgstError(err.message || 'Failed to save CNF GST %.');
         } finally {
             setIsIgstSaving(false);
+        }
+    };
+
+    const partnerGstParsed = parseFloat(partnerGst);
+    const isPartnerGstValid = partnerGst.trim() !== '' && !isNaN(partnerGstParsed) && partnerGstParsed >= 0;
+    const hasPartnerGstChanges = isPartnerGstValid && partnerGstParsed !== savedPartnerGst;
+
+    const handleSavePartnerGst = async () => {
+        if (!isPartnerGstValid) return;
+        setIsPartnerGstSaving(true);
+        setPartnerGstError(null);
+        setPartnerGstSuccess(null);
+        try {
+            const saved = await savePartnerGstRate(partnerGstParsed);
+            setSavedPartnerGst(saved);
+            setPartnerGst(String(saved));
+            setPartnerGstSuccess('Shipping partner GST % updated.');
+        } catch (err: any) {
+            setPartnerGstError(err.message || 'Failed to save the shipping partner GST %.');
+        } finally {
+            setIsPartnerGstSaving(false);
         }
     };
 
@@ -276,9 +321,9 @@ export const ChargesConfig: React.FC = () => {
             </Card>
 
             <div>
-                <h3 className="text-lg font-semibold text-slate-800 dark:text-white">IGST</h3>
+                <h3 className="text-lg font-semibold text-slate-800 dark:text-white">CNF GST</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                    The IGST percentage applied to a CNF agent commission entry's Taxable Amount (Goods Value + Charges + Shipping Amount) to compute the Total payable to the agent.
+                    GST % CNF (KREIZ) charges on every tax invoice it raises, goods and ancillary. The CNF draft invoice and the CNF invoice checks use it.
                 </p>
             </div>
 
@@ -289,7 +334,7 @@ export const ChargesConfig: React.FC = () => {
                     <div className="space-y-4">
                         <div>
                             <label htmlFor="igst-pct" className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1.5">
-                                IGST %
+                                CNF GST %
                             </label>
                             <div className="flex items-center gap-2 max-w-xs">
                                 <input
@@ -317,6 +362,52 @@ export const ChargesConfig: React.FC = () => {
 
                         {igstError && <p className="text-sm text-red-500">{igstError}</p>}
                         {igstSuccessMessage && <p className="text-sm text-emerald-600 dark:text-emerald-400">{igstSuccessMessage}</p>}
+                    </div>
+                )}
+            </Card>
+
+            <div>
+                <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Shipping partner GST</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                    GST % a shipping partner (not KREIZ) charges on its fee. The Log Partner Bill form fills GST from it, and bills that differ need an override reason.
+                </p>
+            </div>
+
+            <Card>
+                {isPartnerGstLoading ? (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Loading current setting…</p>
+                ) : (
+                    <div className="space-y-4">
+                        <div>
+                            <label htmlFor="partner-gst-pct" className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1.5">
+                                Shipping partner GST %
+                            </label>
+                            <div className="flex items-center gap-2 max-w-xs">
+                                <input
+                                    id="partner-gst-pct"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={partnerGst}
+                                    onChange={e => { setPartnerGst(e.target.value); setPartnerGstSuccess(null); }}
+                                    className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition"
+                                />
+                                <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">%</span>
+                            </div>
+                            {partnerGst.trim() !== '' && !isPartnerGstValid && (
+                                <p className="text-xs text-red-500 mt-1.5">Enter a non-negative number.</p>
+                            )}
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                            <Button aria-label="Save shipping partner GST" onClick={handleSavePartnerGst} disabled={!hasPartnerGstChanges || isPartnerGstSaving}>
+                                {isPartnerGstSaving ? 'Saving…' : 'Save'}
+                            </Button>
+                            <span className="text-xs text-slate-400">Currently applied: {savedPartnerGst === null ? '—' : `${savedPartnerGst}%`}</span>
+                        </div>
+
+                        {partnerGstError && <p className="text-sm text-red-500">{partnerGstError}</p>}
+                        {partnerGstSuccess && <p className="text-sm text-emerald-600 dark:text-emerald-400">{partnerGstSuccess}</p>}
                     </div>
                 )}
             </Card>

@@ -22,6 +22,7 @@ interface InvoiceEntryFormProps {
 }
 
 const emptyForm = () => ({
+  invoiceType: 'Goods' as 'Goods' | 'Ancillary',
   date: new Date().toISOString().split('T')[0],
   invoiceId: '',
   vendorCode: '',
@@ -42,10 +43,23 @@ export const InvoiceEntryForm: React.FC<InvoiceEntryFormProps> = ({ invoices, ve
   const set = (k: keyof ReturnType<typeof emptyForm>) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm(prev => ({ ...prev, [k]: e.target.value }));
 
-  const vendorOptions = useMemo(() => vendors.map(v => ({
-    code: v.vendor_id,
-    displayText: v.vendor_name ? `${v.vendor_id} -- ${v.vendor_name}` : v.vendor_id,
-  })), [vendors]);
+  // Ancillary invoices are services paid through CNF, so only overseas (non-INR) vendors.
+  const isAnc = form.invoiceType === 'Ancillary';
+  const vendorOptions = useMemo(() => vendors
+    .filter(v => !isAnc || v.currency !== 'INR')
+    .map(v => ({
+      code: v.vendor_id,
+      displayText: v.vendor_name ? `${v.vendor_id} -- ${v.vendor_name}` : v.vendor_id,
+    })), [vendors, isAnc]);
+
+  const setType = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const invoiceType = e.target.value as 'Goods' | 'Ancillary';
+    setForm(prev => {
+      const vendor = vendors.find(v => v.vendor_id === prev.vendorCode);
+      const clear = invoiceType === 'Ancillary' && vendor && vendor.currency === 'INR';
+      return { ...prev, invoiceType, vendorCode: clear ? '' : prev.vendorCode };
+    });
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,6 +73,7 @@ export const InvoiceEntryForm: React.FC<InvoiceEntryFormProps> = ({ invoices, ve
       if (!actualVendorCode) { setError('Vendor code cannot be empty.'); return; }
       const rmbValue = parseFloat(form.rmb);
       if (isNaN(rmbValue) || rmbValue <= 0) { setError('Amount in RMB must be a positive number.'); return; }
+      if (form.invoiceType === 'Ancillary' && !form.notes.trim()) { setError('Say what the service was (Notes) for an ancillary invoice.'); return; }
       if (invoices.some(i => i.invoiceId.trim().toUpperCase() === actualInvoiceId)) {
         setError(`Invoice ID "${actualInvoiceId}" already exists database record.`);
         return;
@@ -86,6 +101,7 @@ export const InvoiceEntryForm: React.FC<InvoiceEntryFormProps> = ({ invoices, ve
         vendorCode: actualVendorCode,
         rmb: rmbValue,
         notes: form.notes.trim() || undefined,
+        invoiceType: form.invoiceType,
         status: 'Pending EOD' as const,
         settledAmount: 0,
         balance: rmbValue,
@@ -113,6 +129,7 @@ export const InvoiceEntryForm: React.FC<InvoiceEntryFormProps> = ({ invoices, ve
           vendorCode: tempInvoice.vendorCode,
           rmb: tempInvoice.rmb,
           notes: tempInvoice.notes,
+          invoiceType: tempInvoice.invoiceType,
         });
         if (!response.success) throw new Error(response.message || 'Invoice save propagation aborted.');
         setSuccess(`Invoice "${tempInvoice.invoiceId}" submitted — queued and syncing to the centralized ledger pipeline.`);
@@ -138,6 +155,13 @@ export const InvoiceEntryForm: React.FC<InvoiceEntryFormProps> = ({ invoices, ve
           {success}
         </div>
       )}
+      <div>
+        <label htmlFor="inv-type" className={labelClass}>Invoice type *</label>
+        <select id="inv-type" value={form.invoiceType} onChange={setType} className={inputClass}>
+          <option value="Goods">Goods</option>
+          <option value="Ancillary">Ancillary (service paid through CNF)</option>
+        </select>
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label htmlFor="inv-date" className={labelClass}>Invoice Date *</label>
@@ -173,12 +197,16 @@ export const InvoiceEntryForm: React.FC<InvoiceEntryFormProps> = ({ invoices, ve
         <input id="inv-rmb" type="number" required min={0.01} step="0.01" max={99999999} placeholder="e.g. 145000" value={form.rmb} onChange={set('rmb')} className={`${inputClass} font-mono font-bold`} />
       </div>
       <div>
-        <label htmlFor="inv-notes" className={labelClass}>Notes</label>
-        <textarea id="inv-notes" rows={2} maxLength={150} value={form.notes} onChange={set('notes')} className={inputClass} />
+        <label htmlFor="inv-notes" className={labelClass}>{isAnc ? 'What was the service? *' : 'Notes'}</label>
+        <textarea id="inv-notes" rows={2} maxLength={150} required={isAnc} value={form.notes} onChange={set('notes')} className={inputClass} />
       </div>
       <div className="bg-amber-50 dark:bg-slate-900 p-3.5 rounded-xl border border-amber-200/60 dark:border-slate-800 flex items-start gap-2 text-slate-500 dark:text-slate-400">
         <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-        <span className="text-[11px] leading-relaxed">ER1 and INR are filled in automatically from the invoice date's rate, and any unspent payment to this vendor is applied to the invoice.</span>
+        <span className="text-[11px] leading-relaxed">
+          {isAnc
+            ? 'Paid through CNF. CNF bills the INR paid + CNF GST, no commission. Only overseas vendors can have ancillary invoices.'
+            : "ER1 and INR are filled in automatically from the invoice date's rate, and any unspent payment to this vendor is applied to the invoice."}
+        </span>
       </div>
       <div className="flex justify-end">
         <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Saving Invoice...' : 'Publish Invoice'}</Button>

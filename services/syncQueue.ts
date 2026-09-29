@@ -310,6 +310,8 @@ class QueueSyncManager {
           vendorCode: payload.vendorCode,
           rmb: payload.rmb,
           notes: payload.notes || undefined,
+          // Old queued items have none; the backend then keeps / assumes Goods.
+          invoiceType: payload.invoiceType,
           status: 'Pending EOD',
           settledAmount: 0,
           balance: payload.rmb

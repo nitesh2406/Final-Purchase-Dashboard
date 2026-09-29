@@ -795,6 +795,9 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                             <td className="px-5 py-4 text-xs font-bold font-mono text-gray-900 dark:text-white tracking-tight">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span>{inv.invoiceId}</span>
+                                {inv.invoiceType === 'Ancillary' && (
+                                  <span className="inline-block px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 text-[9px] font-black uppercase tracking-wider">Ancillary</span>
+                                )}
                                 {(inv as any).syncStatus && (inv as any).syncStatus !== 'synced' && (
                                   <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8.5px] font-extrabold pb-[0.5px] ${
                                     (inv as any).syncStatus === 'pending' ? 'bg-amber-100 text-amber-800' :

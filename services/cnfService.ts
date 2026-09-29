@@ -4,7 +4,7 @@
 import { callGas, callGasAuthed } from './gasApi';
 import type {
   CnfShipmentValue, CnfGoodsInvoice, CnfLedgerStatement, CnfDraftInvoice,
-  CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault,
+  CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfAncillaryValue,
 } from '../types';
 
 function ensureOk(response: any, what: string): any {
@@ -17,6 +17,11 @@ function ensureOk(response: any, what: string): any {
 export async function fetchCnfShipmentValues(): Promise<CnfShipmentValue[]> {
   const r = ensureOk(await callGas('get_cnf_shipment_values', {}, 1), 'load CNF shipment values');
   return r.shipments || [];
+}
+
+export async function fetchCnfAncillaryValues(): Promise<CnfAncillaryValue[]> {
+  const r = ensureOk(await callGas('get_cnf_ancillary_values', {}, 1), 'load ancillary invoices');
+  return r.ancillary || [];
 }
 
 export async function fetchCnfGoodsInvoices(): Promise<CnfGoodsInvoice[]> {
@@ -33,10 +38,12 @@ export async function fetchCnfLedgerStatement(range: { from?: string; to?: strin
 }
 
 export interface LogCnfInvoiceInput {
+  kind: 'Goods' | 'Ancillary';
   cnfInvoiceNo: string;
   invoiceDate: string;
   fileUrl: string;
-  lines: { shipmentId: string; amount: number }[];
+  // Goods: shipmentId per line; Ancillary: invoiceNo per line.
+  lines: ({ shipmentId: string; amount: number } | { invoiceNo: string; amount: number })[];
   baseAmount: number;
   gst: number;
   total: number;

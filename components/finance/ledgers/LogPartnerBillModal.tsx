@@ -5,7 +5,7 @@ import { getSessionAuthHeaders } from '../../../services/authToken';
 import { logPartnerBill } from '../../../services/shippingPartnerService';
 import type { ShippingPartner } from '../../../types';
 import { fmtInr } from '../../logistics/cnf/cnfFormat';
-import { checkPartnerBill, PARTNER_GST_PCT, todayIst } from './partnerBill';
+import { checkPartnerBill, todayIst } from './partnerBill';
 
 // Same shared Drive uploader as the CNF invoice modal ("CNF Invoices" folder).
 const UPLOAD_ENDPOINT = '/api/drive/upload-cnf-invoice';
@@ -20,16 +20,17 @@ export const LogPartnerBillModal: React.FC<{
   partner: ShippingPartner;
   batchIds: string[]; // this partner's batches without a live bill
   weights: Record<string, number | null>; // batch weight from Receive Shipment, if recorded
+  gstPct: number; // Settings → shipping partner GST %
   onClose: () => void;
   onSaved: () => void;
-}> = ({ partner, batchIds, weights, onClose, onSaved }) => {
+}> = ({ partner, batchIds, weights, gstPct, onClose, onSaved }) => {
   const weightOf = (id: string) => (weights[id] != null ? String(weights[id]) : '');
   const [batchId, setBatchId] = useState(batchIds[0] ?? '');
   const [billNo, setBillNo] = useState('');
   const [billDate, setBillDate] = useState(todayIst());
   const [weight, setWeight] = useState(weightOf(batchIds[0] ?? ''));
   const [fee, setFee] = useState('');
-  const [gst, setGst] = useState<string | null>(null);     // null = follow 18% of the fee
+  const [gst, setGst] = useState<string | null>(null);     // null = follow gstPct of the fee
   const [total, setTotal] = useState<string | null>(null); // null = follow fee + GST
   const [overrideReason, setOverrideReason] = useState('');
   const [fileUrl, setFileUrl] = useState<string | null>(null);
@@ -38,11 +39,11 @@ export const LogPartnerBillModal: React.FC<{
   const [saving, setSaving] = useState(false);
   const fileToken = useRef(0);
 
-  const gstValue = gst ?? (fee ? String(Math.round(num(fee) * PARTNER_GST_PCT) / 100) : '');
+  const gstValue = gst ?? (fee ? String(Math.round(num(fee) * gstPct) / 100) : '');
   const totalValue = total ?? (fee ? String(Math.round((num(fee) + num(gstValue)) * 100) / 100) : '');
   const check = useMemo(
-    () => checkPartnerBill({ weightKg: num(weight), ratePerKg: partner.ratePerKg, fee: num(fee), gst: num(gstValue), total: num(totalValue) }),
-    [weight, partner.ratePerKg, fee, gstValue, totalValue]
+    () => checkPartnerBill({ weightKg: num(weight), ratePerKg: partner.ratePerKg, fee: num(fee), gst: num(gstValue), total: num(totalValue), gstPct }),
+    [weight, partner.ratePerKg, fee, gstValue, totalValue, gstPct]
   );
   const canSave = !!batchId && billNo.trim() !== '' && /^\d{4}-\d{2}-\d{2}$/.test(billDate) && !!fileUrl && !isUploading &&
     num(weight) > 0 && num(fee) > 0 && num(gstValue) >= 0 && num(totalValue) > 0 &&
@@ -125,7 +126,7 @@ export const LogPartnerBillModal: React.FC<{
             <input type="number" step="0.01" aria-label="Fee" value={fee} onChange={e => setFee(e.target.value)} className={input} />
           </div>
           <div>
-            <label className={label}>GST ({PARTNER_GST_PCT}% of fee)</label>
+            <label className={label}>GST ({gstPct}% of fee)</label>
             <input type="number" step="0.01" aria-label="GST" value={gstValue} onChange={e => setGst(e.target.value)} className={input} />
           </div>
           <div className="col-span-2">
@@ -147,6 +148,7 @@ export const LogPartnerBillModal: React.FC<{
         </div>
         {check.feeOff && num(fee) > 0 && <p className="text-xs text-amber-600">The fee differs from the expected fee by ₹1 or more.</p>}
         {check.totalOff && num(fee) > 0 && <p className="text-xs text-amber-600">Fee + GST doesn't match the total.</p>}
+        {check.gstOff && num(fee) > 0 && <p className="text-xs text-amber-600">GST differs from {gstPct}% of the fee ({fmtInr(check.defaultGst)}).</p>}
         {check.needsOverride && num(fee) > 0 && (
           <div>
             <label className={label}>Override reason</label>
