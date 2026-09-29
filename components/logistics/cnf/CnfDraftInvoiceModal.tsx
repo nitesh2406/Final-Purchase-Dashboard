@@ -1,0 +1,104 @@
+import React, { useMemo, useState } from 'react';
+import { Card } from '../../ui/Card';
+import { Button } from '../../ui/Button';
+import { saveCnfDraftInvoice } from '../../../services/cnfService';
+import type { Batch, CnfAirRateCategory, CnfCommissionRate, CnfDraftInvoice, CnfShipmentPartnerDefault } from '../../../types';
+import { computeDraftInvoice } from './draftInvoice';
+import { defaultCnfCategory } from './expectedCharge';
+import { fmtInr } from './cnfFormat';
+
+// Generate / regenerate a batch's draft CNF invoice. The figures here are a
+// preview; the backend recomputes and stores them on save.
+export const CnfDraftInvoiceModal: React.FC<{
+  batch: Batch;
+  goodsValue: number;
+  igstPct: number;
+  seaRates: CnfCommissionRate[];
+  airCategories: CnfAirRateCategory[];
+  partnerDefaults: CnfShipmentPartnerDefault[];
+  existing?: CnfDraftInvoice;
+  onClose: () => void;
+  onSaved: () => void;
+}> = ({ batch, goodsValue, igstPct, seaRates, airCategories, partnerDefaults, existing, onClose, onSaved }) => {
+  const isAir = batch.batch_type === 'air';
+  const categories: (CnfCommissionRate | CnfAirRateCategory)[] = isAir ? airCategories : seaRates;
+  const rateOf = (id: string) => {
+    const c = categories.find(x => x.id === id);
+    return c ? String(isAir ? (c as CnfAirRateCategory).ratePerKg : (c as CnfCommissionRate).ratePct) : '';
+  };
+  const initialId = existing?.categoryId ?? defaultCnfCategory(batch, seaRates, airCategories, partnerDefaults)?.id ?? '';
+  const [categoryId, setCategoryId] = useState(initialId);
+  const [rate, setRate] = useState(existing ? String(existing.rate) : rateOf(initialId));
+  const [weight, setWeight] = useState(String(existing?.weightKg ?? batch.total_weight_kg ?? ''));
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const rateNum = parseFloat(rate) || 0;
+  const weightNum = parseFloat(weight) || 0;
+  const figures = useMemo(
+    () => computeDraftInvoice({ mode: isAir ? 'air' : 'sea', goods: goodsValue, rate: rateNum, weightKg: isAir ? weightNum : null, igstPct }),
+    [isAir, goodsValue, rateNum, weightNum, igstPct]
+  );
+  const canSave = !!categoryId && rateNum > 0 && (!isAir || weightNum > 0) && !saving;
+
+  const pick = (id: string) => { setCategoryId(id); setRate(rateOf(id)); };
+  const save = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await saveCnfDraftInvoice({ batchId: batch.batch_id, categoryId, rate: rateNum, weightKg: isAir ? weightNum : null });
+      onSaved();
+    } catch (err: any) {
+      setError(err.message || 'Failed to save the draft invoice');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const label = 'text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5';
+  const input = 'w-full px-3 py-2 border rounded-lg text-sm bg-white dark:bg-slate-900';
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-start justify-center z-[200] p-4 overflow-y-auto">
+      <Card className="p-6 space-y-4 w-full max-w-lg my-8">
+        <h3 className="text-lg font-semibold">{existing ? 'Regenerate' : 'Generate'} Draft Invoice · {batch.batch_id}</h3>
+        <p className="text-xs text-slate-400">What CNF's tax invoice for this batch should come to: goods paid + CNF charge + GST on both.</p>
+        {categories.length === 0 ? (
+          <p className="text-sm text-amber-600">Add a {isAir ? 'Air' : 'Sea'} rate category in Settings first.</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className={label}>Rate category</label>
+              <select aria-label="Rate category" value={categoryId} onChange={e => pick(e.target.value)} className={input}>
+                <option value="">Choose…</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={label}>{isAir ? 'Rate (₹ per kg)' : 'Rate (% of goods)'}</label>
+              <input type="number" step="0.01" aria-label="Rate" value={rate} onChange={e => setRate(e.target.value)} className={input} />
+            </div>
+            {isAir && (
+              <div>
+                <label className={label}>Weight (kg)</label>
+                <input type="number" step="0.01" aria-label="Weight" value={weight} onChange={e => setWeight(e.target.value)} className={input} />
+              </div>
+            )}
+          </div>
+        )}
+        <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 grid grid-cols-2 gap-2 text-sm" data-testid="cnf-draft-figures">
+          <span className="text-slate-400">Goods paid</span><span className="text-right font-mono">{fmtInr(goodsValue)}</span>
+          <span className="text-slate-400">CNF charge</span><span className="text-right font-mono">{fmtInr(figures.charge)}</span>
+          <span className="text-slate-400">GST ({igstPct}% on goods + charge)</span><span className="text-right font-mono">{fmtInr(figures.gst)}</span>
+          <span className="font-semibold">Expected total</span><span className="text-right font-mono font-semibold">{fmtInr(figures.total)}</span>
+        </div>
+        {error && <p className="text-sm text-red-500">{error}</p>}
+        <div className="flex gap-3 justify-end">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={!canSave}>{saving ? 'Saving…' : 'Save draft'}</Button>
+        </div>
+      </Card>
+    </div>
+  );
+};
