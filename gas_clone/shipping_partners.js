@@ -141,3 +141,91 @@ function saveShippingPartner_(payload) {
     lock.releaseLock();
   }
 }
+
+// ── Batch → partner ─────────────────────────────────────────
+
+function readBatchPartnerAssignments_() {
+  return spRows_(SP_ASSIGN_SHEET_).map(function (x) {
+    return { batchId: String(x.r[0]).trim(), partnerId: String(x.r[1] || '').trim(), setBy: String(x.r[2] || ''), setAt: spIso_(x.r[3]), rowNumber: x.rowNumber };
+  });
+}
+
+// batchId → partnerId ('KREIZ' or 'SP-…') for every air batch whose partner is set.
+function spPartnerByBatch_() {
+  var out = {};
+  readBatchPartnerAssignments_().forEach(function (a) { if (a.partnerId) out[a.batchId] = a.partnerId; });
+  return out;
+}
+
+function readPartnerBills_() {
+  return spRows_(SP_BILLS_SHEET_).map(function (x) {
+    var r = x.r;
+    return {
+      id: String(r[0]), partnerId: String(r[1] || ''), batchId: String(r[2] || ''), billNo: String(r[3] || ''),
+      billDate: cnfYmd_(r[4]), fileUrl: String(r[5] || ''), weightKg: Number(r[6]) || 0, ratePerKg: Number(r[7]) || 0,
+      expectedFee: Number(r[8]) || 0, fee: Number(r[9]) || 0, gst: Number(r[10]) || 0, total: Number(r[11]) || 0,
+      overrideReason: String(r[12] || ''), status: String(r[13] || ''), submittedBy: String(r[14] || ''),
+      decidedBy: String(r[15] || ''), decidedAt: spIso_(r[16]), rejectionReason: String(r[17] || ''),
+      createdAt: spIso_(r[18]), rowNumber: x.rowNumber
+    };
+  });
+}
+
+// Why a batch's partner can't change, or '' if it can: a pending or approved
+// CNF invoice has a line for it, or a pending or approved partner bill is for it.
+function spBatchLockReason_(batchId, cnfInvoices, bills) {
+  var inv = cnfInvoices.filter(function (i) {
+    return (i.status === 'Pending Approval' || i.status === 'Approved') &&
+      (i.lines || []).some(function (l) { return l.batchId === batchId; });
+  })[0];
+  if (inv) return 'CNF invoice ' + inv.cnfInvoiceNo + ' includes this batch';
+  var bill = bills.filter(function (b) { return b.batchId === batchId && b.status !== 'Rejected'; })[0];
+  if (bill) return 'Partner bill ' + bill.billNo + ' is logged for this batch';
+  return '';
+}
+
+function getBatchShippingPartners_() {
+  var names = spPartnerNames_();
+  var invoices = readCnfInvoices_();
+  var bills = readPartnerBills_();
+  return readBatchPartnerAssignments_().filter(function (a) { return a.partnerId; }).map(function (a) {
+    var reason = spBatchLockReason_(a.batchId, invoices, bills);
+    return {
+      batchId: a.batchId, partnerId: a.partnerId, partnerName: names[a.partnerId] || a.partnerId,
+      locked: reason !== '', lockReason: reason, setBy: a.setBy, setAt: a.setAt
+    };
+  });
+}
+
+// payload: { batchId, partnerId ('KREIZ' or 'SP-…'), user_email (proxy) }.
+function setBatchShippingPartner_(payload) {
+  var p = payload || {};
+  var who = cnfRequireUser_(p);
+  var batchId = String(p.batchId || '').trim();
+  var partnerId = String(p.partnerId || '').trim();
+  if (!batchId) throw new Error('batchId is required');
+  if (!partnerId) throw new Error('Pick a shipping partner');
+
+  var lock = spLock_('shipping partner');
+  try {
+    var type = spBatchTypes_()[batchId];
+    if (!type) throw new Error('Batch ' + batchId + ' not found');
+    if (type !== 'air') throw new Error('Batch ' + batchId + ' is not an air batch; only air batches have a shipping partner');
+    if (partnerId !== CNF_VENDOR_CODE_) {
+      var partner = readShippingPartners_().filter(function (x) { return x.id === partnerId; })[0];
+      if (!partner) throw new Error('Shipping partner not found: ' + partnerId);
+      if (!partner.active) throw new Error(partner.name + ' is inactive');
+    }
+    var current = readBatchPartnerAssignments_().filter(function (a) { return a.batchId === batchId; })[0];
+    if (current && current.partnerId === partnerId) return { status: 'success', batchId: batchId, partnerId: partnerId, message: 'Unchanged' };
+    var reason = spBatchLockReason_(batchId, readCnfInvoices_(), readPartnerBills_());
+    if (reason) throw new Error('The shipping partner of ' + batchId + ' is locked: ' + reason);
+    var sheet = spSheet_(SP_ASSIGN_SHEET_, SP_ASSIGN_HEADERS_, true);
+    var row = [batchId, partnerId, who, new Date().toISOString()];
+    if (current) sheet.getRange(current.rowNumber, 1, 1, row.length).setValues([row]);
+    else sheet.appendRow(row);
+    return { status: 'success', batchId: batchId, partnerId: partnerId };
+  } finally {
+    lock.releaseLock();
+  }
+}
