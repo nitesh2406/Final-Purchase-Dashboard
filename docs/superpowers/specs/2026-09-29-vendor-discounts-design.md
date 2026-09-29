@@ -15,7 +15,7 @@ The user's rules:
 ## Decisions (from the design conversation)
 
 1. **Split, don't refuse.** `direct = min(discount, invoice unpaid balance)` clears the invoice. `credit = discount − direct` becomes a credit. One rule covers unpaid, partly paid and fully paid invoices.
-2. **Credit rate** = the weighted average of the settlement rates (SettlementLedger ER2) of every row that settled the invoice, weighted by |RMB|. Example: ¥6,000 @ 12.20 + ¥4,000 @ 12.50 → ₹12.32. The direct part is recorded at the invoice's own ER1, so it creates no forex gain or loss.
+2. **Credit rate** = the weighted average of the settlement rates (SettlementLedger ER2) of the rows that settled the invoice, weighted by |RMB|. Example: ¥6,000 @ 12.20 + ¥4,000 @ 12.50 → ₹12.32. The direct part of earlier discounts on the same invoice is left out: it settled at the invoice's own ER1, which is not a rate anyone paid. The direct part is recorded at the invoice's own ER1, so it creates no forex gain or loss.
 3. **Entry points:** a standalone **Log Discount** tab, plus an **Add discount** button on each Accounts View purchase-invoice row that opens the tab pre-filled.
 4. **Mechanism:** the discount is a new wallet type in PaymentLogs (`DSC-` series), reusing the settlement engine. There is no separate discount sheet and no negative invoices.
 5. **No commission on discounts:** `DSC-` rows are not cash through CNF. They are left out of CNF goods paid and batch paid INR. They still count toward settled RMB and payment status.
