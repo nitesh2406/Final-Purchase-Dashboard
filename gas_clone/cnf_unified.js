@@ -158,15 +158,22 @@ function cnfInvoiceRmbByNo_() {
   return out;
 }
 
-// shipmentId → INR already claimed by CNF invoices. Pending invoices count
-// too, so the same value can't be logged twice while one awaits approval;
-// a rejected invoice frees its value again.
+// shipmentId → { goods, total } claimed by CNF invoices. goods = the line
+// amounts (INR of goods); total = each invoice's Total shared across its
+// lines in proportion to their amounts. Pending invoices count too, so the
+// same value can't be logged twice while one awaits approval; a rejected
+// invoice frees its value again.
 function cnfInvoicedByShipment_(invoices) {
   var out = {};
   invoices.forEach(function (inv) {
     if (inv.status !== 'Pending Approval' && inv.status !== 'Approved') return;
-    (inv.lines || []).forEach(function (l) {
-      out[l.shipmentId] = (out[l.shipmentId] || 0) + (Number(l.amount) || 0);
+    var lines = inv.lines || [];
+    var goods = lines.reduce(function (s, l) { return s + (Number(l.amount) || 0); }, 0);
+    lines.forEach(function (l) {
+      var o = out[l.shipmentId] || (out[l.shipmentId] = { goods: 0, total: 0 });
+      var amount = Number(l.amount) || 0;
+      o.goods += amount;
+      if (goods > 0) o.total += (Number(inv.total) || 0) * amount / goods;
     });
   });
   return out;
@@ -175,9 +182,9 @@ function cnfInvoicedByShipment_(invoices) {
 // One row per shipment of a non-INR vendor, whatever its batch status. A
 // shipment can be CNF-invoiced once its batch is Delivered and its vendor
 // invoice is fully paid; its value is the INR actually paid to the vendor.
-// invoicedByShipment is optional (defaults to the live CNF invoices).
-function getCnfShipmentValues_(invoicedByShipment) {
-  var invoiced = invoicedByShipment || cnfInvoicedByShipment_(readCnfInvoices_());
+// invoices is optional (defaults to the live CNF invoices).
+function getCnfShipmentValues_(invoices) {
+  var invoiced = cnfInvoicedByShipment_(invoices || readCnfInvoices_());
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
   var batchInfo = {};
@@ -231,7 +238,8 @@ function getCnfShipmentValues_(invoicedByShipment) {
     else if (!fullyPaid) reason = 'Vendor invoice not fully paid';
     var eligible = reason === '';
     var paidInr = cnfRound2_(paid.paidInr);
-    var invoicedInr = cnfRound2_(invoiced[s.shipmentId] || 0);
+    var claimed = invoiced[s.shipmentId] || { goods: 0, total: 0 };
+    var invoicedInr = cnfRound2_(claimed.goods);
     return {
       batchId: s.batchId,
       batchStatus: b.status,
@@ -244,6 +252,7 @@ function getCnfShipmentValues_(invoicedByShipment) {
       paidInr: paidInr,
       fullyPaid: fullyPaid,
       invoicedInr: invoicedInr,
+      invoicedTotalInr: cnfRound2_(claimed.total),
       remainingInr: eligible ? cnfRound2_(Math.max(0, paidInr - invoicedInr)) : 0,
       invoiceStatus: invoicedInr < 0.01 ? 'Not invoiced' : (paidInr - invoicedInr < 1 ? 'Fully invoiced' : 'Part invoiced'),
       eligible: eligible,
@@ -305,7 +314,7 @@ function logCnfGoodsInvoice_(payload) {
     if (duplicate) throw new Error('CNF invoice ' + cnfInvoiceNo + ' is already logged');
 
     var byShipment = {};
-    getCnfShipmentValues_(cnfInvoicedByShipment_(existing)).forEach(function (v) { byShipment[v.shipmentId] = v; });
+    getCnfShipmentValues_(existing).forEach(function (v) { byShipment[v.shipmentId] = v; });
 
     var lines = requested.map(function (l) {
       var v = byShipment[l.shipmentId];
