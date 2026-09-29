@@ -130,7 +130,7 @@ function doPost(e) {
 // open. With no key configured the actions are refused, never left open.
 var PROXY_KEY_ALWAYS_ = {
   log_cnf_goods_invoice: true, approve_cnf_goods_invoice: true, reject_cnf_goods_invoice: true,
-  save_cnf_draft_invoice: true, payment_reset_backup: true
+  save_cnf_draft_invoice: true, payment_reset_backup: true, log_vendor_discount: true
 };
 var PROXY_KEY_WHEN_REAL_ = {
   payment_reset_clear: true, payment_reset_replay: true, payment_reset_restore: true,
@@ -573,6 +573,11 @@ function doPostInner_(e) {
 
       case 'save_cnf_draft_invoice':
         result = saveCnfDraftInvoice_(payload);
+        break;
+
+      // Vendor discounts (vendor_discounts.js) — see 2026-09-29-vendor-discounts-design.md.
+      case 'log_vendor_discount':
+        result = logVendorDiscount_(payload);
         break;
 
       // Payment reset & replay (payment_reset.js) — admin tooling called with
