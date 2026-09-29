@@ -948,6 +948,18 @@ function addPurchaseInvoice(data) {
     const rmb    = parseFloat(record.rmb) || 0;
     const date   = record.date || new Date().toISOString().split('T')[0];
 
+    // Invoice Type (spec 2026-09-29-ancillary-cnf-invoices): absent means
+    // "leave as is" on an update and Goods on a new row.
+    const typeIn = record.invoiceType === undefined || record.invoiceType === null || String(record.invoiceType).trim() === ''
+      ? null : String(record.invoiceType).trim();
+    if (typeIn !== null && typeIn !== 'Goods' && typeIn !== 'Ancillary') return errorResponse_('Invoice type must be Goods or Ancillary');
+    if (typeIn === 'Ancillary') {
+      if (getVendorCurrency_(vCode) === 'INR') return errorResponse_('Ancillary invoices are paid through CNF; ' + vCode + ' is an INR vendor');
+      if (!String(record.notes || '').trim()) return errorResponse_('Say what the service was in Notes');
+      const linked = cnfShipmentForVendorInvoice_(invId);
+      if (linked) return errorResponse_(invId + ' is linked to shipment ' + linked + "; it can't be ancillary");
+    }
+
     const dataValues = sheet.getDataRange().getValues();
     const headers    = dataValues[0];
     const idIdx      = findHeaderIndex_(headers, 'Invoice ID');
@@ -957,6 +969,7 @@ function addPurchaseInvoice(data) {
     const inrIdx     = findHeaderIndex_(headers, 'INR');
     const er1Idx     = findHeaderIndex_(headers, 'ER1');
     const statusIdx  = findHeaderIndex_(headers, 'Status');
+    const typeIdx    = typeIn !== null ? ensureHeaderColumn_(sheet, 'Invoice Type') : findHeaderIndex_(headers, 'Invoice Type');
 
     let existingRowIdx = -1;
     if (idIdx !== -1) {
@@ -970,7 +983,7 @@ function addPurchaseInvoice(data) {
     const round2 = v => Math.round(v * 100) / 100;
 
     if (existingRowIdx === -1) {
-      const rowToAppend = new Array(Math.max(headers.length, 10)).fill('');
+      const rowToAppend = new Array(Math.max(headers.length, 10, typeIdx + 1)).fill('');
       rowToAppend[0] = date;
       if (idIdx    !== -1) rowToAppend[idIdx]    = invId;
       const vCodeIdx = findHeaderIndex_(headers, 'Vendor Code');
@@ -984,12 +997,21 @@ function addPurchaseInvoice(data) {
       if (balanceIdx !== -1) rowToAppend[balanceIdx] = round2(rmb);
       if (statusIdx !== -1) rowToAppend[statusIdx] = 'Pending EOD';
       else rowToAppend[9] = 'Pending EOD';
+      if (typeIdx !== -1) rowToAppend[typeIdx] = typeIn || 'Goods';
       sheet.appendRow(rowToAppend);
       logToVendorLedger_(vCode, date, 'Purchase', invId, -Math.abs(rmb));
     } else {
       const settled  = parseFloat(dataValues[existingRowIdx - 1][settledIdx]) || 0;
       const vCodeIdx = findHeaderIndex_(headers, 'Vendor Code');
       const notesIdx = findHeaderIndex_(headers, 'Notes');
+      if (typeIn !== null && typeIdx !== -1) {
+        const current = String(dataValues[existingRowIdx - 1][typeIdx] || '').trim() === 'Ancillary' ? 'Ancillary' : 'Goods';
+        if (current !== typeIn) {
+          const onCnf = cnfLiveCnfInvoiceForVendorInvoice_(invId);
+          if (onCnf) return errorResponse_(invId + ' is on CNF invoice ' + onCnf + "; its type can't change");
+          sheet.getRange(existingRowIdx, typeIdx + 1).setValue(typeIn);
+        }
+      }
       sheet.getRange(existingRowIdx, 1).setValue(date);
       if (vCodeIdx  !== -1) sheet.getRange(existingRowIdx, vCodeIdx  + 1).setValue(vCode);
       if (rmbIdx    !== -1) sheet.getRange(existingRowIdx, rmbIdx    + 1).setValue(rmb);

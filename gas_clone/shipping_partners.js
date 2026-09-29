@@ -3,7 +3,7 @@
 // docs/superpowers/specs/2026-09-29-air-shipping-partner-design.md.
 //
 // Each air batch is shipped by KREIZ (our CNF) or another logistics firm (a
-// "shipping partner"). A partner bills its fee + 18% GST for one batch and is
+// "shipping partner"). A partner bills its fee + GST (partner GST %, default 18) for one batch and is
 // paid directly by us, bill by bill (part payments allowed, TDS recorded).
 // None of this touches the vendor books (PurchaseInvoices / PaymentLogs /
 // FIFO): partners live only in the four sheets below, and every balance is
@@ -26,6 +26,21 @@ var SP_PAYMENT_HEADERS_ = ['ID', 'Partner ID', 'Bill ID', 'Date', 'Amount', 'TDS
 var SP_BILL_COL_STATUS_ = 14, SP_BILL_COL_DECIDED_BY_ = 16;
 var SP_PAY_COL_STATUS_ = 9, SP_PAY_COL_VOIDED_BY_ = 12;
 var SP_GSTIN_RE_ = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+// A shipping partner's GST %, configurable in Settings → Charges & Taxes
+// (Script Property SP_GST_PERCENT). CNF's own GST is IGST_PERCENT.
+function getPartnerGstPercent_() {
+  var v = PropertiesService.getScriptProperties().getProperty('SP_GST_PERCENT');
+  var pct = parseFloat(v);
+  return (v !== null && !isNaN(pct) && pct >= 0) ? pct : 18;
+}
+
+function setPartnerGstPercent_(pct) {
+  var val = parseFloat(pct);
+  if (isNaN(val) || val < 0) throw new Error('Partner GST % must be a non-negative number');
+  PropertiesService.getScriptProperties().setProperty('SP_GST_PERCENT', String(val));
+  return val;
+}
 
 // The sheet, created with its header row when forWrite and missing.
 function spSheet_(name, headers, forWrite) {
@@ -297,12 +312,16 @@ function logPartnerBill_(payload) {
     if (sameNo) throw new Error('Bill ' + sameNo.billNo + ' from ' + partner.name + ' is already logged');
 
     var expectedFee = cnfRound2_(weight * partner.ratePerKg);
+    var gstPct = getPartnerGstPercent_();
+    var expectedGst = cnfRound2_(fee * gstPct / 100);
     var feeOff = Math.abs(fee - expectedFee) >= 1;
     var totalOff = Math.abs(fee + gst - total) >= 1;
-    if ((feeOff || totalOff) && !overrideReason) {
+    var gstOff = Math.abs(gst - expectedGst) >= 1;
+    if ((feeOff || totalOff || gstOff) && !overrideReason) {
       throw new Error((feeOff
         ? 'Fee ' + cnfFmtInr_(fee) + ' differs from the expected ' + cnfFmtInr_(expectedFee) + ' (' + weight + ' kg × ₹' + partner.ratePerKg + '/kg)'
-        : "Fee + GST doesn't match Total") + '. Give an override reason to save anyway.');
+        : totalOff ? "Fee + GST doesn't match Total"
+          : 'GST ' + cnfFmtInr_(gst) + ' should be ' + gstPct + '% of the fee (' + cnfFmtInr_(expectedGst) + ')') + '. Give an override reason to save anyway.');
     }
 
     var sheet = spSheet_(SP_BILLS_SHEET_, SP_BILL_HEADERS_, true);

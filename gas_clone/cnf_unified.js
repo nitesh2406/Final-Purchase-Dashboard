@@ -19,7 +19,7 @@ var CNF_INVOICE_HEADERS_ = [
   'ID', 'CNF Invoice No', 'Invoice Date', 'File URL', 'Shipment Lines',
   'Base Amount', 'Purchase Value', 'Service Charge', 'GST', 'Total',
   'Status', 'Override Reason', 'Submitted By', 'Decided By', 'Decided At',
-  'Rejection Reason', 'Created At'
+  'Rejection Reason', 'Created At', 'Kind'
 ];
 // 1-based column numbers of the fields written after an invoice is created.
 // Decided By is followed by Decided At and Rejection Reason (columns 15, 16),
@@ -70,8 +70,14 @@ function cnfInvoicesSheet_(forWrite) {
   }
   var values = sheet.getDataRange().getValues();
   var headers = values[0] || [];
-  var sameLayout = CNF_INVOICE_HEADERS_.every(function (h, i) { return String(headers[i] || '').trim() === h; });
-  if (sameLayout) return sheet;
+  var matches = function (list) { return list.every(function (h, i) { return String(headers[i] || '').trim() === h; }); };
+  if (matches(CNF_INVOICE_HEADERS_)) return sheet;
+  // Sheets from before the Kind column (17 columns): rows read as Goods; the
+  // first write adds the header cell.
+  if (matches(CNF_INVOICE_HEADERS_.slice(0, 17)) && !String(headers[17] || '').trim()) {
+    if (forWrite) sheet.getRange(1, 18).setValue('Kind');
+    return sheet;
+  }
   var hasData = values.slice(1).some(function (r) { return r.some(function (c) { return c !== '' && c !== null; }); });
   if (hasData) {
     throw new Error('CNF_Goods_Invoices has rows in an older column layout. Move them to another sheet before using the CNF Invoices screen.');
@@ -110,6 +116,7 @@ function readCnfInvoices_() {
       decidedAt: r[14] instanceof Date ? r[14].toISOString() : String(r[14] || ''),
       rejectionReason: String(r[15] || ''),
       createdAt: r[16] instanceof Date ? r[16].toISOString() : String(r[16] || ''),
+      kind: String(r[17] || '').trim() === 'Ancillary' ? 'Ancillary' : 'Goods',
       rowNumber: i + 1
     });
   }
@@ -119,19 +126,22 @@ function readCnfInvoices_() {
 // invoice_no → { settledRmb, paidInr } from SettlementLedger. Counts the same
 // rows the frontend's computeBatchSettlementStatus treats as invoice
 // settlements: TxnType 'Invoice Settlement', or no TxnType and an
-// invoice_no other than 'ADVANCE'. paidInr = Σ |RMB| × ER2 (the rate each
-// payment actually settled at). Vendor discounts (DSC-) count toward
-// settledRmb (they can make an invoice fully paid) but not paidInr: CNF moved
-// no money for them, so they carry no commission.
+// invoice_no other than 'ADVANCE'. paidInr = Σ |RMB| × the actual rate of
+// the row's payment (cnfActualRates_), falling back to the row's stored ER2.
+// Vendor discounts (DSC-) count toward settledRmb (they can make an invoice
+// fully paid) but not paidInr: CNF moved no money for them, so they carry no
+// commission.
 function cnfSettledByInvoice_() {
   var t = cnfReadSheet_('SettlementLedger');
   var out = {};
   if (!t || t.values.length < 2) return out;
+  var rates = cnfActualRates_(t);
   var invCol = findHeaderIndex_(t.headers, 'invoice_no');
   var rmbCol = findHeaderIndex_(t.headers, 'RMB');
   var er2Col = findHeaderIndex_(t.headers, 'ER2');
   var typeCol = findHeaderIndex_(t.headers, 'TxnType');
   var pidCol = findHeaderIndex_(t.headers, 'Payment ID');
+  var venCol = findHeaderIndex_(t.headers, 'Vendor Code');
   for (var i = 1; i < t.values.length; i++) {
     var row = t.values[i];
     var inv = String(row[invCol] || '').trim();
@@ -140,26 +150,166 @@ function cnfSettledByInvoice_() {
     if (txnType && txnType !== 'Invoice Settlement') continue;
     var rmb = Math.abs(Number(row[rmbCol]) || 0);
     var er2 = Number(row[er2Col]) || 0;
+    var pid = pidCol === -1 ? '' : String(row[pidCol] || '').trim();
     var o = out[inv] || (out[inv] = { settledRmb: 0, paidInr: 0 });
     o.settledRmb += rmb;
     // A vendor discount (DSC-) settles the invoice but moves no money through CNF.
-    if (pidCol === -1 || !/^DSC-/i.test(String(row[pidCol] || '').trim())) o.paidInr += rmb * er2;
+    if (/^DSC-/i.test(pid)) continue;
+    var actual = pid ? rates.rateFor(pid, venCol === -1 ? '' : row[venCol]) : null;
+    o.paidInr += rmb * (actual === null ? er2 : actual);
   }
   return out;
 }
 
-// invoice_no → invoice RMB total, first row wins (same as the frontend's find()).
-function cnfInvoiceRmbByNo_() {
+// invoice_no → { rmb, er1, vendor, date, notes, type }, first row wins (same
+// as the frontend's find()). type is 'Ancillary' only when the Invoice Type
+// column says so; a blank or missing column is 'Goods'.
+function cnfPurchaseInvoiceInfo_() {
   var t = cnfReadSheet_('PurchaseInvoices');
   var out = {};
   if (!t) return out;
-  var invCol = findHeaderIndex_(t.headers, 'invoice_no');
-  var rmbCol = findHeaderIndex_(t.headers, 'RMB');
+  var h = t.headers;
+  var noCol = findHeaderIndex_(h, 'invoice_no'), vendorCol = findHeaderIndex_(h, 'Vendor Code');
+  var rmbCol = findHeaderIndex_(h, 'RMB'), er1Col = findHeaderIndex_(h, 'ER1');
+  var notesCol = findHeaderIndex_(h, 'Notes'), typeCol = findHeaderIndex_(h, 'Invoice Type');
   for (var i = 1; i < t.values.length; i++) {
-    var inv = String(t.values[i][invCol] || '').trim();
-    if (inv && !Object.prototype.hasOwnProperty.call(out, inv)) out[inv] = Number(t.values[i][rmbCol]) || 0;
+    var r = t.values[i];
+    var no = String(r[noCol] || '').trim();
+    if (!no || Object.prototype.hasOwnProperty.call(out, no)) continue;
+    out[no] = {
+      rmb: Number(r[rmbCol]) || 0,
+      er1: er1Col === -1 ? 0 : Number(r[er1Col]) || 0,
+      vendor: vendorCol === -1 ? '' : String(r[vendorCol] || '').trim(),
+      date: cnfYmd_(r[0]),
+      notes: notesCol === -1 ? '' : String(r[notesCol] || ''),
+      type: typeCol !== -1 && String(r[typeCol] || '').trim() === 'Ancillary' ? 'Ancillary' : 'Goods'
+    };
   }
   return out;
+}
+
+// The first shipment whose vendor invoice is invoiceNo, or ''.
+function cnfShipmentForVendorInvoice_(invoiceNo) {
+  var st = cnfReadSheet_('Vendor_Shipments');
+  if (!st) return '';
+  var sid = st.headers.indexOf('shipment_id'), inv = st.headers.indexOf('invoice_no');
+  if (sid === -1 || inv === -1) return '';
+  for (var i = 1; i < st.values.length; i++) {
+    if (String(st.values[i][inv] || '').trim() === invoiceNo) return String(st.values[i][sid] || '').trim();
+  }
+  return '';
+}
+
+// The CNF invoice number of a Pending Approval or Approved CNF invoice with a
+// line on vendor invoice invoiceNo (goods or ancillary), or ''.
+function cnfLiveCnfInvoiceForVendorInvoice_(invoiceNo) {
+  var hit = readCnfInvoices_().filter(function (inv) {
+    return (inv.status === 'Pending Approval' || inv.status === 'Approved') &&
+      (inv.lines || []).some(function (l) { return String(l.invoiceNo || '') === invoiceNo; });
+  })[0];
+  return hit ? hit.cnfInvoiceNo : '';
+}
+
+// What a payment actually cost per RMB — see
+// docs/superpowers/specs/2026-09-29-ancillary-cnf-invoices-design.md.
+// SettlementLedger keeps only the charge-adjusted rate; what we paid is the
+// payment's own ER2. A cross-vendor wallet (IDP-) holds only an adjusted
+// blend, so its cost is traced: the shortfall part through the settlements
+// of its XFER-<id>-<vendor> invoice (unpaid shortfall at that invoice's ER1),
+// the part drawn from the source's wallets scaled by the source's
+// actual ÷ adjusted ratio on its DP- payments up to the transfer date.
+// rateFor returns null when it can't tell; callers then keep the stored rate.
+// ledger / info are optional pre-read tables (cnfReadSheet_ / cnfPurchaseInvoiceInfo_).
+function cnfActualRates_(ledger, info) {
+  ledger = ledger || cnfReadSheet_('SettlementLedger');
+  info = info || cnfPurchaseInvoiceInfo_();
+  var payments = {};
+  var directs = [];
+  var pay = cnfReadSheet_('PaymentLogs');
+  if (pay && pay.values.length > 1) {
+    var h = pay.headers;
+    var c = {
+      date: findHeaderIndex_(h, 'Date'), id: findHeaderIndex_(h, 'Payment ID'), vendor: findHeaderIndex_(h, 'Vendor Code'),
+      rmb: findHeaderIndex_(h, 'RMB'), er2: findHeaderIndex_(h, 'ER2'), settled: findHeaderIndex_(h, 'Settled ER2'),
+      inr: findHeaderIndex_(h, 'INR Amount') !== -1 ? findHeaderIndex_(h, 'INR Amount') : findHeaderIndex_(h, 'INR'),
+      source: findHeaderIndex_(h, 'Source Vendor')
+    };
+    for (var i = 1; i < pay.values.length; i++) {
+      var r = pay.values[i];
+      var id = String(r[c.id] || '').trim();
+      if (!id) continue;
+      var p = {
+        id: id, vendor: String(r[c.vendor] || '').trim(), date: cnfYmd_(r[c.date]),
+        rmb: Number(r[c.rmb]) || 0, er2: Number(r[c.er2]) || 0,
+        source: c.source === -1 ? '' : String(r[c.source] || '').trim()
+      };
+      var settledEr2 = c.settled === -1 || r[c.settled] === '' || r[c.settled] === null ? p.er2 : Number(r[c.settled]) || p.er2;
+      p.inr = c.inr === -1 || r[c.inr] === '' || r[c.inr] === null ? p.rmb * p.er2 : Number(r[c.inr]) || 0;
+      payments[id + '|' + p.vendor] = p;
+      if (!payments[id]) payments[id] = p;
+      if (/^DP-/i.test(id) && p.rmb > 0 && settledEr2 > 0) directs.push({ vendor: p.vendor, date: p.date, inr: p.rmb * p.er2, adj: p.rmb * settledEr2 });
+    }
+  }
+
+  var xferRows = {};
+  if (ledger && ledger.values.length > 1) {
+    var invCol = findHeaderIndex_(ledger.headers, 'invoice_no'), pidCol = findHeaderIndex_(ledger.headers, 'Payment ID');
+    var venCol = findHeaderIndex_(ledger.headers, 'Vendor Code'), rmbCol = findHeaderIndex_(ledger.headers, 'RMB');
+    var er2Col = findHeaderIndex_(ledger.headers, 'ER2');
+    for (var j = 1; j < ledger.values.length; j++) {
+      var row = ledger.values[j];
+      var inv = String(row[invCol] || '').trim();
+      if (!/^XFER-/i.test(inv)) continue;
+      (xferRows[inv] = xferRows[inv] || []).push({
+        pid: String(row[pidCol] || '').trim(), vendor: venCol === -1 ? '' : String(row[venCol] || '').trim(),
+        rmb: Math.abs(Number(row[rmbCol]) || 0), er2: Number(row[er2Col]) || 0
+      });
+    }
+  }
+
+  function factor(source, date) {
+    var inr = 0, adj = 0;
+    directs.forEach(function (d) {
+      if ((source && d.vendor !== source) || d.date > date) return;
+      inr += d.inr; adj += d.adj;
+    });
+    return adj > 0 ? inr / adj : 1 + getConversionChargePercent_() / 100;
+  }
+
+  var memo = {}, visiting = {};
+  function rate(id, vendor, depth) {
+    var p = payments[id + '|' + vendor] || payments[id];
+    if (!p || !(p.rmb > 0)) return null;
+    if (/^DP-/i.test(id)) return p.er2 > 0 ? p.er2 : null;
+    if (!/^IDP-/i.test(id)) return null;
+    var key = id + '|' + p.vendor;
+    if (Object.prototype.hasOwnProperty.call(memo, key)) return memo[key];
+    if (depth >= 5 || visiting[key]) return null;
+    visiting[key] = true;
+    var xferNo = 'XFER-' + id + '-' + p.vendor;
+    var x = info[xferNo] || null;
+    var shortRmb = x ? Math.min(x.rmb, p.rmb) : 0;
+    var shortInr = 0;
+    if (x) {
+      var paidRmb = 0;
+      (xferRows[xferNo] || []).forEach(function (s) {
+        var sr = rate(s.pid, s.vendor, depth + 1);
+        shortInr += s.rmb * (sr === null ? s.er2 : sr);
+        paidRmb += s.rmb;
+      });
+      shortInr += Math.max(0, shortRmb - paidRmb) * x.er1;
+    }
+    var walletInr = 0;
+    if (p.rmb - shortRmb > 0.005) {
+      var adjInr = Math.max(0, p.inr - shortRmb * (x ? x.er1 : 0));
+      walletInr = adjInr * factor(p.source || (x ? x.vendor : ''), p.date);
+    }
+    delete visiting[key];
+    memo[key] = (shortInr + walletInr) / p.rmb;
+    return memo[key];
+  }
+
+  return { rateFor: function (paymentId, vendorCode) { return rate(String(paymentId || '').trim(), String(vendorCode || '').trim(), 0); } };
 }
 
 // shipmentId → { goods, total } claimed by CNF invoices. goods = the line
@@ -170,6 +320,7 @@ function cnfInvoiceRmbByNo_() {
 function cnfInvoicedByShipment_(invoices) {
   var out = {};
   invoices.forEach(function (inv) {
+    if (inv.kind === 'Ancillary') return;
     if (inv.status !== 'Pending Approval' && inv.status !== 'Approved') return;
     var lines = inv.lines || [];
     var goods = lines.reduce(function (s, l) { return s + (Number(l.amount) || 0); }, 0);
@@ -178,6 +329,20 @@ function cnfInvoicedByShipment_(invoices) {
       var amount = Number(l.amount) || 0;
       o.goods += amount;
       if (goods > 0) o.total += (Number(inv.total) || 0) * amount / goods;
+    });
+  });
+  return out;
+}
+
+// vendor invoice_no → INR claimed by Pending Approval / Approved ancillary CNF invoices.
+function cnfInvoicedByVendorInvoice_(invoices) {
+  var out = {};
+  invoices.forEach(function (inv) {
+    if (inv.kind !== 'Ancillary') return;
+    if (inv.status !== 'Pending Approval' && inv.status !== 'Approved') return;
+    (inv.lines || []).forEach(function (l) {
+      var no = String(l.invoiceNo || '');
+      out[no] = cnfRound2_((out[no] || 0) + (Number(l.amount) || 0));
     });
   });
   return out;
@@ -226,14 +391,14 @@ function getCnfShipmentValues_(invoices) {
     if (invNo) shipmentsPerInvoice[invNo] = (shipmentsPerInvoice[invNo] || 0) + 1;
   }
 
-  var invoiceRmbByNo = cnfInvoiceRmbByNo_();
+  var info = cnfPurchaseInvoiceInfo_();
   var settled = cnfSettledByInvoice_();
   var names = getCachedVendorNameMap_(ss);
   var partnerByBatch = spPartnerByBatch_();
 
   return ships.map(function (s) {
     var b = batchInfo[s.batchId] || { status: '', type: 'sea' };
-    var invoiceRmb = s.invoiceNo && Object.prototype.hasOwnProperty.call(invoiceRmbByNo, s.invoiceNo) ? invoiceRmbByNo[s.invoiceNo] : null;
+    var invoiceRmb = s.invoiceNo && Object.prototype.hasOwnProperty.call(info, s.invoiceNo) ? info[s.invoiceNo].rmb : null;
     var paid = settled[s.invoiceNo] || { settledRmb: 0, paidInr: 0 };
     var fullyPaid = invoiceRmb !== null && invoiceRmb > 0 && invoiceRmb - paid.settledRmb < 0.01;
     var partnerId = b.type === 'air' ? (partnerByBatch[s.batchId] || '') : '';
@@ -243,6 +408,7 @@ function getCnfShipmentValues_(invoices) {
     else if (!s.invoiceNo) reason = 'No vendor invoice on shipment';
     else if (shipmentsPerInvoice[s.invoiceNo] > 1) reason = 'Vendor invoice ' + s.invoiceNo + ' is shared by ' + shipmentsPerInvoice[s.invoiceNo] + ' shipments';
     else if (invoiceRmb === null) reason = 'Vendor invoice not in accounts yet';
+    else if (info[s.invoiceNo].type === 'Ancillary') reason = 'Vendor invoice ' + s.invoiceNo + ' is marked Ancillary';
     else if (!fullyPaid) reason = 'Vendor invoice not fully paid';
     var eligible = reason === '';
     var paidInr = cnfRound2_(paid.paidInr);
@@ -270,20 +436,50 @@ function getCnfShipmentValues_(invoices) {
   });
 }
 
+// One row per Ancillary vendor invoice. CNF can bill one once it is fully
+// paid, up to the INR actually paid for it; pending and approved ancillary
+// CNF invoices count as billed. invoices is optional (defaults to the live ones).
+function getCnfAncillaryValues_(invoices) {
+  var invoiced = cnfInvoicedByVendorInvoice_(invoices || readCnfInvoices_());
+  var info = cnfPurchaseInvoiceInfo_();
+  var settled = cnfSettledByInvoice_();
+  var names = getCachedVendorNameMap_(SpreadsheetApp.getActiveSpreadsheet());
+  return Object.keys(info).filter(function (no) { return info[no].type === 'Ancillary'; }).map(function (no) {
+    var i = info[no];
+    var paid = settled[no] || { settledRmb: 0, paidInr: 0 };
+    var fullyPaid = i.rmb > 0 && i.rmb - paid.settledRmb < 0.01;
+    var eligible = fullyPaid;
+    var paidInr = cnfRound2_(paid.paidInr);
+    var invoicedInr = cnfRound2_(invoiced[no] || 0);
+    return {
+      invoiceNo: no, vendorCode: i.vendor, vendorName: names[i.vendor] || i.vendor, date: i.date, notes: i.notes,
+      invoiceRmb: i.rmb, paidInr: paidInr, fullyPaid: fullyPaid, invoicedInr: invoicedInr,
+      remainingInr: eligible ? cnfRound2_(Math.max(0, paidInr - invoicedInr)) : 0,
+      invoiceStatus: invoicedInr < 0.01 ? 'Not invoiced' : (paidInr - invoicedInr < 1 ? 'Fully invoiced' : 'Part invoiced'),
+      eligible: eligible,
+      ineligibleReason: eligible ? '' : 'Vendor invoice not fully paid'
+    };
+  });
+}
+
 function cnfRequireUser_(payload) {
   var who = String((payload && payload.user_email) || '').trim();
   if (!who) throw new Error('Your identity could not be verified. Sign in again and retry.');
   return who;
 }
 
-// payload: { cnfInvoiceNo, invoiceDate (yyyy-mm-dd), fileUrl, lines:
-// [{ shipmentId, amount }], baseAmount, gst, total, overrideReason,
-// user_email (stamped by the proxy) }. Everything is re-validated under the
-// script lock against fresh sheet data; the screen's own caps are only a
-// convenience.
+// payload: { kind ('Goods' default | 'Ancillary'), cnfInvoiceNo, invoiceDate
+// (yyyy-mm-dd), fileUrl, lines, baseAmount, gst, total, overrideReason,
+// user_email (stamped by the proxy) }. Goods lines are [{ shipmentId, amount }];
+// ancillary lines are [{ invoiceNo, amount }]. One kind per invoice.
+// Everything is re-validated under the script lock against fresh sheet data;
+// the screen's own caps are only a convenience.
 function logCnfGoodsInvoice_(payload) {
   var p = payload || {};
   var submittedBy = cnfRequireUser_(p);
+  var kind = p.kind === undefined || p.kind === null || p.kind === '' ? 'Goods' : String(p.kind);
+  if (kind !== 'Goods' && kind !== 'Ancillary') throw new Error('kind must be Goods or Ancillary');
+  var ancillary = kind === 'Ancillary';
   var cnfInvoiceNo = String(p.cnfInvoiceNo || '').trim();
   var invoiceDate = String(p.invoiceDate || '').trim();
   var fileUrl = String(p.fileUrl || '').trim();
@@ -299,17 +495,19 @@ function logCnfGoodsInvoice_(payload) {
   if (!(baseAmount > 0)) throw new Error('Base amount must be a positive number');
   if (isNaN(gst) || gst < 0) throw new Error('GST must be zero or more');
   if (!(total > 0)) throw new Error('Total must be a positive number');
-  if (linesIn.length === 0) throw new Error('Pick at least one shipment');
+  if (linesIn.length === 0) throw new Error(ancillary ? 'Pick at least one ancillary invoice' : 'Pick at least one shipment');
 
+  var keyField = ancillary ? 'invoiceNo' : 'shipmentId';
+  var what = ancillary ? 'Ancillary invoice ' : 'Shipment ';
   var seen = {};
   var requested = linesIn.map(function (l, i) {
-    var sid = String((l && l.shipmentId) || '').trim();
+    var key = String((l && l[keyField]) || '').trim();
     var amount = cnfRound2_(l && l.amount);
-    if (!sid) throw new Error('Line ' + (i + 1) + ' has no shipment');
-    if (seen[sid]) throw new Error('Shipment ' + sid + ' is listed twice');
-    seen[sid] = true;
-    if (!(amount > 0)) throw new Error('Amount for shipment ' + sid + ' must be positive');
-    return { shipmentId: sid, amount: amount };
+    if (!key) throw new Error('Line ' + (i + 1) + (ancillary ? ' has no vendor invoice' : ' has no shipment'));
+    if (seen[key]) throw new Error(what + key + ' is listed twice');
+    seen[key] = true;
+    if (!(amount > 0)) throw new Error('Amount for ' + what.toLowerCase() + key + ' must be positive');
+    return { key: key, amount: amount };
   });
 
   var lock = LockService.getScriptLock();
@@ -322,32 +520,40 @@ function logCnfGoodsInvoice_(payload) {
     });
     if (duplicate) throw new Error('CNF invoice ' + cnfInvoiceNo + ' is already logged');
 
-    var byShipment = {};
-    getCnfShipmentValues_(existing).forEach(function (v) { byShipment[v.shipmentId] = v; });
+    var byKey = {};
+    (ancillary ? getCnfAncillaryValues_(existing) : getCnfShipmentValues_(existing)).forEach(function (v) { byKey[v[keyField]] = v; });
 
     var lines = requested.map(function (l) {
-      var v = byShipment[l.shipmentId];
-      if (!v) throw new Error('Shipment ' + l.shipmentId + ' not found');
-      if (!v.eligible) throw new Error('Shipment ' + l.shipmentId + " can't be CNF-invoiced: " + v.ineligibleReason);
+      var v = byKey[l.key];
+      if (!v) throw new Error(what + l.key + ' not found');
+      if (!v.eligible) throw new Error(what + l.key + " can't be CNF-invoiced: " + v.ineligibleReason);
       if (l.amount > v.remainingInr + 0.01) {
-        throw new Error('Shipment ' + l.shipmentId + ' has only ' + cnfFmtInr_(v.remainingInr) + ' left to invoice');
+        throw new Error(what + l.key + ' has only ' + cnfFmtInr_(v.remainingInr) + ' left to invoice');
       }
-      return { batchId: v.batchId, shipmentId: v.shipmentId, vendorCode: v.vendorCode, invoiceNo: v.invoiceNo, amount: l.amount };
+      return ancillary
+        ? { invoiceNo: v.invoiceNo, vendorCode: v.vendorCode, amount: l.amount }
+        : { batchId: v.batchId, shipmentId: v.shipmentId, vendorCode: v.vendorCode, invoiceNo: v.invoiceNo, amount: l.amount };
     });
 
     var purchaseValue = cnfRound2_(lines.reduce(function (s, l) { return s + l.amount; }, 0));
     var serviceCharge = cnfRound2_(baseAmount - purchaseValue);
-    var totalMismatch = Math.abs(baseAmount + gst - total) >= 1;
-    if (totalMismatch && !overrideReason) throw new Error("Base + GST doesn't match Total. Give an override reason to save anyway.");
-    if (serviceCharge < 0 && !overrideReason) throw new Error('Service charge is negative (CNF billed less than the goods value). Give an override reason to save anyway.');
-    // KREIZ charges no commission on air batches another partner shipped.
-    var partnerShippedOnly = lines.every(function (l) {
-      var v = byShipment[l.shipmentId];
-      return v.batchType === 'air' && v.shippingPartnerId && v.shippingPartnerId !== CNF_VENDOR_CODE_;
-    });
-    if (partnerShippedOnly && serviceCharge >= 1 && !overrideReason) {
-      throw new Error('These batches were shipped by another partner, so CNF should bill no service charge (billed ' +
-        cnfFmtInr_(serviceCharge) + '). Give an override reason to save anyway.');
+    var need = function (msg) { if (!overrideReason) throw new Error(msg + ' Give an override reason to save anyway.'); };
+    if (Math.abs(baseAmount + gst - total) >= 1) need("Base + GST doesn't match Total.");
+    if (ancillary ? serviceCharge <= -1 : serviceCharge < 0) need('Service charge is negative (CNF billed less than the ' + (ancillary ? 'INR paid' : 'goods value') + ').');
+    var gstPct = getIgstPercent_();
+    var expectedGst = cnfRound2_(baseAmount * gstPct / 100);
+    if (Math.abs(gst - expectedGst) >= 1) need('GST should be ' + gstPct + '% of the base (' + cnfFmtInr_(expectedGst) + '); billed ' + cnfFmtInr_(gst) + '.');
+    if (ancillary) {
+      if (serviceCharge >= 1) need('CNF charges no commission on ancillary invoices (billed ' + cnfFmtInr_(serviceCharge) + ').');
+    } else {
+      // KREIZ charges no commission on air batches another partner shipped.
+      var partnerShippedOnly = lines.every(function (l) {
+        var v = byKey[l.shipmentId];
+        return v.batchType === 'air' && v.shippingPartnerId && v.shippingPartnerId !== CNF_VENDOR_CODE_;
+      });
+      if (partnerShippedOnly && serviceCharge >= 1) {
+        need('These batches were shipped by another partner, so CNF should bill no service charge (billed ' + cnfFmtInr_(serviceCharge) + ').');
+      }
     }
 
     // Row count keeps ids unique even for two saves in the same millisecond.
@@ -355,9 +561,9 @@ function logCnfGoodsInvoice_(payload) {
     sheet.appendRow([
       id, cnfInvoiceNo, invoiceDate, fileUrl, JSON.stringify(lines),
       cnfRound2_(baseAmount), purchaseValue, serviceCharge, cnfRound2_(gst), cnfRound2_(total),
-      'Pending Approval', overrideReason, submittedBy, '', '', '', new Date().toISOString()
+      'Pending Approval', overrideReason, submittedBy, '', '', '', new Date().toISOString(), kind
     ]);
-    return { status: 'success', id: id, purchaseValue: purchaseValue, serviceCharge: serviceCharge };
+    return { status: 'success', id: id, kind: kind, purchaseValue: purchaseValue, serviceCharge: serviceCharge };
   } finally {
     lock.releaseLock();
   }
@@ -409,6 +615,10 @@ function rejectCnfGoodsInvoice_(payload) {
 }
 
 function cnfInvoiceDescription_(inv) {
+  if (inv.kind === 'Ancillary') {
+    var items = (inv.lines || []).map(function (l) { return l.invoiceNo + ' (' + l.vendorCode + ') ' + cnfFmtInr_(l.amount); });
+    return 'CNF ' + inv.cnfInvoiceNo + ' · ancillary · ' + items.join(' + ') + ' · GST ' + cnfFmtInr_(inv.gst);
+  }
   var parts = (inv.lines || []).map(function (l) { return l.batchId + '/' + l.shipmentId + ' ' + cnfFmtInr_(l.amount); });
   return 'CNF ' + inv.cnfInvoiceNo + ' · ' + parts.join(' + ') +
     ' · goods ' + cnfFmtInr_(inv.purchaseValue) + ' · service ' + cnfFmtInr_(inv.serviceCharge) + ' · GST ' + cnfFmtInr_(inv.gst);
@@ -455,7 +665,7 @@ function getCnfLedgerStatement_(payload) {
   readCnfInvoices_().forEach(function (inv) {
     if (inv.status !== 'Approved') return;
     entries.push({
-      date: inv.invoiceDate, order: 1, type: 'Tax invoice', reference: inv.cnfInvoiceNo,
+      date: inv.invoiceDate, order: 1, type: inv.kind === 'Ancillary' ? 'Tax invoice (ancillary)' : 'Tax invoice', reference: inv.cnfInvoiceNo,
       description: cnfInvoiceDescription_(inv), paid: 0, billed: cnfRound2_(inv.total)
     });
   });
