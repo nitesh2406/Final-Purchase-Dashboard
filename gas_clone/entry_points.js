@@ -269,10 +269,6 @@ function doPostInner_(e) {
         result = apiRetryEasyEcomPush(payload);
         break;
 
-      case 'get_cnf_eligible_batches':
-        result = getCnfEligibleBatches();
-        break;
-
       case 'backfill_batch_settlement_aggregates':
         result = backfillBatchSettlementAggregates_();
         break;
@@ -510,43 +506,11 @@ function doPostInner_(e) {
         result = apiGetShipmentPartners_(payload);
         break;
 
-      case 'get_cnf_ledger':
-        result = getCnfLedgerEntries_();
-        break;
-
-      case 'add_cnf_ledger_entry':
-        result = addCnfLedgerEntry_(payload);
-        break;
-
-      case 'get_cnf_shipment_bill_status':
-        return successResponse_({ rows: getCnfShipmentBillStatusRows_() });
-
-      // DO NOT invoke from the frontend — one-time migration, run manually
-      // and only with explicit confirmation (writes real billing-status
-      // data). See backfillCnfShipmentBillStatus_ in accounting_logger.js.
-      case 'backfill_cnf_shipment_bill_status':
-        result = backfillCnfShipmentBillStatus_();
-        break;
-
-      case 'request_cnf_bill':
-        result = requestCnfBill_(payload);
-        break;
-
-      case 'get_cnf_invoice_batches':
-        result = getCnfInvoiceBatches_();
-        break;
-
-      case 'create_cnf_invoice_batch':
-        result = createCnfInvoiceBatch_(payload);
-        break;
-
-      case 'approve_cnf_invoice_batch':
-        result = approveCnfInvoiceBatch(payload);
-        break;
-
-      case 'reject_cnf_invoice_batch':
-        result = rejectCnfInvoiceBatch(payload);
-        break;
+      // The retired CNF commission-bill actions (get_cnf_eligible_batches,
+      // get_cnf_ledger, add_cnf_ledger_entry, *cnf_shipment_bill_status,
+      // request_cnf_bill, *cnf_invoice_batch) are no longer routed — replaced
+      // by the CNF unified tab below. Their functions stay in
+      // accounting_logger.js so the old sheets remain readable.
 
       case 'get_bundle':
         return getBundle_(payload);
@@ -732,9 +696,8 @@ var BUNDLE_READ_ACTIONS_ = {
   get_drafts: true, get_pos: true, get_vendor_masters: true,
   get_purchase_invoices: true, get_payment_logs: true, get_settlement_records: true,
   get_vendor_ledger: true, get_vendor_shipments: true,
-  get_cnf_eligible_batches: true, get_cnf_shipment_values: true, get_cnf_goods_invoices: true,
+  get_cnf_shipment_values: true, get_cnf_goods_invoices: true,
   get_cnf_ledger_statement: true, get_cnf_draft_invoices: true,
-  get_cnf_ledger: true, get_cnf_invoice_batches: true, get_cnf_shipment_bill_status: true,
   get_batches: true, get_product_master: true
 };
 

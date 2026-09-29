@@ -430,8 +430,10 @@ function getCnfAirRateCategoriesSheet_() {
   return sheet;
 }
 
+// Read-only: a missing sheet means no categories yet (saving creates it).
 function getCnfAirRateCategories_() {
-  const sheet = getCnfAirRateCategoriesSheet_();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CNF_Air_Rate_Categories');
+  if (!sheet) return [];
   const data = sheet.getDataRange().getValues();
   const rows = [];
   for (let i = 1; i < data.length; i++) {

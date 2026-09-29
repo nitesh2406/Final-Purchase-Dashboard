@@ -400,7 +400,7 @@ function cnfInvoiceDescription_(inv) {
 // direct payments (DP-) for non-INR vendors, and every payment logged under
 // CNF's own vendor code. Billed by CNF (−): approved CNF invoice totals.
 // openAdvance on a paid row = what is left of it after all approved billing
-// is applied to paid rows oldest-first. Optional from/to (yyyy-mm-dd): rows
+// (up to `to`, if given) is applied to paid rows oldest-first. Optional from/to (yyyy-mm-dd): rows
 // before `from` fold into openingBalance; rows after `to` are left out.
 function getCnfLedgerStatement_(payload) {
   var from = payload && payload.from ? String(payload.from).trim() : '';
@@ -448,7 +448,8 @@ function getCnfLedgerStatement_(payload) {
     return a.reference < b.reference ? -1 : a.reference > b.reference ? 1 : 0;
   });
 
-  var billedLeft = entries.reduce(function (s, e) { return s + e.billed; }, 0);
+  // Only billing up to the To date can have used an advance shown in range.
+  var billedLeft = entries.reduce(function (s, e) { return (to && e.date > to) ? s : s + e.billed; }, 0);
   entries.forEach(function (e) {
     if (e.paid > 0) {
       var used = Math.min(e.paid, billedLeft);
