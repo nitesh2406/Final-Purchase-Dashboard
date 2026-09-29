@@ -13,7 +13,7 @@ export const LogInvoice: React.FC<{
 }> = (props) => (
   <div className="p-6 max-w-3xl mx-auto space-y-6">
     <div>
-      <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Log Invoice</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Vendor Invoice Entry</h1>
       <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Record an invoice a vendor has raised on us. It shows in Accounts View once saved.</p>
     </div>
     <Card className="p-6">
