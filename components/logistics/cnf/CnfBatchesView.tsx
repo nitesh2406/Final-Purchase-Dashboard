@@ -9,14 +9,17 @@ import {
   fetchCnfCommissionRates,
   fetchCnfAirRateCategories,
   fetchShipmentPartnerDefaults,
+  fetchIgstRate,
   computeBatchSettlementStatus,
   PurchaseInvoice,
   SettlementRecord,
 } from '../../../services/settlementService';
-import { fetchCnfShipmentValues } from '../../../services/cnfService';
-import type { Batch, CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentValue } from '../../../types';
+import { fetchCnfShipmentValues, fetchCnfDraftInvoices } from '../../../services/cnfService';
+import type { Batch, CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentValue, CnfDraftInvoice } from '../../../types';
+import { CnfDraftInvoiceModal } from './CnfDraftInvoiceModal';
 import { computeExpectedCnfCharge } from './expectedCharge';
 import { fmtInr, fmtRmb } from './cnfFormat';
+import { readViewCache, writeViewCache } from './viewCache';
 
 type PaymentStatus = 'Paid' | 'Partial' | 'Unpaid' | 'Not Invoiced';
 const PAYMENT_BADGE_CLASS: Record<PaymentStatus, string> = {
@@ -41,21 +44,24 @@ interface LoadedData {
   seaRates: CnfCommissionRate[];
   airCategories: CnfAirRateCategory[];
   partnerDefaults: CnfShipmentPartnerDefault[];
+  drafts: CnfDraftInvoice[];
+  igstPct: number;
 }
 
 export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey }) => {
   const [mode, setMode] = useQueryParam<'sea' | 'air'>('cnfMode', 'sea');
   const [filter, setFilter] = useState<Filter>('all');
-  const [data, setData] = useState<LoadedData | null>(null);
+  const [data, setData] = useState<LoadedData | null>(() => readViewCache<LoadedData>('batches') ?? null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [draftFor, setDraftFor] = useState<string | null>(null);
 
   const load = async (force: boolean) => {
     if (force) invalidateReadCache();
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [batchesRes, shipments, purchaseInvoices, settlements, seaRates, airCategories, partnerDefaults] = await Promise.all([
+      const [batchesRes, shipments, purchaseInvoices, settlements, seaRates, airCategories, partnerDefaults, drafts, igstPct] = await Promise.all([
         callGasAuthed('get_batches', {}, 1),
         fetchCnfShipmentValues(),
         fetchPurchaseInvoices(),
@@ -63,9 +69,13 @@ export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey })
         fetchCnfCommissionRates(),
         fetchCnfAirRateCategories(),
         fetchShipmentPartnerDefaults(),
+        fetchCnfDraftInvoices(),
+        fetchIgstRate(),
       ]);
       if (!batchesRes || batchesRes.status !== 'success') throw new Error((batchesRes && batchesRes.message) || 'Failed to load batches');
-      setData({ batches: batchesRes.batches || [], shipments, purchaseInvoices, settlements, seaRates, airCategories, partnerDefaults });
+      const loaded = { batches: batchesRes.batches || [], shipments, purchaseInvoices, settlements, seaRates, airCategories, partnerDefaults, drafts, igstPct };
+      writeViewCache('batches', loaded);
+      setData(loaded);
     } catch (err: any) {
       setLoadError(err.message || 'Failed to load batches');
     } finally {
@@ -83,18 +93,24 @@ export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey })
       list.push(s);
       shipmentsByBatch.set(s.batchId, list);
     });
+    const draftsByBatch = new Map(data.drafts.map(d => [d.batchId, d]));
     return data.batches
       .filter(b => b.batch_type === mode)
       .map(b => {
         const linkedInvoiceIds = (b.vendor_shipments || []).map(vs => vs.invoiceId || '');
         const paymentStatus: PaymentStatus = (b.payment_status as PaymentStatus | null | undefined)
           || computeBatchSettlementStatus(linkedInvoiceIds, data.purchaseInvoices, data.settlements).status;
-        const eligible = (shipmentsByBatch.get(b.batch_id) || []).filter(s => s.eligible);
+        const batchShipments = shipmentsByBatch.get(b.batch_id) || [];
+        const eligible = batchShipments.filter(s => s.eligible);
         const eligibleValue = eligible.reduce((sum, s) => sum + s.paidInr, 0);
         const invoiced = eligible.reduce((sum, s) => sum + s.invoicedInr, 0);
+        const invoicedTotal = batchShipments.reduce((sum, s) => sum + (s.invoicedTotalInr || 0), 0);
         const openToInvoice = eligible.some(s => s.remainingInr >= 1);
         const expected = computeExpectedCnfCharge(b, data.seaRates, data.airCategories, data.partnerDefaults);
-        return { batch: b, paymentStatus, eligibleValue, invoiced, openToInvoice, expected };
+        // Same test save_cnf_draft_invoice applies on the server.
+        const canDraft = b.status === 'Delivered' && batchShipments.length > 0 && batchShipments.every(s => s.eligible);
+        const draft = draftsByBatch.get(b.batch_id);
+        return { batch: b, paymentStatus, eligibleValue, invoiced, invoicedTotal, openToInvoice, expected, canDraft, draft };
       });
   }, [data, mode]);
 
@@ -132,7 +148,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey })
         <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
           <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">{mode === 'air' ? 'Air' : 'Sea'} Batches ({visibleRows.length})</h3>
           <p className="text-xs text-slate-400 mt-0.5">
-            Expected CNF charge is an estimate from Settings rates, to sanity-check the service charge on CNF's invoice. "CNF invoiced" counts pending and approved CNF invoices against delivered, fully paid shipments.
+            Expected CNF charge is an estimate from Settings rates. "CNF invoiced" compares CNF's invoice totals (pending and approved) with the batch's saved draft invoice; without a draft it compares goods only.
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -155,7 +171,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey })
                 <tr><td colSpan={mode === 'air' ? 9 : 8} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
               ) : visibleRows.length === 0 ? (
                 <tr><td colSpan={mode === 'air' ? 9 : 8} className="px-4 py-8 text-center text-slate-400">No batches match.</td></tr>
-              ) : visibleRows.map(({ batch, paymentStatus, eligibleValue, invoiced, expected }) => (
+              ) : visibleRows.map(({ batch, paymentStatus, eligibleValue, invoiced, invoicedTotal, expected, canDraft, draft }) => (
                 <tr key={batch.batch_id}>
                   <td className="px-4 py-3 font-mono">{batch.batch_id}</td>
                   <td className="px-4 py-3">
@@ -178,8 +194,25 @@ export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey })
                     <div className="font-mono">{expected.amount != null ? fmtInr(expected.amount) : dash}</div>
                     <div className="text-[10px] text-slate-400">{expected.categoryLabel ? `${expected.categoryLabel} · ` : ''}{expected.note}</div>
                   </td>
-                  <td className="px-4 py-3 text-right font-mono">
-                    {eligibleValue > 0 ? `${fmtInr(invoiced)} of ${fmtInr(eligibleValue)}` : dash}
+                  <td className="px-4 py-3 text-right">
+                    {draft ? (
+                      <>
+                        <div className="font-mono">{fmtInr(invoicedTotal)} of {fmtInr(draft.total)}</div>
+                        <div className="text-[10px] text-slate-400">
+                          goods {fmtInr(draft.goodsValue)} · charge {fmtInr(draft.charge)} · GST {fmtInr(draft.gst)} · draft by {draft.generatedBy}, {draft.generatedAt.slice(0, 10)}
+                        </div>
+                      </>
+                    ) : eligibleValue > 0 ? (
+                      <>
+                        <div className="font-mono">{fmtInr(invoiced)} of {fmtInr(eligibleValue)}</div>
+                        <div className="text-[10px] text-slate-400">goods only</div>
+                      </>
+                    ) : dash}
+                    {canDraft && (
+                      <button className="mt-1 text-[11px] font-bold text-primary-600 hover:underline" onClick={() => setDraftFor(batch.batch_id)}>
+                        {draft ? 'Regenerate' : 'Generate Draft Invoice'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -187,6 +220,23 @@ export const CnfBatchesView: React.FC<{ refreshKey: number }> = ({ refreshKey })
           </table>
         </div>
       </Card>
+      {draftFor && data && (() => {
+        const row = rows.find(r => r.batch.batch_id === draftFor);
+        if (!row) return null;
+        return (
+          <CnfDraftInvoiceModal
+            batch={row.batch}
+            goodsValue={row.eligibleValue}
+            igstPct={data.igstPct}
+            seaRates={data.seaRates}
+            airCategories={data.airCategories}
+            partnerDefaults={data.partnerDefaults}
+            existing={row.draft}
+            onClose={() => setDraftFor(null)}
+            onSaved={() => { setDraftFor(null); load(true); }}
+          />
+        );
+      })()}
     </div>
   );
 };

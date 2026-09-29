@@ -5,6 +5,7 @@ import { invalidateReadCache } from '../../../services/gasApi';
 import { fetchCnfLedgerStatement } from '../../../services/cnfService';
 import type { CnfLedgerStatement } from '../../../types';
 import { fmtInr } from './cnfFormat';
+import { readViewCache, writeViewCache } from './viewCache';
 
 const csvCell = (v: string | number | null) => {
   const s = v === null || v === undefined ? '' : String(v);
@@ -14,7 +15,7 @@ const csvCell = (v: string | number | null) => {
 export const CnfLedgerView: React.FC<{ refreshKey: number }> = ({ refreshKey }) => {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [statement, setStatement] = useState<CnfLedgerStatement | null>(null);
+  const [statement, setStatement] = useState<CnfLedgerStatement | null>(() => readViewCache<CnfLedgerStatement>('ledger||') ?? null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -23,7 +24,9 @@ export const CnfLedgerView: React.FC<{ refreshKey: number }> = ({ refreshKey }) 
     setIsLoading(true);
     setLoadError(null);
     try {
-      setStatement(await fetchCnfLedgerStatement({ from, to }));
+      const s = await fetchCnfLedgerStatement({ from, to });
+      writeViewCache(`ledger|${from}|${to}`, s);
+      setStatement(s);
     } catch (err: any) {
       setLoadError(err.message || 'Failed to load the CNF ledger');
     } finally {

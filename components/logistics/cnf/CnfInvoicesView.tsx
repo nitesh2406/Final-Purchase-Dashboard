@@ -6,6 +6,7 @@ import { fetchCnfShipmentValues, fetchCnfGoodsInvoices, approveCnfGoodsInvoice, 
 import type { CnfShipmentValue, CnfGoodsInvoice } from '../../../types';
 import { LogCnfInvoiceModal } from './LogCnfInvoiceModal';
 import { fmtInr } from './cnfFormat';
+import { readViewCache, writeViewCache } from './viewCache';
 
 const STATUS_BADGE: Record<string, string> = {
   'Not invoiced': 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400',
@@ -18,8 +19,9 @@ const STATUS_BADGE: Record<string, string> = {
 const badge = (s: string) => `px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${STATUS_BADGE[s] || 'bg-slate-100 text-slate-500'}`;
 
 export const CnfInvoicesView: React.FC<{ refreshKey: number }> = ({ refreshKey }) => {
-  const [shipments, setShipments] = useState<CnfShipmentValue[]>([]);
-  const [invoices, setInvoices] = useState<CnfGoodsInvoice[]>([]);
+  const cached = readViewCache<{ shipments: CnfShipmentValue[]; invoices: CnfGoodsInvoice[] }>('invoices');
+  const [shipments, setShipments] = useState<CnfShipmentValue[]>(cached?.shipments ?? []);
+  const [invoices, setInvoices] = useState<CnfGoodsInvoice[]>(cached?.invoices ?? []);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -34,6 +36,7 @@ export const CnfInvoicesView: React.FC<{ refreshKey: number }> = ({ refreshKey }
     setLoadError(null);
     try {
       const [s, i] = await Promise.all([fetchCnfShipmentValues(), fetchCnfGoodsInvoices()]);
+      writeViewCache('invoices', { shipments: s, invoices: i });
       setShipments(s);
       setInvoices(i);
     } catch (err: any) {
