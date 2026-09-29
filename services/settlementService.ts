@@ -1042,6 +1042,7 @@ export interface PaymentLog {
   inrAmount: number;     // Mapped to 'INR Amount' (DECIMAL)
   paymentMode?: string;  // Payment Mode / Optional selection
   referenceNo?: string;  // Reference No / Optional text input
+  sourceInvoice?: string; // DSC- (vendor discount) rows only: the invoice the discount was given on
   allocations?: PaymentLogAllocation[]; // Optional allocation panel distribution
   isCrossVendor?: boolean; // Flag to indicate if this payment spans multiple vendors
   balance?: number;      // Tracks active unspent balance
@@ -1103,6 +1104,7 @@ export async function fetchPaymentLogs(): Promise<PaymentLog[]> {
         inrAmount: parseFloat(row['INR Amount'] || row.INR || row.inrAmount || row.inr || '0') || 0,
         paymentMode: row['Payment Mode'] || row.paymentMode || '',
         referenceNo: row['Reference No'] || row.referenceNo || '',
+        sourceInvoice: row['Source Invoice'] || row.sourceInvoice || '',
         allocations: row.Allocations ? (typeof row.Allocations === 'string' ? JSON.parse(row.Allocations) : row.Allocations) : undefined,
         // row.Balance may legitimately be 0 (wallet fully consumed) — `||` treats 0 as
         // falsy and would wrongly fall through to the full RMB amount, reporting a spent
