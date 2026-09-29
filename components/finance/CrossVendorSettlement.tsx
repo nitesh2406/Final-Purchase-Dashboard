@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { viewToPath } from '../../routes';
 import {
   ArrowLeft,
   Calendar,
@@ -54,6 +55,9 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
   onRefresh
 }) => {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // The settlement ledger itself lives in Accounts View (its Settlement Ledger sub-tab).
+  const goToSettlementLedger = () => navigate(`${viewToPath('Accounts View')}?accountsTab=settlement_ledger`);
   const prefillPayingVendor = searchParams.get('payingVendor') || '';
 
   const VENDOR_OPTIONS = useMemo(() => {
@@ -268,7 +272,7 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => onNavigate && onNavigate('Accounts View')}
+                  onClick={goToSettlementLedger}
                   className="flex-1 py-3 px-4 bg-gray-900 dark:bg-gray-805 hover:bg-gray-800 text-white font-bold rounded-xl text-xs transition active:scale-95 text-center flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <ArrowLeft className="w-4 h-4" />
@@ -282,7 +286,7 @@ export const CrossVendorSettlement: React.FC<CrossVendorSettlementProps> = ({
         <div className="max-w-4xl mx-auto space-y-6">
           <div className="flex items-center justify-between">
             <button
-              onClick={() => onNavigate && onNavigate('Accounts View')}
+              onClick={goToSettlementLedger}
               className="flex items-center gap-2 text-xs font-bold text-gray-650 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition group py-1 cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4 transform group-hover:-translate-x-1 transition-transform" />
