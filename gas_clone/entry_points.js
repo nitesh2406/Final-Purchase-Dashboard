@@ -574,6 +574,13 @@ function doPostInner_(e) {
         result = rejectCnfGoodsInvoice_(payload);
         break;
 
+      case 'get_cnf_draft_invoices':
+        return successResponse_({ drafts: getCnfDraftInvoices_() });
+
+      case 'save_cnf_draft_invoice':
+        result = saveCnfDraftInvoice_(payload);
+        break;
+
       // Payment reset & replay (payment_reset.js) — admin tooling called with
       // curl; see docs/superpowers/specs/2026-09-28-payment-reset-replay-design.md.
       case 'payment_reset_backup':
@@ -726,7 +733,7 @@ var BUNDLE_READ_ACTIONS_ = {
   get_purchase_invoices: true, get_payment_logs: true, get_settlement_records: true,
   get_vendor_ledger: true, get_vendor_shipments: true,
   get_cnf_eligible_batches: true, get_cnf_shipment_values: true, get_cnf_goods_invoices: true,
-  get_cnf_ledger_statement: true,
+  get_cnf_ledger_statement: true, get_cnf_draft_invoices: true,
   get_cnf_ledger: true, get_cnf_invoice_batches: true, get_cnf_shipment_bill_status: true,
   get_batches: true, get_product_master: true
 };
