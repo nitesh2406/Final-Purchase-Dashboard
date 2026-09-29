@@ -4,7 +4,6 @@ import { viewToPath } from '../../routes';
 import { useQueryParam, useQueryParamFast } from '../../hooks/useQueryParam';
 import {
   getPurchaseInvoices,
-  submitPurchaseInvoice,
   fetchHistoricalFxRates,
   PurchaseInvoice,
   logAdjustmentTransfer,
@@ -13,10 +12,9 @@ import {
   getPaymentLogs,
   PaymentLog,
   SettlementRecord,
-  VendorLedgerEntry,
-  IS_DEVELOPMENT_MODE
+  VendorLedgerEntry
 } from '../../services/settlementService';
-import { VendorMaster, submitVendorAccount } from '../../services/settlementService';
+import { VendorMaster } from '../../services/settlementService';
 import { useSubmissionLock } from '../../hooks/useSubmissionLock';
 import { 
   Plus, 
@@ -89,7 +87,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
 }) => {
   // Navigation & UI tabs
   const [activeTab, setActiveTab ] = useQueryParam<ActiveTabType>('accountsTab', 'purchase_entries');
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -124,16 +121,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     }).catch(() => {});
   }, []);
 
-  // New Invoice form inputs (isolated entirely from ER1 & INR)
-  const [newInvoice, setNewInvoice] = useState({
-    date: new Date().toISOString().split('T')[0],
-    invoiceId: '',
-    vendorCode: vendors[0]?.vendor_id || '',
-    customVendorCode: '',
-    customVendorName: '',
-    rmb: '',
-    notes: ''
-  });
 
   // Unique vendor codes for filter/form select lists 
   const VENDOR_OPTIONS = useMemo(() => {
@@ -436,158 +423,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     };
   }, [invoices, inrVendorCodes, lastClosingRate]);
 
-  const { isSubmitting: isSubmittingInvoice, withSubmissionGuard: withInvoiceGuard } = useSubmissionLock();
-
-  // Handle invoice form submit
-  const handleCreateInvoice = (e: React.FormEvent) => {
-    e.preventDefault();
-    withInvoiceGuard(async () => {
-      setErrorBanner(null);
-      setSuccessBanner(null);
-
-      const actualVendorCode = newInvoice.vendorCode === 'CUSTOM' 
-        ? newInvoice.customVendorCode.trim().toUpperCase() 
-        : newInvoice.vendorCode;
-
-      const actualInvoiceId = newInvoice.invoiceId.trim().toUpperCase();
-
-      if (!actualInvoiceId) {
-        setErrorBanner('Please provide a unique, descriptive Invoice ID.');
-        return;
-      }
-      if (!actualVendorCode) {
-        setErrorBanner('Vendor code cannot be empty.');
-        return;
-      }
-      const rmbValue = parseFloat(newInvoice.rmb);
-      if (isNaN(rmbValue) || rmbValue <= 0) {
-        setErrorBanner('Amount in RMB must be a positive number.');
-        return;
-      }
-
-      // Check if duplicate InvoiceID exists
-      const isDuplicate = invoices.some(i => i.invoiceId.trim().toUpperCase() === actualInvoiceId);
-      if (isDuplicate) {
-        setErrorBanner(`Invoice ID "${actualInvoiceId}" already exists database record.`);
-        return;
-      }
-
-      // Auto-create custom vendor if selected
-      if (newInvoice.vendorCode === 'CUSTOM') {
-        const customCode = newInvoice.customVendorCode.trim().toUpperCase();
-        const customName = newInvoice.customVendorName.trim();
-        if (!customCode || !customName) {
-          setErrorBanner('Vendor ID and Vendor Name are required for custom manual input.');
-          return;
-        }
-
-        // See if already exists (case-insensitive)
-        const existingVendor = vendors.find(v => v.vendor_id.trim().toLowerCase() === customCode.toLowerCase());
-        if (!existingVendor) {
-          try {
-            const res = await submitVendorAccount({
-              vendor_id: customCode,
-              vendor_name: customName
-            });
-            if (!res.success) {
-              setErrorBanner(`Failed to auto-register custom vendor: ${res.message}`);
-              return;
-            }
-            // Sync frontend vendors list
-            await onRefresh();
-          } catch (verr: any) {
-            setErrorBanner(`Vendor registration error: ${verr.message || verr}`);
-            return;
-          }
-        }
-      }
-
-      // 1. CONSTRUCT LOCAL REPRESENTATION
-      const tempInvoice = {
-        date: newInvoice.date,
-        invoiceId: actualInvoiceId,
-        vendorCode: actualVendorCode,
-        rmb: rmbValue,
-        notes: newInvoice.notes.trim() || undefined,
-        status: 'Pending EOD' as const,
-        settledAmount: 0,
-        balance: rmbValue,
-        // Fallback details for other view templates
-        id: actualInvoiceId,
-        vendor: actualVendorCode,
-        currency: 'CNY' as const
-      };
-
-      const previousInvoices = [...invoices];
-
-      if (!IS_DEVELOPMENT_MODE) {
-        // Instantly commit to local state to feed reactive panels optimistically
-        setPurchaseInvoices(prev => {
-          const newList = [{ ...tempInvoice, temp: true, createdAtTimestamp: Date.now() }, ...prev];
-          const uniqueMap = new Map();
-          newList.forEach(item => {
-            if (item && item.invoiceId) {
-              uniqueMap.set(String(item.invoiceId).trim().toLowerCase(), item);
-            }
-          });
-          return Array.from(uniqueMap.values());
-        });
-        setIsModalOpen(false);
-        // Reset local state fields
-        setNewInvoice({
-          date: new Date().toISOString().split('T')[0],
-          invoiceId: '',
-          vendorCode: vendors[0]?.vendor_id || '',
-          customVendorCode: '',
-          customVendorName: '',
-          rmb: '',
-          notes: ''
-        });
-      }
-
-      try {
-        // 2. BACKEND CHANNELS SYNC
-        const response = await submitPurchaseInvoice({
-          date: tempInvoice.date,
-          invoiceId: tempInvoice.invoiceId,
-          vendorCode: tempInvoice.vendorCode,
-          rmb: tempInvoice.rmb,
-          notes: tempInvoice.notes
-        });
-
-        if (response.success) {
-          setSuccessBanner(`Invoice "${tempInvoice.invoiceId}" submitted — queued and syncing to the centralized ledger pipeline.`);
-          if (IS_DEVELOPMENT_MODE) {
-            setIsModalOpen(false);
-            // Reset local state fields
-            setNewInvoice({
-              date: new Date().toISOString().split('T')[0],
-              invoiceId: '',
-              vendorCode: vendors[0]?.vendor_id || '',
-              customVendorCode: '',
-              customVendorName: '',
-              rmb: '',
-              notes: ''
-            });
-          }
-          // The backend prices this invoice (ER1/INR) and auto-settles it against any
-          // existing wallet balance synchronously inside addPurchaseInvoice now
-          // (runEodForInvoice_) — onRefresh() above already pulls the priced result back,
-          // no separate client-side EOD run needed.
-          await onRefresh(); // Force reload direct true server state
-        } else {
-          throw new Error(response.message || 'Invoice save propagation aborted.');
-        }
-      } catch (err) {
-        console.error("Invoice registration write error: ", err);
-        if (!IS_DEVELOPMENT_MODE) {
-          setPurchaseInvoices(previousInvoices);
-        }
-        setErrorBanner("Sync Failure: Transaction could not be written to Google Sheets. Please check your connection and try again.");
-      }
-    });
-  };
-
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* SUCCESS/ERROR NOTIFICATION TOASTS - FIXED OVERLAY TO PREVENT LAYOUT REFLOW */}
@@ -696,8 +531,8 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        setIsModalOpen(true);
                         setIsAddMenuOpen(false);
+                        if (onNavigate) onNavigate('Log Invoice');
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2 text-gray-900 dark:text-white font-bold cursor-pointer"
                     >
@@ -1369,205 +1204,6 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
           />
         )}
       </div>
-
-      {/* --- INVOICE ENTRY MODAL FORM HANDLER CONTEXT (POPUP MODAL) --- */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4">
-          {/* Backdrop screen filter */}
-          <div 
-            className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity duration-300" 
-            onClick={() => setIsModalOpen(false)} 
-          />
-
-          <div className="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-lg w-full overflow-hidden transform transition-all animate-zoom-in">
-            {/* Header section banner */}
-            <div className="bg-gradient-to-r from-gray-50 to-gray-100 dark:from-slate-900 dark:to-slate-950 text-slate-800 dark:text-white border-b border-gray-200 dark:border-slate-800 px-6 py-4.5 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-black flex items-center gap-2 text-slate-800 dark:text-white">
-                  <span className="w-2.5 h-2.5 rounded-full bg-primary-500 animate-pulse" />
-                  <span>Invoice Entry Form</span>
-                </h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                  Input direct purchase ledger rows. Submits as "Pending EOD" for background rates computation.
-                </p>
-              </div>
-              <button 
-                onClick={() => setIsModalOpen(false)} 
-                className="p-1.5 rounded-lg text-slate-400 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-slate-800 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Error banner dedicated to modal state */}
-            {errorBanner && (
-              <div className="mx-6 mt-4 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-lg text-rose-500 dark:text-rose-400 text-xs font-bold font-mono">
-                Error: {errorBanner}
-              </div>
-            )}
-
-            {/* Input Form Fields */}
-            <form onSubmit={handleCreateInvoice} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                {/* Date Selection */}
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
-                    Posting Date *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={newInvoice.date}
-                    onChange={(e) => setNewInvoice(prev => ({ ...prev, date: e.target.value }))}
-                    className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-950 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
-                  />
-                </div>
-
-                {/* Invoice ID Unique key input */}
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
-                    Invoice ID (Unique) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={30}
-                    placeholder="e.g. INV-2026-621"
-                    value={newInvoice.invoiceId}
-                    onChange={(e) => setNewInvoice(prev => ({ ...prev, invoiceId: e.target.value }))}
-                    className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500 font-mono uppercase"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4">
-                {/* Sourcing Vendor dropdown */}
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
-                    Vendor Code *
-                  </label>
-                    <select
-                      required
-                      value={newInvoice.vendorCode}
-                      onChange={(e) => setNewInvoice(prev => ({ ...prev, vendorCode: e.target.value }))}
-                      className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-950 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
-                    >
-                      {VENDOR_OPTIONS.map(v => (
-                        <option key={v.code} value={v.code}>{v.displayText}</option>
-                      ))}
-                      <option value="CUSTOM">[ Custom Manual Input ]</option>
-                    </select>
-                </div>
-
-                 {/* Custom Vendor input helper */}
-                {newInvoice.vendorCode === 'CUSTOM' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-3 bg-gray-50/50 dark:bg-gray-800/10">
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5">
-                        Vendor ID (Unique Key) *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. ABC"
-                        value={newInvoice.customVendorCode}
-                        onChange={(e) => setNewInvoice(prev => ({ ...prev, customVendorCode: e.target.value }))}
-                        className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500 font-mono uppercase"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5">
-                        Vendor Name *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. ABC Sourcing"
-                        value={newInvoice.customVendorName}
-                        onChange={(e) => setNewInvoice(prev => ({ ...prev, customVendorName: e.target.value }))}
-                        className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Amount in Renminbi input */}
-              <div>
-                <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
-                  Amount in Renminbi Sum (RMB ¥) *
-                </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400 font-bold">
-                    ¥
-                  </span>
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    max={99999999}
-                    placeholder="e.g. 145000"
-                    value={newInvoice.rmb}
-                    onChange={(e) => setNewInvoice(prev => ({ ...prev, rmb: e.target.value }))}
-                    className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-950 dark:text-white pl-8 pr-3 py-2.5 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500 font-bold font-mono"
-                  />
-                </div>
-              </div>
-
-              {/* Payment Notes input */}
-              <div>
-                <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">
-                  Reference & Notes
-                </label>
-                <textarea
-                  placeholder="e.g. Batch #18 customs clearance accessories clearing notes."
-                  rows={2}
-                  maxLength={150}
-                  value={newInvoice.notes}
-                  onChange={(e) => setNewInvoice(prev => ({ ...prev, notes: e.target.value }))}
-                  className="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-955 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
-                />
-              </div>
-
-              {/* AUTOMATED CALCULATION ISOLATION WARNING */}
-              <div className="bg-amber-50 dark:bg-slate-900 p-3.5 rounded-xl border border-amber-200/60 dark:border-slate-800 flex items-start gap-2 text-slate-500 dark:text-slate-400">
-                <ShieldAlert className="w-4.5 h-4.5 text-amber-500 shrink-0 mt-0.5" />
-                <span className="text-[10.5px] leading-relaxed">
-                  <strong>EOD Variables Isolated:</strong> Background variables (<code>ER1</code> and <code>INR</code> valuation values) are completely isolated from this form layout. Rate conversions are resolved automatically on matching value dates.
-                </span>
-              </div>
-
-              {/* Dialog controls */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsModalOpen(false);
-                    setErrorBanner(null);
-                  }}
-                  className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-600 dark:text-gray-400 bg-gray-50 hover:bg-gray-100 dark:bg-slate-700/60 dark:hover:bg-slate-700 rounded-lg shadow-sm transition"
-                >
-                  Cancel
-                </button>
-                <Button
-                  type="submit"
-                  disabled={isSubmittingInvoice}
-                  className="px-5 py-2.5 text-xs font-bold uppercase tracking-wider text-white bg-primary-600 hover:bg-primary-700 rounded-lg shadow-md transition flex items-center gap-2"
-                >
-                  {isSubmittingInvoice ? (
-                    <>
-                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      Saving Invoice...
-                    </>
-                  ) : (
-                    'Publish Invoice'
-                  )}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* SETTLE INVOICE MODAL */}
       {settleModalInvoice && (
