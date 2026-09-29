@@ -120,7 +120,9 @@ function readCnfInvoices_() {
 // rows the frontend's computeBatchSettlementStatus treats as invoice
 // settlements: TxnType 'Invoice Settlement', or no TxnType and an
 // invoice_no other than 'ADVANCE'. paidInr = Σ |RMB| × ER2 (the rate each
-// payment actually settled at).
+// payment actually settled at). Vendor discounts (DSC-) count toward
+// settledRmb (they can make an invoice fully paid) but not paidInr: CNF moved
+// no money for them, so they carry no commission.
 function cnfSettledByInvoice_() {
   var t = cnfReadSheet_('SettlementLedger');
   var out = {};
@@ -129,6 +131,7 @@ function cnfSettledByInvoice_() {
   var rmbCol = findHeaderIndex_(t.headers, 'RMB');
   var er2Col = findHeaderIndex_(t.headers, 'ER2');
   var typeCol = findHeaderIndex_(t.headers, 'TxnType');
+  var pidCol = findHeaderIndex_(t.headers, 'Payment ID');
   for (var i = 1; i < t.values.length; i++) {
     var row = t.values[i];
     var inv = String(row[invCol] || '').trim();
@@ -139,7 +142,8 @@ function cnfSettledByInvoice_() {
     var er2 = Number(row[er2Col]) || 0;
     var o = out[inv] || (out[inv] = { settledRmb: 0, paidInr: 0 });
     o.settledRmb += rmb;
-    o.paidInr += rmb * er2;
+    // A vendor discount (DSC-) settles the invoice but moves no money through CNF.
+    if (pidCol === -1 || !/^DSC-/i.test(String(row[pidCol] || '').trim())) o.paidInr += rmb * er2;
   }
   return out;
 }

@@ -1786,6 +1786,7 @@ function syncBatchSettlementAggregate_(batchId) {
   const colInvoiceId = findHeaderIndex_(ledgerHeaders, 'Invoice ID');
   const colRmb = ledgerHeaders.indexOf('RMB');
   const colEr2 = ledgerHeaders.indexOf('ER2');
+  const colPaymentId = findHeaderIndex_(ledgerHeaders, 'Payment ID');
   if (colInvoiceId === -1 || colRmb === -1 || colEr2 === -1) return;
 
   let totalRmb = 0, totalInr = 0;
@@ -1797,6 +1798,9 @@ function syncBatchSettlementAggregate_(batchId) {
     const er2 = Number(ledgerValues[j][colEr2]) || 0;
     settledRmbByInvoice[invId] = (settledRmbByInvoice[invId] || 0) + rmb;
     if (!rmb || !er2) continue;
+    // Vendor discounts (DSC-) count toward payment status above, but are not
+    // money paid: paid_amount_inr / blended rate are cash through CNF only.
+    if (colPaymentId !== -1 && /^DSC-/i.test(String(ledgerValues[j][colPaymentId] || '').trim())) continue;
     totalRmb += rmb;
     totalInr += rmb * er2;
   }
@@ -1893,8 +1897,10 @@ function backfillBatchSettlementAggregates_() {
   const colInvoiceId = findHeaderIndex_(ledgerHeaders, 'Invoice ID');
   const colRmb = ledgerHeaders.indexOf('RMB');
   const colEr2 = ledgerHeaders.indexOf('ER2');
+  const colPaymentId = findHeaderIndex_(ledgerHeaders, 'Payment ID');
   const settledRmbByInvoice = {};
   const settledInrByInvoice = {};
+  const cashRmbByInvoice = {};
   if (colInvoiceId !== -1 && colRmb !== -1 && colEr2 !== -1) {
     for (let j = 1; j < ledgerValues.length; j++) {
       const lInvId = String(ledgerValues[j][colInvoiceId] || '').trim();
@@ -1902,7 +1908,11 @@ function backfillBatchSettlementAggregates_() {
       const rmb = Math.abs(Number(ledgerValues[j][colRmb]) || 0);
       const er2 = Number(ledgerValues[j][colEr2]) || 0;
       settledRmbByInvoice[lInvId] = (settledRmbByInvoice[lInvId] || 0) + rmb;
-      if (rmb && er2) settledInrByInvoice[lInvId] = (settledInrByInvoice[lInvId] || 0) + rmb * er2;
+      // DSC- discounts: settled (status) but not cash (paid INR / rate) — same rule as syncBatchSettlementAggregate_.
+      if (rmb && er2 && !(colPaymentId !== -1 && /^DSC-/i.test(String(ledgerValues[j][colPaymentId] || '').trim()))) {
+        settledInrByInvoice[lInvId] = (settledInrByInvoice[lInvId] || 0) + rmb * er2;
+        cashRmbByInvoice[lInvId] = (cashRmbByInvoice[lInvId] || 0) + rmb;
+      }
     }
   }
 
@@ -1936,7 +1946,7 @@ function backfillBatchSettlementAggregates_() {
     Object.keys(invIds).forEach(function (invId) {
       const settledRmb = settledRmbByInvoice[invId] || 0;
       const settledInr = settledInrByInvoice[invId] || 0;
-      totalRmb += settledRmb;
+      totalRmb += cashRmbByInvoice[invId] || 0;
       totalInr += settledInr;
       if (invId in invoicedRmbByInvoice) {
         anyMatched = true;
