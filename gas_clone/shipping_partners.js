@@ -79,3 +79,65 @@ function spBatchTypes_() {
   }
   return out;
 }
+
+// ── Partners ────────────────────────────────────────────────
+
+function readShippingPartners_() {
+  return spRows_(SP_PARTNERS_SHEET_).map(function (x) {
+    var r = x.r;
+    return {
+      id: String(r[0]).trim(), name: String(r[1] || ''), gstin: String(r[2] || ''), ratePerKg: Number(r[3]) || 0,
+      active: spBool_(r[4]), createdBy: String(r[5] || ''), createdAt: spIso_(r[6]),
+      updatedBy: String(r[7] || ''), updatedAt: spIso_(r[8]), rowNumber: x.rowNumber
+    };
+  });
+}
+
+// partnerId → display name, KREIZ included.
+function spPartnerNames_() {
+  var names = {};
+  names[CNF_VENDOR_CODE_] = CNF_VENDOR_CODE_;
+  readShippingPartners_().forEach(function (p) { names[p.id] = p.name; });
+  return names;
+}
+
+// payload: { id? (edit), name, gstin?, ratePerKg, active?, user_email (proxy) }.
+function saveShippingPartner_(payload) {
+  var p = payload || {};
+  var who = cnfRequireUser_(p);
+  var id = String(p.id || '').trim();
+  var name = String(p.name || '').trim().replace(/\s+/g, ' ');
+  var gstin = String(p.gstin || '').trim().toUpperCase();
+  var rate = Number(p.ratePerKg);
+  var active = p.active === undefined ? true : p.active === true;
+  if (!name) throw new Error('Partner name is required');
+  if (spNormName_(name) === spNormName_(CNF_VENDOR_CODE_)) throw new Error('KREIZ is built in; pick another name');
+  if (gstin && !SP_GSTIN_RE_.test(gstin)) throw new Error('GSTIN ' + gstin + ' is not a valid 15-character GSTIN');
+  if (!(rate > 0)) throw new Error('Rate per kg must be above 0');
+
+  var lock = spLock_('shipping partner');
+  try {
+    var partners = readShippingPartners_();
+    var clash = partners.filter(function (x) { return x.id !== id && spNormName_(x.name) === spNormName_(name); })[0];
+    if (clash) throw new Error('A partner named ' + clash.name + ' already exists');
+    var now = new Date().toISOString();
+    var sheet = spSheet_(SP_PARTNERS_SHEET_, SP_PARTNER_HEADERS_, true);
+    if (id) {
+      var existing = partners.filter(function (x) { return x.id === id; })[0];
+      if (!existing) throw new Error('Shipping partner not found: ' + id);
+      sheet.getRange(existing.rowNumber, 2, 1, 4).setValues([[name, gstin, rate, active]]);
+      sheet.getRange(existing.rowNumber, 8, 1, 2).setValues([[who, now]]);
+    } else {
+      var max = partners.reduce(function (m, x) {
+        var n = parseInt(String(x.id).replace(/^SP-/, ''), 10);
+        return n > m ? n : m;
+      }, 0);
+      id = 'SP-' + String(max + 1).padStart(3, '0');
+      sheet.appendRow([id, name, gstin, rate, active, who, now, '', '']);
+    }
+    var saved = readShippingPartners_().filter(function (x) { return x.id === id; })[0];
+    return { status: 'success', partner: spStrip_(saved) };
+  } finally {
+    lock.releaseLock();
+  }
+}
