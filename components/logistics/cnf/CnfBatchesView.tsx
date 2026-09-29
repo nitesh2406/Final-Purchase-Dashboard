@@ -11,9 +11,14 @@ import {
   SettlementRecord,
 } from '../../../services/settlementService';
 import { fetchCnfShipmentValues, fetchCnfDraftInvoices, fetchCnfRateConfig } from '../../../services/cnfService';
-import type { Batch, CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentValue, CnfDraftInvoice } from '../../../types';
+import { fetchShippingPartners, fetchBatchShippingPartners, fetchPartnerBills, setBatchShippingPartner } from '../../../services/shippingPartnerService';
+import type {
+  Batch, CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentValue, CnfDraftInvoice,
+  ShippingPartner, BatchShippingPartner, PartnerBill,
+} from '../../../types';
+import { LockClosedIcon } from '../../icons/Icons';
 import { CnfDraftInvoiceModal } from './CnfDraftInvoiceModal';
-import { computeExpectedCnfCharge } from './expectedCharge';
+import { computeExpectedCnfCharge, ExpectedCnfCharge } from './expectedCharge';
 import { draftStaleness } from './draftInvoice';
 import { fmtInr, fmtRmb, fmtIstDate } from './cnfFormat';
 import { readViewCache, writeViewCache } from './viewCache';
@@ -43,6 +48,9 @@ interface LoadedData {
   partnerDefaults: CnfShipmentPartnerDefault[];
   drafts: CnfDraftInvoice[];
   igstPct: number;
+  partners: ShippingPartner[];
+  assignments: BatchShippingPartner[];
+  partnerBills: PartnerBill[];
 }
 
 // get_batches takes no caller identity (see entry_points.js), so it goes
@@ -62,6 +70,13 @@ async function loadBatchesPart(): Promise<Pick<LoadedData, 'batches' | 'purchase
   return { batches, purchaseInvoices, settlements };
 }
 
+// Shipping partners, which air batch has which, and their bills — for the
+// partner column and the partner-bill line under CNF invoiced.
+async function loadPartnersPart(): Promise<Pick<LoadedData, 'partners' | 'assignments' | 'partnerBills'>> {
+  const [partners, assignments, partnerBills] = await Promise.all([fetchShippingPartners(), fetchBatchShippingPartners(), fetchPartnerBills()]);
+  return { partners, assignments, partnerBills };
+}
+
 export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () => void }> = ({ refreshKey, onDataChanged }) => {
   const [mode, setMode] = useQueryParam<'sea' | 'air'>('cnfMode', 'sea');
   const [filter, setFilter] = useState<Filter>('all');
@@ -69,10 +84,12 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftFor, setDraftFor] = useState<string | null>(null);
+  const [settingPartner, setSettingPartner] = useState<string | null>(null);
+  const [partnerError, setPartnerError] = useState<{ batchId: string; message: string } | null>(null);
   const loadSeq = useRef(0);
   const dataRef = useRef(data);
 
-  // The four parts load independently: one failing (e.g. Google dropping the
+  // The five parts load independently: one failing (e.g. Google dropping the
   // slow get_batches result) no longer discards the others, so a new Settings
   // category still shows up. A failed part keeps its last loaded copy.
   // Only the newest load may update the screen (a Refresh while one is in
@@ -82,11 +99,12 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
     if (force) invalidateReadCache();
     setIsLoading(true);
     setLoadError(null);
-    const [batchesR, shipmentsR, ratesR, draftsR] = await Promise.allSettled([
+    const [batchesR, shipmentsR, ratesR, draftsR, partnersR] = await Promise.allSettled([
       loadBatchesPart(),
       fetchCnfShipmentValues(),
       fetchCnfRateConfig(),
       fetchCnfDraftInvoices(),
+      loadPartnersPart(),
     ]);
     if (mine !== loadSeq.current) return;
     const prev = dataRef.current;
@@ -100,8 +118,9 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
     const shipments = pick(shipmentsR, 'CNF shipment values', prev?.shipments);
     const rates = pick(ratesR, 'CNF settings', prev ? { seaRates: prev.seaRates, airCategories: prev.airCategories, partnerDefaults: prev.partnerDefaults, igstPct: prev.igstPct } : undefined);
     const drafts = pick(draftsR, 'draft invoices', prev?.drafts);
-    if (batchesPart && shipments && rates && drafts) {
-      const loaded: LoadedData = { ...batchesPart, shipments, ...rates, drafts };
+    const partnersPart = pick(partnersR, 'shipping partners', prev ? { partners: prev.partners, assignments: prev.assignments, partnerBills: prev.partnerBills } : undefined);
+    if (batchesPart && shipments && rates && drafts && partnersPart) {
+      const loaded: LoadedData = { ...batchesPart, shipments, ...rates, drafts, ...partnersPart };
       dataRef.current = loaded;
       writeViewCache('batches', loaded);
       setData(loaded);
@@ -114,6 +133,20 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
 
   useEffect(() => { load(refreshKey > 0); }, [refreshKey]);
 
+  const changePartner = async (batchId: string, partnerId: string) => {
+    if (!partnerId) return;
+    setSettingPartner(batchId);
+    setPartnerError(null);
+    try {
+      await setBatchShippingPartner(batchId, partnerId);
+      onDataChanged();
+    } catch (err: any) {
+      setPartnerError({ batchId, message: err.message || 'Failed to set the shipping partner' });
+    } finally {
+      setSettingPartner(null);
+    }
+  };
+
   const rows = useMemo(() => {
     if (!data) return [];
     const shipmentsByBatch = new Map<string, CnfShipmentValue[]>();
@@ -123,6 +156,8 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
       shipmentsByBatch.set(s.batchId, list);
     });
     const draftsByBatch = new Map(data.drafts.map(d => [d.batchId, d]));
+    const assignmentByBatch = new Map(data.assignments.map(a => [a.batchId, a]));
+    const liveBillByBatch = new Map(data.partnerBills.filter(pb => pb.status !== 'Rejected').map(pb => [pb.batchId, pb]));
     return data.batches
       .filter(b => b.batch_type === mode)
       .map(b => {
@@ -135,12 +170,20 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
         const invoiced = eligible.reduce((sum, s) => sum + s.invoicedInr, 0);
         const invoicedTotal = batchShipments.reduce((sum, s) => sum + (s.invoicedTotalInr || 0), 0);
         const openToInvoice = eligible.some(s => s.remainingInr >= 1);
-        const expected = computeExpectedCnfCharge(b, data.seaRates, data.airCategories, data.partnerDefaults);
+        const assignment = assignmentByBatch.get(b.batch_id);
+        const partnerId = b.batch_type === 'air' ? (assignment?.partnerId || '') : '';
+        const partnerShipped = partnerId !== '' && partnerId !== 'KREIZ';
+        const expected: ExpectedCnfCharge = b.batch_type === 'air' && !partnerId
+          ? { amount: null, categoryLabel: null, note: 'Set shipping partner' }
+          : partnerShipped
+            ? { amount: 0, categoryLabel: null, note: 'partner-shipped: no CNF charge' }
+            : computeExpectedCnfCharge(b, data.seaRates, data.airCategories, data.partnerDefaults);
         // Same test save_cnf_draft_invoice applies on the server.
         const canDraft = b.status === 'Delivered' && batchShipments.length > 0 && batchShipments.every(s => s.eligible);
         const draft = draftsByBatch.get(b.batch_id);
-        const stale = draft ? draftStaleness(draft, { goods: eligibleValue, shipmentIds: batchShipments.map(s => s.shipmentId) }) : null;
-        return { batch: b, paymentStatus, eligibleValue, invoiced, invoicedTotal, openToInvoice, expected, canDraft, draft, stale };
+        const stale = draft ? draftStaleness(draft, { goods: eligibleValue, shipmentIds: batchShipments.map(s => s.shipmentId), shippingPartnerId: partnerId }) : null;
+        return { batch: b, paymentStatus, eligibleValue, invoiced, invoicedTotal, openToInvoice, expected, canDraft, draft, stale,
+          assignment, partnerId, partnerShipped, partnerBill: liveBillByBatch.get(b.batch_id) };
       });
   }, [data, mode]);
 
@@ -182,6 +225,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
           </h3>
           <p className="text-xs text-slate-400 mt-0.5">
             Expected CNF charge is an estimate from Settings rates. "CNF invoiced" compares CNF's invoice totals (pending and approved) with the batch's saved draft invoice; without a draft it compares goods only.
+            {mode === 'air' && ' Air: set each batch\'s shipping partner; a batch shipped by another partner gets no CNF charge (the partner bills its fee on the Ledgers screen).'}
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -190,6 +234,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
               <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 text-[11px] uppercase tracking-wider border-b">
                 <th className="px-4 py-3">Batch ID</th>
                 <th className="px-4 py-3">Status</th>
+                {mode === 'air' && <th className="px-4 py-3">Shipping Partner</th>}
                 <th className="px-4 py-3 text-right">Value (RMB)</th>
                 <th className="px-4 py-3 text-right">Value (INR)</th>
                 <th className="px-4 py-3 text-right">ER</th>
@@ -201,10 +246,10 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
             </thead>
             <tbody className="divide-y">
               {isLoading && !data ? (
-                <tr><td colSpan={mode === 'air' ? 9 : 8} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+                <tr><td colSpan={mode === 'air' ? 10 : 8} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
               ) : visibleRows.length === 0 ? (
-                <tr><td colSpan={mode === 'air' ? 9 : 8} className="px-4 py-8 text-center text-slate-400">No batches match.</td></tr>
-              ) : visibleRows.map(({ batch, paymentStatus, eligibleValue, invoiced, invoicedTotal, expected, canDraft, draft, stale }) => (
+                <tr><td colSpan={mode === 'air' ? 10 : 8} className="px-4 py-8 text-center text-slate-400">No batches match.</td></tr>
+              ) : visibleRows.map(({ batch, paymentStatus, eligibleValue, invoiced, invoicedTotal, expected, canDraft, draft, stale, assignment, partnerId, partnerShipped, partnerBill }) => (
                 <tr key={batch.batch_id}>
                   <td className="px-4 py-3 font-mono">{batch.batch_id}</td>
                   <td className="px-4 py-3">
@@ -212,6 +257,25 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
                       batch.status === 'Delivered' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400'
                     }`}>{batch.status || 'Open'}</span>
                   </td>
+                  {mode === 'air' && (
+                    <td className="px-4 py-3">
+                      {assignment?.locked ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold" title={`Partner locked: ${assignment.lockReason}`}>
+                          <LockClosedIcon className="w-3.5 h-3.5" />{assignment.partnerName}
+                        </span>
+                      ) : (
+                        <select aria-label={`Shipping partner for ${batch.batch_id}`} value={partnerId} disabled={settingPartner !== null}
+                          onChange={e => changePartner(batch.batch_id, e.target.value)}
+                          className="px-2 py-1 border rounded text-xs bg-white dark:bg-slate-900">
+                          <option value="" disabled>— Not set —</option>
+                          <option value="KREIZ">KREIZ</option>
+                          {data!.partners.filter(p => p.active || p.id === partnerId).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      )}
+                      {settingPartner === batch.batch_id && <div className="text-[10px] text-slate-400">Saving…</div>}
+                      {partnerError?.batchId === batch.batch_id && <div className="text-[10px] text-red-500">{partnerError.message}</div>}
+                    </td>
+                  )}
                   <td className="px-4 py-3 text-right font-mono">{fmtRmb(batch.total_value_rmb || 0)}</td>
                   <td className="px-4 py-3 text-right font-mono">{batch.paid_amount_inr != null ? fmtInr(batch.paid_amount_inr) : dash}</td>
                   <td className="px-4 py-3 text-right font-mono">{batch.blended_settlement_rate != null ? batch.blended_settlement_rate.toFixed(4) : dash}</td>
@@ -247,6 +311,11 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
                         {draft ? 'Regenerate' : 'Generate Draft Invoice'}
                       </button>
                     )}
+                    {partnerShipped && (
+                      <div className="text-[10px] text-slate-500 mt-1" data-testid={`partner-bill-${batch.batch_id}`}>
+                        {partnerBill ? `Partner bill ${fmtInr(partnerBill.total)} · ${partnerBill.status}` : 'Partner bill: not billed'}
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -266,6 +335,8 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
             airCategories={data.airCategories}
             partnerDefaults={data.partnerDefaults}
             existing={row.draft}
+            partnerShipped={row.partnerShipped}
+            partnerName={row.assignment?.partnerName}
             onClose={() => setDraftFor(null)}
             onSaved={() => { setDraftFor(null); onDataChanged(); }}
           />
