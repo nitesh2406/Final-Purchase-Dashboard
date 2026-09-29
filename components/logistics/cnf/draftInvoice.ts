@@ -2,17 +2,15 @@ export interface DraftFigures { charge: number; gst: number; total: number }
 
 const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 
-// Draft CNF invoice: CNF charge (Sea: % of goods; Air: ₹ per kg) + GST on
-// goods + charge. Same rule as cnfDraftFigures_ in gas_clone/cnf_unified.js,
-// which recomputes it on save — this is the form's live preview.
-// Why a saved draft no longer matches the batch (paid goods moved by ₹1 or
-// more, or its shipments changed since it was generated), or null if current.
+// Why a saved draft no longer matches the batch (its shipments changed, its
+// shipping partner changed, or paid goods moved by ₹1 or more), or null if current.
 export function draftStaleness(
-  draft: { goodsValue: number; shipments: { shipmentId: string }[] },
-  current: { goods: number; shipmentIds: string[] }
+  draft: { goodsValue: number; shipments: { shipmentId: string }[]; shippingPartnerId?: string },
+  current: { goods: number; shipmentIds: string[]; shippingPartnerId?: string }
 ): string | null {
   const was = draft.shipments.map(s => s.shipmentId).sort().join(',');
   if (was !== [...current.shipmentIds].sort().join(',')) return 'Out of date: the batch\'s shipments changed. Regenerate.';
+  if ((draft.shippingPartnerId || '') !== (current.shippingPartnerId || '')) return 'Out of date: the batch\'s shipping partner changed. Regenerate.';
   if (Math.abs(draft.goodsValue - current.goods) >= 1) {
     const now = `₹${current.goods.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     return `Out of date: goods paid is now ${now}. Regenerate.`;
@@ -27,6 +25,9 @@ export function initialDraftCategoryId(existingId: string | undefined, categorie
   return fallbackId ?? '';
 }
 
+// Draft CNF invoice: CNF charge (Sea: % of goods; Air: ₹ per kg) + GST on
+// goods + charge. Same rule as cnfDraftFigures_ in gas_clone/cnf_unified.js,
+// which recomputes it on save — this is the form's live preview.
 export function computeDraftInvoice(i: { mode: 'sea' | 'air'; goods: number; rate: number; weightKg: number | null; igstPct: number }): DraftFigures {
   const charge = round2(i.mode === 'air' ? (i.weightKg || 0) * i.rate : i.goods * i.rate / 100);
   const gst = round2((i.goods + charge) * i.igstPct / 100);

@@ -763,6 +763,8 @@ export interface CnfShipmentValue {
   batchId: string;
   batchStatus: string;
   batchType: 'sea' | 'air';
+  // Air: 'KREIZ' or a ShippingPartner id, '' while unset (then not eligible). Sea: ''.
+  shippingPartnerId: string;
   shipmentId: string;
   vendorCode: string;
   vendorName: string;
@@ -796,6 +798,7 @@ export interface CnfDraftInvoice {
   shipments: { shipmentId: string; paidInr: number }[];
   generatedBy: string;
   generatedAt: string;
+  shippingPartnerId: string; // the air batch's partner when drafted; '' for sea
 }
 
 export interface CnfInvoiceLine {
@@ -846,6 +849,110 @@ export interface CnfLedgerStatement {
   totals: { paid: number; billed: number };
 }
 
+// Air shipping partners + Ledgers screen — see
+// docs/superpowers/specs/2026-09-29-air-shipping-partner-design.md.
+export interface ShippingPartner {
+  id: string; // 'SP-001'…; KREIZ is built in and never listed here
+  name: string;
+  gstin: string;
+  ratePerKg: number;
+  active: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface BatchShippingPartner {
+  batchId: string;
+  partnerId: string; // 'KREIZ' or a ShippingPartner id
+  partnerName: string;
+  locked: boolean;
+  lockReason: string;
+  setBy: string;
+  setAt: string;
+}
+
+export type PartnerBillStatus = 'Pending Approval' | 'Approved' | 'Rejected';
+
+export interface PartnerBill {
+  id: string;
+  partnerId: string;
+  batchId: string;
+  billNo: string;
+  billDate: string; // yyyy-mm-dd
+  fileUrl: string;
+  weightKg: number;
+  ratePerKg: number; // the partner's rate when the bill was logged
+  expectedFee: number;
+  fee: number;
+  gst: number;
+  total: number;
+  overrideReason: string;
+  status: PartnerBillStatus;
+  submittedBy: string;
+  decidedBy: string;
+  decidedAt: string;
+  rejectionReason: string;
+  createdAt: string;
+  settled: number; // active payments + their TDS
+  balance: number; // total − settled
+}
+
+export interface PartnerPayment {
+  id: string;
+  partnerId: string;
+  billId: string;
+  date: string; // yyyy-mm-dd
+  amount: number;
+  tds: number;
+  reference: string;
+  notes: string;
+  status: 'Active' | 'Voided';
+  recordedBy: string;
+  recordedAt: string;
+  voidedBy: string;
+  voidedAt: string;
+  voidReason: string;
+}
+
+// One row of the Ledgers list. Negative balance = we owe the party. A party
+// whose figures failed to load carries `error` and no figures.
+export interface PartyLedgerSummary {
+  partyId: string; // 'KREIZ' or a ShippingPartner id
+  name: string;
+  kind: 'cnf' | 'partner';
+  gstin: string;
+  ratePerKg: number | null;
+  active: boolean;
+  billed?: number;
+  paid?: number;
+  tds?: number;
+  balance?: number;
+  pendingBills?: number;
+  unpaidBills?: number | null; // null for KREIZ (not settled bill by bill)
+  error?: string;
+}
+
+export interface PartnerLedgerRow {
+  date: string; // yyyy-mm-dd
+  type: 'Bill' | 'Payment';
+  reference: string;
+  description: string;
+  paid: number;
+  tds: number;
+  billed: number;
+  balance: number;
+}
+
+export interface PartnerLedgerStatement {
+  partnerId: string;
+  openingBalance: number;
+  rows: PartnerLedgerRow[];
+  closingBalance: number;
+  totals: { paid: number; tds: number; billed: number };
+}
+
 export interface InventoryValuationRow {
   sku: string;
   name: string | null;
@@ -876,4 +983,4 @@ export type ViewType =
   | 'Inventory Analytics' | 'Inventory' | 'Settings'
   | 'Log Invoice' | 'Log Payment' | 'Log Discount' | 'Log Settlement' | 'Accounts View'
   | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU' | 'Audit Log'
-  | 'CNF Agent Accounting' | 'Receive Shipment';
+  | 'CNF Agent Accounting' | 'Receive Shipment' | 'Ledgers';

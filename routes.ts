@@ -22,6 +22,7 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   'Log Discount': '/finance/log-discount',
   'Log Settlement': '/finance/log-settlement',
   'Accounts View': '/finance/accounts',
+  'Ledgers': '/finance/ledgers',
   'Amazon Forecasting': '/amazon/forecasting',
   'Create SKU': '/sku',
   'Update SKU': '/sku/update',

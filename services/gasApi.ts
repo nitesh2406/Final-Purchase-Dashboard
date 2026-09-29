@@ -127,6 +127,8 @@ const CACHEABLE_READ_ACTIONS = new Set([
   'get_purchase_invoices', 'get_payment_logs', 'get_settlement_records', 'get_vendor_ledger',
   'get_vendor_shipments',
   'get_cnf_shipment_values', 'get_cnf_goods_invoices', 'get_cnf_ledger_statement', 'get_cnf_draft_invoices',
+  'get_shipping_partners', 'get_batch_shipping_partners', 'get_partner_bills', 'get_partner_payments',
+  'get_party_ledgers', 'get_partner_ledger_statement',
   'get_batches',
   'get_product_master',
 ]);
