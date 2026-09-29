@@ -170,7 +170,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   // pre-selecting the paying vendor when triggered from a specific vendor's ledger row.
   const handleOpenAdjustmentModal = (payingVendor: string = '') => {
     setIsAddMenuOpen(false);
-    const path = viewToPath('Cross Vendor Settlement');
+    const path = viewToPath('Log Settlement');
     navigate(payingVendor ? `${path}?payingVendor=${encodeURIComponent(payingVendor)}` : path);
   };
 
@@ -709,7 +709,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                       onClick={() => {
                         setIsAddMenuOpen(false);
                         if (onNavigate) {
-                          onNavigate('Payment Ledger');
+                          onNavigate('Log Payment');
                         }
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2 text-gray-900 dark:text-white font-bold cursor-pointer"

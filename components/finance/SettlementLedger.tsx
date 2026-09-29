@@ -690,7 +690,7 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
                       onClick={() => {
                         setIsAddMenuOpen(false);
                         if (onNavigate) {
-                          onNavigate('Payment Ledger');
+                          onNavigate('Log Payment');
                         }
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2 text-gray-900 dark:text-white font-bold cursor-pointer"
@@ -703,7 +703,7 @@ export const SettlementLedger: React.FC<SettlementLedgerProps> = ({
                       onClick={() => {
                         setIsAddMenuOpen(false);
                         if (onNavigate) {
-                          onNavigate('Cross Vendor Settlement');
+                          onNavigate('Log Settlement');
                         }
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-slate-700/60 transition-colors flex items-center gap-2 text-gray-900 dark:text-white font-bold cursor-pointer"

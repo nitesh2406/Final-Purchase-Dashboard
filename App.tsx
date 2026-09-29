@@ -38,7 +38,7 @@ import { UpdateSkuScreen } from './components/dashboard/UpdateSkuScreen.tsx';
 import { AuditLogScreen } from './components/dashboard/AuditLogScreen.tsx';
 import { PaymentLedger } from './components/finance/PaymentLedger.tsx';
 import { AccountsView } from './components/finance/AccountsView.tsx';
-import { SettlementLedger } from './components/finance/SettlementLedger.tsx';
+import { LogInvoice } from './components/finance/LogInvoice.tsx';
 import { CrossVendorSettlement } from './components/finance/CrossVendorSettlement.tsx';
 import { Sku, PurchaseOrder, Shipment, Invoice, Vendor, Notification, DraftOrder, VendorMaster } from './types.ts';
 import { APPS_SCRIPT_URL, API_ACTIONS } from './constants.ts';
@@ -46,7 +46,7 @@ import { ViewType } from './types';
 import { SkeletonDashboard } from './components/feedback/SkeletonDashboard.tsx';
 import { SyncQueueManager, QueueItem } from './services/syncQueue.ts';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { viewToPath, matchPathToView } from './routes.ts';
+import { viewToPath, matchPathToView, legacyRedirect } from './routes.ts';
 import { callGas, invalidateReadCache, subscribeDataLoadErrors, clearDataLoadErrors, DataLoadError } from './services/gasApi.ts';
 
 // Only these screens read the drafts / POs / vendor-master data that
@@ -54,8 +54,7 @@ import { callGas, invalidateReadCache, subscribeDataLoadErrors, clearDataLoadErr
 // full-page skeleton until all three calls finished too (~4-5s on every page
 // load, since each Apps Script call costs ~3-4s) — now they render at once.
 const CORE_DATA_VIEWS: ViewType[] = [
-    'Draft Orders', 'Vendor Shipments', 'Payment Ledger', 'Settlement Ledger',
-    'Cross Vendor Settlement', 'Accounts View',
+    'Draft Orders', 'Vendor Shipments', 'Log Invoice', 'Log Payment', 'Log Settlement', 'Accounts View',
 ];
 
 // Finance data used to load once per session and then go stale until someone
@@ -104,6 +103,12 @@ const App: React.FC = () => {
     const matchedRoute = matchPathToView(location.pathname);
     const currentView: ViewType = matchedRoute?.view || 'Dashboard';
     const setCurrentView = useCallback((v: ViewType) => navigate(viewToPath(v)), [navigate]);
+    // Old bookmarked URLs of renamed screens (see LEGACY_PATHS in routes.ts)
+    // are swapped for the current path, keeping any query string.
+    useEffect(() => {
+        const target = legacyRedirect(location.pathname, location.search);
+        if (target) navigate(target, { replace: true });
+    }, [location.pathname, location.search, navigate]);
     const selectedBatchId: string | null = currentView === 'Batch Detail' ? (matchedRoute?.params.batchId || null) : null;
     const selectedSkuRequestId: string | null = currentView === 'SKU Detail' ? (matchedRoute?.params.requestId || null) : null;
     const [skuRequests, setSkuRequests] = useState<any[]>([]);
@@ -582,7 +587,7 @@ const App: React.FC = () => {
         }
     }, []);
 
-    const FINANCE_VIEWS = ['Finance', 'Payment Ledger', 'Accounts View', 'Settlement Ledger', 'Cross Vendor Settlement'];
+    const FINANCE_VIEWS = ['Finance', 'Log Invoice', 'Log Payment', 'Accounts View', 'Log Settlement'];
     useEffect(() => {
         if (!user || user.role === 'CNF_AGENT') return;
         if (!FINANCE_VIEWS.includes(currentView)) return;
@@ -815,24 +820,20 @@ const App: React.FC = () => {
                     addVendor={addVendor}
                     updateVendor={updateVendor}
                 />;
-            case 'Payment Ledger':
+            case 'Log Invoice':
+                return <LogInvoice
+                    invoices={displayPurchaseInvoices}
+                    vendors={displayVendorMasters}
+                    setPurchaseInvoices={setPurchaseInvoices}
+                    onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}
+                />;
+            case 'Log Payment':
                 return <PaymentLedger
                     onNavigate={(v) => setCurrentView(v)}
                     vendors={displayVendorMasters}
                     onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}
                 />;
-            case 'Settlement Ledger':
-                return <SettlementLedger
-                    invoices={displayPurchaseInvoices}
-                    paymentLogs={displayPaymentLogs}
-                    settlementRecords={displaySettlementRecords}
-                    vendors={displayVendorMasters}
-                    onNavigate={(v) => setCurrentView(v)}
-                    onRefresh={() => { fetchAllData(true); fetchFinanceData(true); }}
-                    setSettlementRecords={setSettlementRecords}
-                    setPurchaseInvoices={setPurchaseInvoices}
-                />;
-            case 'Cross Vendor Settlement':
+            case 'Log Settlement':
                 return <CrossVendorSettlement
                     invoices={displayPurchaseInvoices}
                     paymentLogs={displayPaymentLogs}

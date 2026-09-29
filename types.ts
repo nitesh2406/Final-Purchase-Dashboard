@@ -874,6 +874,6 @@ export type ViewType =
   | 'Dashboard' | 'Inventory Forecasting' | 'Draft Orders' | 'Purchase Orders'
   | 'Vendor Shipments' | 'Shipment Tracker' | 'Batch Detail' | 'Finance'
   | 'Inventory Analytics' | 'Inventory' | 'Settings'
-  | 'Payment Ledger' | 'Accounts View' | 'Settlement Ledger' | 'Cross Vendor Settlement'
+  | 'Log Invoice' | 'Log Payment' | 'Log Settlement' | 'Accounts View'
   | 'Amazon Forecasting' | 'Create SKU' | 'SKU Detail' | 'Update SKU' | 'Audit Log'
   | 'CNF Agent Accounting' | 'Receive Shipment';

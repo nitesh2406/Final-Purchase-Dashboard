@@ -1,4 +1,4 @@
-import { ViewType } from './types';
+import type { ViewType } from './types';
 
 // Central mapping from each top-level ViewType to a real URL path.
 // Detail views carry their id as a real path param instead of in-memory state,
@@ -17,10 +17,10 @@ export const VIEW_ROUTES: Record<ViewType, string> = {
   'Inventory Analytics': '/inventory/analytics',
   'Inventory': '/inventory/valuation',
   'Settings': '/settings',
-  'Payment Ledger': '/finance/payment-ledger',
+  'Log Invoice': '/finance/log-invoice',
+  'Log Payment': '/finance/log-payment',
+  'Log Settlement': '/finance/log-settlement',
   'Accounts View': '/finance/accounts',
-  'Settlement Ledger': '/finance/settlement-ledger',
-  'Cross Vendor Settlement': '/finance/cross-vendor-settlement',
   'Amazon Forecasting': '/amazon/forecasting',
   'Create SKU': '/sku',
   'Update SKU': '/sku/update',
@@ -38,6 +38,21 @@ const DETAIL_VIEW_PARENT: Partial<Record<ViewType, ViewType>> = {
   'SKU Detail': 'Create SKU',
 };
 
+// Old URLs of renamed or merged screens → the view that replaced them, so
+// bookmarks keep working. App.tsx swaps the URL for the view's own path
+// (legacyRedirect), keeping the query string.
+const LEGACY_PATHS: Record<string, ViewType> = {
+  '/finance/cnf-advances': 'CNF Agent Accounting', // merged 2026-09-28
+  '/finance/payment-ledger': 'Log Payment', // renamed 2026-09-29
+  '/finance/settlement-ledger': 'Log Settlement',
+  '/finance/cross-vendor-settlement': 'Log Settlement',
+};
+
+export function legacyRedirect(pathname: string, search: string): string | null {
+  const view = LEGACY_PATHS[pathname];
+  return view ? viewToPath(view) + search : null;
+}
+
 export function viewToPath(view: ViewType, params?: Record<string, string>): string {
   let path = VIEW_ROUTES[view];
   if (params) {
@@ -51,9 +66,7 @@ export function viewToPath(view: ViewType, params?: Record<string, string>): str
 // Reverse lookup used by the sidebar to determine which nav item is active
 // for the current URL, including detail sub-paths mapping back to their parent.
 export function matchPathToView(pathname: string): { view: ViewType; params: Record<string, string> } | null {
-  // The CNF Advances screen was merged into CNF Agent (2026-09-28); keep old
-  // bookmarks working.
-  if (pathname === '/finance/cnf-advances') return { view: 'CNF Agent Accounting', params: {} };
+  if (LEGACY_PATHS[pathname]) return { view: LEGACY_PATHS[pathname], params: {} };
   for (const [view, template] of Object.entries(VIEW_ROUTES) as [ViewType, string][]) {
     const templateParts = template.split('/');
     const pathParts = pathname.split('/');
