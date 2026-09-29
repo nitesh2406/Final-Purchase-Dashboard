@@ -3,7 +3,7 @@ import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { getSessionAuthHeaders } from '../../../services/authToken';
 import { extractInvoiceAmount } from '../../../services/geminiService';
-import { callGasAuthed } from '../../../services/gasApi';
+import { callGas } from '../../../services/gasApi';
 import { logCnfGoodsInvoice, fetchCnfRateConfig } from '../../../services/cnfService';
 import type { Batch, CnfShipmentValue } from '../../../types';
 import { computeExpectedCnfCharge, ExpectedCnfCharge } from './expectedCharge';
@@ -39,7 +39,7 @@ export const LogCnfInvoiceModal: React.FC<{
     let cancelled = false;
     (async () => {
       try {
-        const [batchesRes, rates] = await Promise.all([callGasAuthed('get_batches', {}, 1), fetchCnfRateConfig()]);
+        const [batchesRes, rates] = await Promise.all([callGas('get_batches', {}, 1), fetchCnfRateConfig()]);
         if (cancelled || !batchesRes || batchesRes.status !== 'success') return;
         const map: Record<string, ExpectedCnfCharge> = {};
         (batchesRes.batches as Batch[] || []).forEach(b => { map[b.batch_id] = computeExpectedCnfCharge(b, rates.seaRates, rates.airCategories, rates.partnerDefaults); });

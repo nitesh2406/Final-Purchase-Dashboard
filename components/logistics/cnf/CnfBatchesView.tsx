@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { useQueryParam } from '../../../hooks/useQueryParam';
-import { callGasAuthed, invalidateReadCache } from '../../../services/gasApi';
+import { callGas, invalidateReadCache } from '../../../services/gasApi';
 import {
   fetchPurchaseInvoices,
   fetchSettlementRecords,
@@ -45,6 +45,23 @@ interface LoadedData {
   igstPct: number;
 }
 
+// get_batches takes no caller identity (see entry_points.js), so it goes
+// direct like the other CNF reads and joins their get_bundle — one fewer
+// request in flight. Several at once is what makes Google drop results.
+async function loadBatchesPart(): Promise<Pick<LoadedData, 'batches' | 'purchaseInvoices' | 'settlements'>> {
+  const batchesRes = await callGas('get_batches', {}, 1);
+  if (!batchesRes || batchesRes.status !== 'success') throw new Error((batchesRes && batchesRes.message) || 'Failed to load batches');
+  const batches: Batch[] = batchesRes.batches || [];
+  // Batches carry a stored payment_status, kept current by the settlement
+  // code. Only a batch without one needs the full PurchaseInvoices and
+  // SettlementLedger to work it out, so those are fetched only then.
+  const needStatus = batches.some(b => !b.payment_status);
+  const [purchaseInvoices, settlements] = needStatus
+    ? await Promise.all([fetchPurchaseInvoices(), fetchSettlementRecords()])
+    : [[] as PurchaseInvoice[], [] as SettlementRecord[]];
+  return { batches, purchaseInvoices, settlements };
+}
+
 export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () => void }> = ({ refreshKey, onDataChanged }) => {
   const [mode, setMode] = useQueryParam<'sea' | 'air'>('cnfMode', 'sea');
   const [filter, setFilter] = useState<Filter>('all');
@@ -53,7 +70,11 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftFor, setDraftFor] = useState<string | null>(null);
   const loadSeq = useRef(0);
+  const dataRef = useRef(data);
 
+  // The four parts load independently: one failing (e.g. Google dropping the
+  // slow get_batches result) no longer discards the others, so a new Settings
+  // category still shows up. A failed part keeps its last loaded copy.
   // Only the newest load may update the screen (a Refresh while one is in
   // flight must not be overwritten by the older response).
   const load = async (force: boolean) => {
@@ -61,31 +82,34 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
     if (force) invalidateReadCache();
     setIsLoading(true);
     setLoadError(null);
-    try {
-      const [batchesRes, shipments, rates, drafts] = await Promise.all([
-        callGasAuthed('get_batches', {}, 1),
-        fetchCnfShipmentValues(),
-        fetchCnfRateConfig(),
-        fetchCnfDraftInvoices(),
-      ]);
-      if (!batchesRes || batchesRes.status !== 'success') throw new Error((batchesRes && batchesRes.message) || 'Failed to load batches');
-      const batches: Batch[] = batchesRes.batches || [];
-      // Batches carry a stored payment_status, kept current by the settlement
-      // code. Only a batch without one needs the full PurchaseInvoices and
-      // SettlementLedger to work it out, so those are fetched only then.
-      const needStatus = batches.some(b => !b.payment_status);
-      const [purchaseInvoices, settlements] = needStatus
-        ? await Promise.all([fetchPurchaseInvoices(), fetchSettlementRecords()])
-        : [[] as PurchaseInvoice[], [] as SettlementRecord[]];
-      if (mine !== loadSeq.current) return;
-      const loaded: LoadedData = { batches, shipments, purchaseInvoices, settlements, ...rates, drafts };
+    const [batchesR, shipmentsR, ratesR, draftsR] = await Promise.allSettled([
+      loadBatchesPart(),
+      fetchCnfShipmentValues(),
+      fetchCnfRateConfig(),
+      fetchCnfDraftInvoices(),
+    ]);
+    if (mine !== loadSeq.current) return;
+    const prev = dataRef.current;
+    const failed: { label: string; message: string }[] = [];
+    const pick = <T,>(r: PromiseSettledResult<T>, label: string, fallback: T | undefined): T | undefined => {
+      if (r.status === 'fulfilled') return r.value;
+      failed.push({ label, message: (r.reason && r.reason.message) || 'Request failed' });
+      return fallback;
+    };
+    const batchesPart = pick(batchesR, 'batches', prev ? { batches: prev.batches, purchaseInvoices: prev.purchaseInvoices, settlements: prev.settlements } : undefined);
+    const shipments = pick(shipmentsR, 'CNF shipment values', prev?.shipments);
+    const rates = pick(ratesR, 'CNF settings', prev ? { seaRates: prev.seaRates, airCategories: prev.airCategories, partnerDefaults: prev.partnerDefaults, igstPct: prev.igstPct } : undefined);
+    const drafts = pick(draftsR, 'draft invoices', prev?.drafts);
+    if (batchesPart && shipments && rates && drafts) {
+      const loaded: LoadedData = { ...batchesPart, shipments, ...rates, drafts };
+      dataRef.current = loaded;
       writeViewCache('batches', loaded);
       setData(loaded);
-    } catch (err: any) {
-      if (mine === loadSeq.current) setLoadError(err.message || 'Failed to load batches');
-    } finally {
-      if (mine === loadSeq.current) setIsLoading(false);
     }
+    if (failed.length) {
+      setLoadError(`Couldn't load ${failed.map(f => f.label).join(', ')}${prev ? ' (showing the last loaded copy)' : ''}: ${failed[0].message}`);
+    }
+    setIsLoading(false);
   };
 
   useEffect(() => { load(refreshKey > 0); }, [refreshKey]);
@@ -152,7 +176,10 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
       </div>
       <Card className="p-0 overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-          <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">{mode === 'air' ? 'Air' : 'Sea'} Batches ({visibleRows.length})</h3>
+          <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">
+            {mode === 'air' ? 'Air' : 'Sea'} Batches ({visibleRows.length})
+            {isLoading && data && <span className="ml-2 normal-case tracking-normal font-semibold text-primary-600 animate-pulse" data-testid="cnf-batches-refreshing">Refreshing…</span>}
+          </h3>
           <p className="text-xs text-slate-400 mt-0.5">
             Expected CNF charge is an estimate from Settings rates. "CNF invoiced" compares CNF's invoice totals (pending and approved) with the batch's saved draft invoice; without a draft it compares goods only.
           </p>
