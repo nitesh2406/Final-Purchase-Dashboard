@@ -122,6 +122,34 @@ function doPost(e) {
   }
 }
 
+// The web app runs "anyone, anonymous", so its URL alone lets anyone post to
+// it, and user_email in a body proves nothing. These actions change money or
+// the books, so they also need proxy_key = Script Property GAS_PROXY_KEY:
+// the Vercel proxy (server/app.ts) adds it to every session-checked request,
+// and an admin running a cmd/curl call types it in. Dry runs and reads stay
+// open. With no key configured the actions are refused, never left open.
+var PROXY_KEY_ALWAYS_ = {
+  log_cnf_goods_invoice: true, approve_cnf_goods_invoice: true, reject_cnf_goods_invoice: true,
+  save_cnf_draft_invoice: true, payment_reset_backup: true
+};
+var PROXY_KEY_WHEN_REAL_ = {
+  payment_reset_clear: true, payment_reset_replay: true, payment_reset_restore: true,
+  payment_reset_resettle: true, payment_reset_fix_vl_dates: true
+};
+
+// Returns why the request is refused, or null. Always removes proxy_key from
+// the payload so it can never reach a handler (or a sheet).
+function proxyKeyRefusal_(action, payload) {
+  var sent = payload ? String(payload.proxy_key || '') : '';
+  if (payload) delete payload.proxy_key;
+  var needs = PROXY_KEY_ALWAYS_[action] === true || (PROXY_KEY_WHEN_REAL_[action] === true && payload && payload.dry_run === false);
+  if (!needs) return null;
+  var key = PropertiesService.getScriptProperties().getProperty('GAS_PROXY_KEY');
+  if (!key) return 'This action is locked: GAS_PROXY_KEY is not set in Script Properties.';
+  if (sent !== key) return 'Not authorised: this action must be sent through the app, or carry the admin key.';
+  return null;
+}
+
 function doPostInner_(e) {
   // Master Barcode Suite storage actions (see BarcodeAppStore.js) — returns null for anything else.
   var barcodeStoreResponse = barcodeStoreHandle_(e);
@@ -130,6 +158,8 @@ function doPostInner_(e) {
   try {
     const payload = JSON.parse(e.postData.contents || '{}');
     const action = payload.action;
+    const refusal = proxyKeyRefusal_(action, payload);
+    if (refusal) return errorResponse_(refusal);
 
     // Normalize draftId across all possible payload shapes
     const normalizedDraftId =

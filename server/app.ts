@@ -163,6 +163,7 @@ export function createApiApp() {
   // fetch, response echoed back). Now requires a valid session AND only
   // ever forwards to the app's own configured Apps Script exec URL.
   const ALLOWED_PROXY_URL = process.env.VITE_APPS_SCRIPT_URL || process.env.APPS_SCRIPT_URL;
+  const GAS_PROXY_KEY = process.env.GAS_PROXY_KEY || '';
   app.post("/api/apps-script-proxy", requireSession, async (req, res) => {
     try {
       const { url, method, headers, body, payload } = req.body;
@@ -204,6 +205,14 @@ export function createApiApp() {
 
         if (parsedBody && typeof parsedBody === 'object' && !Array.isArray(parsedBody)) {
           parsedBody.user_email = (req as any).userEmail;
+          // The web app is open to anonymous callers, so user_email alone
+          // proves nothing to it. GAS_PROXY_KEY (a server-only secret, also
+          // in the script's Script Properties) proves the request came
+          // through this session-checked proxy; the backend requires it for
+          // money-changing actions (see proxyKeyRefusal_ in entry_points.js).
+          // A client-supplied proxy_key is never passed through.
+          if (GAS_PROXY_KEY) parsedBody.proxy_key = GAS_PROXY_KEY;
+          else delete parsedBody.proxy_key;
           fetchOptions.body = JSON.stringify(parsedBody);
         } else {
           fetchOptions.body = typeof actualBody === 'string' ? actualBody : JSON.stringify(actualBody);
