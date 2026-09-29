@@ -93,7 +93,7 @@ function prPlanClear_() {
   var ledger = [], vlDeleted = 0, running = {};
   vl.slice(1).forEach(function (r) {
     var particulars = String(r[3] || '').trim();
-    if (particulars === 'Payment' || particulars.indexOf('Adjustment') === 0) { vlDeleted++; return; }
+    if (particulars === 'Payment' || particulars === 'Discount' || particulars.indexOf('Adjustment') === 0) { vlDeleted++; return; }
     var row = r.slice();
     var vendor = String(row[1] || '').trim();
     if (vendor) { running[vendor] = prRound2_((running[vendor] || 0) + (Number(row[5]) || 0)); row[6] = running[vendor]; }
@@ -147,23 +147,27 @@ function prReplayEntries_() {
   var rows = prBackupValues_('PaymentLogs'), h = rows[0];
   var col = function (n) { return findHeaderIndex_(h, n); };
   var c = { date: col('Date'), id: col('Payment ID'), vendor: col('Vendor Code'), rmb: col('RMB'), er2: col('ER2'),
-            settled: col('Settled ER2'), mode: col('Payment Mode'), ref: col('Reference No'), source: col('Source Vendor') };
+            settled: col('Settled ER2'), mode: col('Payment Mode'), ref: col('Reference No'), source: col('Source Vendor'),
+            sourceInvoice: col('Source Invoice'), notes: col('Notes') };
   if (c.id === -1 || c.vendor === -1 || c.rmb === -1 || c.date === -1) throw new Error('Backup PaymentLogs is missing Date / Payment ID / Vendor Code / RMB');
   var entries = [];
   for (var i = 1; i < rows.length; i++) {
     var r = rows[i];
     var id = String(r[c.id] || '').trim();
     if (!id) continue;
-    var kind = /^DP-/i.test(id) ? 'DP' : /^IDP-/i.test(id) ? 'IDP' : null;
+    var kind = /^DP-/i.test(id) ? 'DP' : /^IDP-/i.test(id) ? 'IDP' : /^DSC-/i.test(id) ? 'DSC' : null;
     if (!kind) throw new Error('Backup row ' + (i + 1) + ': unexpected payment id ' + id);
     var e = {
       index: entries.length, paymentId: id, kind: kind, date: cnfYmd_(r[c.date]),
       vendorCode: String(r[c.vendor] || '').trim(), rmb: Number(r[c.rmb]) || 0,
       er2: c.er2 !== -1 ? Number(r[c.er2]) || 0 : 0, settledEr2: c.settled !== -1 ? Number(r[c.settled]) || 0 : 0,
       mode: c.mode !== -1 ? String(r[c.mode] || '') : '', ref: c.ref !== -1 ? String(r[c.ref] || '') : '',
-      sourceVendor: c.source !== -1 ? String(r[c.source] || '').trim() : ''
+      sourceVendor: c.source !== -1 ? String(r[c.source] || '').trim() : '',
+      sourceInvoice: c.sourceInvoice !== -1 ? String(r[c.sourceInvoice] || '').trim() : '',
+      notes: c.notes !== -1 ? String(r[c.notes] || '') : ''
     };
     if (kind === 'IDP' && !e.sourceVendor) throw new Error('Backup row ' + (i + 1) + ': transfer ' + id + ' has no Source Vendor');
+    if (kind === 'DSC' && (!e.sourceInvoice || !e.ref)) throw new Error('Backup row ' + (i + 1) + ': discount ' + id + ' has no Source Invoice / Reference No');
     entries.push(e);
   }
   return entries;
@@ -225,6 +229,15 @@ function paymentResetReplay_(payload) {
     var res;
     if (e.kind === 'DP') {
       res = prParseResponse_(addPaymentLog({ record: { paymentId: e.paymentId, date: e.date, vendorCode: e.vendorCode, rmb: e.rmb, er2: e.er2, paymentMode: e.mode, referenceNo: e.ref } }));
+    } else if (e.kind === 'DSC') {
+      // Same function the Log Discount tab uses, with the original id, in
+      // backup row order, so the invoice's settlement state (and so the
+      // split and the paid rate) is what it was when the discount was logged.
+      try {
+        res = applyVendorDiscount_({ date: e.date, vendorCode: e.vendorCode, invoiceId: e.sourceInvoice, amountRmb: e.rmb, creditNoteNo: e.ref, notes: e.notes }, e.paymentId);
+      } catch (err) {
+        res = { status: 'error', message: err.message };
+      }
     } else {
       // Pin the historical rate this transfer's shortfall was originally priced
       // at: a transfer entered on its own date got an intraday rate, which
@@ -472,6 +485,7 @@ function prResettlePlan_() {
   var entries = [];
   for (var i = 1; i < pay.length; i++) {
     var r = pay[i], id = String(r[c.id] || '').trim();
+    if (/^DSC-/i.test(id)) throw new Error('Resettle does not handle vendor discounts (' + id + '). Use backup → clear → replay instead.');
     var kind = /^DP-/i.test(id) ? 'DP' : /^IDP-/i.test(id) ? 'IDP' : null;
     if (!kind) throw new Error('PaymentLogs row ' + (i + 1) + ': unexpected payment id ' + id);
     var e = {
