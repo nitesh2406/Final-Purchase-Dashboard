@@ -771,10 +771,31 @@ export interface CnfShipmentValue {
   paidInr: number;
   fullyPaid: boolean;
   invoicedInr: number;
+  // Pending + approved CNF invoice totals (base + GST) shared to this shipment by its goods lines.
+  invoicedTotalInr: number;
   remainingInr: number;
   invoiceStatus: 'Not invoiced' | 'Part invoiced' | 'Fully invoiced';
   eligible: boolean;
   ineligibleReason: string;
+}
+
+// A batch's saved draft CNF invoice (CNF_Draft_Invoices). See
+// docs/superpowers/specs/2026-09-29-cnf-draft-invoice-design.md.
+export interface CnfDraftInvoice {
+  batchId: string;
+  batchType: 'sea' | 'air';
+  goodsValue: number;
+  categoryId: string;
+  categoryLabel: string;
+  rate: number;
+  weightKg: number | null;
+  charge: number;
+  igstPct: number;
+  gst: number;
+  total: number;
+  shipments: { shipmentId: string; paidInr: number }[];
+  generatedBy: string;
+  generatedAt: string;
 }
 
 export interface CnfInvoiceLine {

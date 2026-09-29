@@ -2,7 +2,7 @@
 // Reads go direct (and through gasApi's shared read cache); writes go
 // through the authenticated proxy so the backend records the verified user.
 import { callGas, callGasAuthed } from './gasApi';
-import type { CnfShipmentValue, CnfGoodsInvoice, CnfLedgerStatement } from '../types';
+import type { CnfShipmentValue, CnfGoodsInvoice, CnfLedgerStatement, CnfDraftInvoice } from '../types';
 
 function ensureOk(response: any, what: string): any {
   if (!response || response.status !== 'success') {
@@ -51,4 +51,14 @@ export async function approveCnfGoodsInvoice(id: string): Promise<void> {
 
 export async function rejectCnfGoodsInvoice(id: string, rejectionReason: string): Promise<void> {
   ensureOk(await callGasAuthed('reject_cnf_goods_invoice', { id, rejectionReason }), 'reject the CNF invoice');
+}
+
+export async function fetchCnfDraftInvoices(): Promise<CnfDraftInvoice[]> {
+  const r = ensureOk(await callGas('get_cnf_draft_invoices', {}, 1), 'load CNF draft invoices');
+  return r.drafts || [];
+}
+
+export async function saveCnfDraftInvoice(input: { batchId: string; categoryId: string; rate: number; weightKg: number | null }): Promise<CnfDraftInvoice> {
+  const r = ensureOk(await callGasAuthed('save_cnf_draft_invoice', { ...input }), 'save the draft invoice');
+  return r.draft;
 }
