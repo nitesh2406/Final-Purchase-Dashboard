@@ -137,7 +137,7 @@ var PROXY_KEY_ALWAYS_ = {
 };
 var PROXY_KEY_WHEN_REAL_ = {
   payment_reset_clear: true, payment_reset_replay: true, payment_reset_restore: true,
-  payment_reset_resettle: true, payment_reset_fix_vl_dates: true
+  payment_reset_resettle: true, payment_reset_fix_vl_dates: true, fix_vendor_shipment_batch_ids: true
 };
 
 // Returns why the request is refused, or null. Always removes proxy_key from
@@ -669,6 +669,10 @@ function doPostInner_(e) {
 
       case 'payment_reset_fix_vl_dates':
         result = paymentResetFixVendorLedgerDates_(payload);
+        break;
+
+      case 'fix_vendor_shipment_batch_ids':
+        result = fixVendorShipmentBatchIds_(payload);
         break;
 
 

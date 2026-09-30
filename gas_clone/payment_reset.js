@@ -699,3 +699,65 @@ function paymentResetFixVendorLedgerDates_(payload) {
   invalidateSheetCache_('VendorLedger');
   return { status: 'success', dry_run: false, filled: fill.length, alreadyDated: alreadyDated };
 }
+
+// One-off repair (2026-09-30): Vendor_Shipments rows 4-27 had their batch_id
+// column sorted A→Z on its own in the sheet, putting 24 shipments on the
+// wrong batches. Takes [{ shipment_id, from, to }] and writes `to` only where
+// batch_id still reads `from` (a cell already at `to` counts as done).
+// Refuses the whole list if any shipment is unknown or listed twice, any `to`
+// is not a Batches id, or any cell holds something else. A real run then
+// rebuilds every batch's stored paid_amount_inr / blended rate / payment
+// status from the corrected mapping.
+function fixVendorShipmentBatchIds_(payload) {
+  var p = payload || {};
+  var dryRun = p.dry_run !== false;
+  var list = p.fixes || [];
+  if (!list.length) throw new Error('No fixes sent.');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Vendor_Shipments'), batchSheet = ss.getSheetByName('Batches');
+  if (!sheet || !batchSheet) throw new Error('Vendor_Shipments / Batches sheet not found');
+
+  var lock = LockService.getScriptLock();
+  if (!dryRun) lock.waitLock(30000);
+  try {
+    var values = sheet.getDataRange().getValues(), h = values[0];
+    var idCol = h.indexOf('shipment_id'), batchCol = h.indexOf('batch_id');
+    if (idCol === -1 || batchCol === -1) throw new Error('Vendor_Shipments is missing shipment_id / batch_id');
+    var rowById = {}, dupRows = {};
+    for (var i = 1; i < values.length; i++) {
+      var sid = String(values[i][idCol] || '').trim();
+      if (!sid) continue;
+      if (rowById[sid] !== undefined) dupRows[sid] = true;
+      rowById[sid] = i;
+    }
+    var bv = batchSheet.getDataRange().getValues(), bCol = bv[0].indexOf('batch_id'), batchIds = {};
+    if (bCol === -1) throw new Error('Batches sheet missing batch_id column');
+    for (var b = 1; b < bv.length; b++) { var bid = String(bv[b][bCol] || '').trim(); if (bid) batchIds[bid] = true; }
+
+    var writes = [], alreadyFixed = [], problems = [], seen = {};
+    list.forEach(function (f) {
+      var sid = String((f && f.shipment_id) || '').trim(), from = String((f && f.from) || '').trim(), to = String((f && f.to) || '').trim();
+      if (!sid || !from || !to) { problems.push('incomplete entry ' + JSON.stringify(f)); return; }
+      if (seen[sid]) { problems.push(sid + ' listed twice'); return; }
+      seen[sid] = true;
+      if (dupRows[sid]) { problems.push(sid + ' is on more than one Vendor_Shipments row'); return; }
+      var r = rowById[sid];
+      if (r === undefined) { problems.push(sid + ' not found'); return; }
+      if (!batchIds[to]) { problems.push(sid + ': ' + to + ' is not a batch'); return; }
+      var cur = String(values[r][batchCol] || '').trim();
+      if (cur === to) { alreadyFixed.push(sid); return; }
+      if (cur !== from) { problems.push(sid + ' reads ' + (cur || '(blank)') + ', expected ' + from); return; }
+      writes.push({ row: r + 1, shipment_id: sid, from: from, to: to });
+    });
+    if (problems.length) throw new Error('Nothing written. ' + problems.slice(0, 8).join('; ') + (problems.length > 8 ? ' …' : ''));
+    if (dryRun) return { status: 'success', dry_run: true, toWrite: writes.length, alreadyFixed: alreadyFixed.length, writes: writes };
+
+    writes.forEach(function (w) { sheet.getRange(w.row, batchCol + 1).setValue(w.to); });
+    SpreadsheetApp.flush();
+    invalidateSheetCache_('Vendor_Shipments');
+    var aggregates = backfillBatchSettlementAggregates_();
+    return { status: 'success', dry_run: false, written: writes.length, alreadyFixed: alreadyFixed.length, aggregates: aggregates };
+  } finally {
+    if (!dryRun) lock.releaseLock();
+  }
+}
