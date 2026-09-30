@@ -84,3 +84,27 @@ other than KREIZ bills its own freight; CNF bills goods + GST only).
   missing rate), air-partner and air-unset.
 - Browser e2e: Settings card (KREIZ + partner rows, save), draft modal (air
   KREIZ prefill with no category select), batches weight column shows 0.00.
+
+## Addendum: draft invoice adjustment (2026-09-30)
+
+Some historical CNF invoices were worked out by hand on a rough manual ER. To
+backfill drafts that match them, the draft form has an **Adjustment (₹)**
+line (+ or −, on the total) and an optional **Adjustment reason**.
+
+- **Split:** goods, charge and GST each take `amount × part ÷ total`, rounded
+  to the paisa, and GST takes the leftover paisa. Every part moves by the same
+  factor, so GST stays the same % of goods + charge, and the parts add up to
+  the amount exactly. The rule is in `cnfDraftAdjustment_` (server) and
+  `computeDraftAdjustment` (form preview), and a test checks both give the
+  same figures.
+- **Stored:** CNF_Draft_Invoices gains columns P–T (Adjustment, Goods /
+  Charge / GST Adjustment, Adjustment Reason). Goods Value / CNF Charge / GST
+  stay the computed figures, and Expected Total includes the adjustment.
+  Older sheets gain the header on the next save; old rows read as 0.
+- **Rules:** the total must stay above 0. The reason is optional and dropped
+  when there is no adjustment. Regenerating keeps the saved adjustment and
+  reason; clearing the field removes them.
+- **Display:** the batch row shows the adjusted goods / charge / GST and
+  "adj ₹X (reason)". "CNF invoiced … of ₹X" uses the adjusted total. The
+  out-of-date check still compares the computed goods with the goods paid, so
+  an adjustment never marks a draft out of date.

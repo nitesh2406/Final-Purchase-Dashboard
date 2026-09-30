@@ -295,7 +295,13 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
                       <>
                         <div className="font-mono">{fmtInr(invoicedTotal)} of {fmtInr(draft.total)}</div>
                         <div className="text-[10px] text-slate-400">
-                          goods {fmtInr(draft.goodsValue)} · charge {fmtInr(draft.charge)} · GST {fmtInr(draft.gst)} · draft by {draft.generatedBy}, {fmtIstDate(draft.generatedAt)}
+                          goods {fmtInr(draft.goodsValue + (draft.goodsAdjustment || 0))} · charge {fmtInr(draft.charge + (draft.chargeAdjustment || 0))} · GST {fmtInr(draft.gst + (draft.gstAdjustment || 0))}
+                          {draft.adjustment ? (
+                            <span data-testid={`draft-adj-${batch.batch_id}`} title={draft.adjustmentReason || 'No reason given'}>
+                              {' '}· adj {fmtInr(draft.adjustment)}{draft.adjustmentReason ? ` (${draft.adjustmentReason})` : ''}
+                            </span>
+                          ) : null}
+                          {' '}· draft by {draft.generatedBy}, {fmtIstDate(draft.generatedAt)}
                         </div>
                         {stale && <div className="text-[10px] font-semibold text-amber-600" data-testid={`draft-stale-${batch.batch_id}`}>{stale}</div>}
                       </>

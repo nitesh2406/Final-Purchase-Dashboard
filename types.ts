@@ -806,6 +806,13 @@ export interface CnfDraftInvoice {
   generatedBy: string;
   generatedAt: string;
   shippingPartnerId: string; // the air batch's partner when drafted; '' for sea
+  // Adjustment to the total (₹, + or −) and its proportional split; goodsValue /
+  // charge / gst above are the computed figures, total already includes it.
+  adjustment?: number;
+  goodsAdjustment?: number;
+  chargeAdjustment?: number;
+  gstAdjustment?: number;
+  adjustmentReason?: string;
 }
 
 // A CNF invoice line. Goods lines name a shipment (batchId/shipmentId) and

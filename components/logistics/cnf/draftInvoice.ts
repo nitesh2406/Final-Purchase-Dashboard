@@ -33,3 +33,17 @@ export function computeDraftInvoice(i: { mode: 'sea' | 'air'; goods: number; rat
   const gst = round2((i.goods + charge) * i.igstPct / 100);
   return { charge, gst, total: round2(i.goods + charge + gst) };
 }
+
+export interface DraftAdjustment { goods: number; charge: number; gst: number }
+
+// Splits an adjustment to the draft total (to match an invoice worked out by
+// hand on an old manual ER) in proportion: goods, charge and GST each take
+// their share of the total, so GST stays the same % of goods + charge. GST
+// takes the leftover paisa, so the parts add up to the amount. Same rule as
+// cnfDraftAdjustment_ in gas_clone/cnf_unified.js, which recomputes it on save.
+export function computeDraftAdjustment(goods: number, charge: number, gst: number, amount: number): DraftAdjustment {
+  const total = goods + charge + gst;
+  if (!amount || !(total > 0)) return { goods: 0, charge: 0, gst: 0 };
+  const g = round2(amount * goods / total), c = round2(amount * charge / total);
+  return { goods: g, charge: c, gst: round2(amount - g - c) };
+}

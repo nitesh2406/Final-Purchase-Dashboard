@@ -106,7 +106,10 @@ export async function fetchCnfDraftInvoices(): Promise<CnfDraftInvoice[]> {
   return r.drafts || [];
 }
 
-export async function saveCnfDraftInvoice(input: { batchId: string; categoryId: string; rate: number; weightKg: number | null }): Promise<CnfDraftInvoice> {
+export async function saveCnfDraftInvoice(input: {
+  batchId: string; categoryId: string; rate: number; weightKg: number | null;
+  adjustment: number; adjustmentReason: string; // ₹ on the total, split in proportion (see computeDraftAdjustment)
+}): Promise<CnfDraftInvoice> {
   const r = ensureOk(await callGasAuthed('save_cnf_draft_invoice', { ...input }), 'save the draft invoice');
   return r.draft;
 }

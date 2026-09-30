@@ -3,7 +3,7 @@ import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { saveCnfDraftInvoice } from '../../../services/cnfService';
 import type { Batch, CnfCommissionRate, CnfDraftInvoice } from '../../../types';
-import { computeDraftInvoice, initialDraftCategoryId } from './draftInvoice';
+import { computeDraftInvoice, computeDraftAdjustment, initialDraftCategoryId } from './draftInvoice';
 import { defaultSeaCategory } from './expectedCharge';
 import { fmtInr } from './cnfFormat';
 
@@ -40,6 +40,10 @@ export const CnfDraftInvoiceModal: React.FC<{
     : (existing && initialId === existing.categoryId ? String(existing.rate) : rateOf(initialId)));
   const batchWeight = Number(batch.total_weight_kg) || 0;
   const [weight, setWeight] = useState(String(existing?.weightKg ?? (batchWeight > 0 ? batchWeight : '')));
+  // Adjustment (₹, + or −) to match an invoice worked out by hand on an old
+  // manual ER; a saved draft's own adjustment and reason are kept.
+  const [adjustment, setAdjustment] = useState(existing?.adjustment ? String(existing.adjustment) : '');
+  const [adjustmentReason, setAdjustmentReason] = useState(existing?.adjustment ? existing.adjustmentReason || '' : '');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -50,7 +54,13 @@ export const CnfDraftInvoiceModal: React.FC<{
     () => computeDraftInvoice({ mode: isAir ? 'air' : 'sea', goods: goodsValue, rate: partnerShipped ? 0 : rateNum, weightKg: isAir && !partnerShipped ? weightNum : null, igstPct }),
     [isAir, goodsValue, rateNum, weightNum, igstPct, partnerShipped]
   );
-  const canSave = !saving && (!!partnerShipped || (isAir ? rateNum > 0 && weightNum > 0 : !!categoryId && rateNum > 0));
+  const adjText = adjustment.trim();
+  const adjValid = adjText === '' || isFinite(Number(adjText));
+  const adjNum = adjValid && adjText !== '' ? Math.round(Number(adjText) * 100) / 100 : 0;
+  const adj = computeDraftAdjustment(goodsValue, figures.charge, figures.gst, adjNum);
+  const adjustedTotal = Math.round((figures.total + adjNum) * 100) / 100;
+  const adjProblem = !adjValid ? 'Enter the adjustment as a number, e.g. -1181.25' : adjustedTotal <= 0 ? 'The adjustment would take the total to 0 or below' : null;
+  const canSave = !saving && !adjProblem && (!!partnerShipped || (isAir ? rateNum > 0 && weightNum > 0 : !!categoryId && rateNum > 0));
 
   const pick = (id: string) => { setCategoryId(id); setRate(rateOf(id)); };
   const save = async () => {
@@ -58,9 +68,10 @@ export const CnfDraftInvoiceModal: React.FC<{
     setSaving(true);
     setError(null);
     try {
+      const adjustmentFields = { adjustment: adjNum, adjustmentReason: adjNum ? adjustmentReason.trim() : '' };
       await saveCnfDraftInvoice(partnerShipped
-        ? { batchId: batch.batch_id, categoryId: '', rate: 0, weightKg: null }
-        : { batchId: batch.batch_id, categoryId: isAir ? '' : categoryId, rate: rateNum, weightKg: isAir ? weightNum : null });
+        ? { batchId: batch.batch_id, categoryId: '', rate: 0, weightKg: null, ...adjustmentFields }
+        : { batchId: batch.batch_id, categoryId: isAir ? '' : categoryId, rate: rateNum, weightKg: isAir ? weightNum : null, ...adjustmentFields });
       onSaved();
     } catch (err: any) {
       setError(err.message || 'Failed to save the draft invoice');
@@ -117,12 +128,51 @@ export const CnfDraftInvoiceModal: React.FC<{
             </div>
           </div>
         )}
-        <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 grid grid-cols-2 gap-2 text-sm" data-testid="cnf-draft-figures">
-          <span className="text-slate-400">Goods paid</span><span className="text-right font-mono">{fmtInr(goodsValue)}</span>
-          <span className="text-slate-400">CNF charge</span><span className="text-right font-mono">{fmtInr(figures.charge)}</span>
-          <span className="text-slate-400">GST ({igstPct}% on goods{partnerShipped ? '' : ' + charge'})</span><span className="text-right font-mono">{fmtInr(figures.gst)}</span>
-          <span className="font-semibold">Expected total</span><span className="text-right font-mono font-semibold">{fmtInr(figures.total)}</span>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={label}>Adjustment (₹)</label>
+            <input type="number" step="0.01" aria-label="Adjustment" placeholder="0" value={adjustment} onChange={e => setAdjustment(e.target.value)} className={input} />
+          </div>
+          <div>
+            <label className={label}>Adjustment reason <span className="normal-case font-normal">(optional)</span></label>
+            <input type="text" aria-label="Adjustment reason" placeholder="e.g. matches KR/123, manual ER" value={adjustmentReason} onChange={e => setAdjustmentReason(e.target.value)} className={input} disabled={!adjNum} />
+          </div>
+          <p className="col-span-2 text-[10px] text-slate-400 -mt-1">
+            + or − on the total, e.g. to match an invoice worked out by hand on an old ER. Split in proportion between goods, charge and GST.
+          </p>
+          {adjProblem && <p className="col-span-2 text-xs text-red-500" data-testid="cnf-draft-adj-problem">{adjProblem}</p>}
         </div>
+        {adjNum === 0 || adjProblem ? (
+          <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 grid grid-cols-2 gap-2 text-sm" data-testid="cnf-draft-figures">
+            <span className="text-slate-400">Goods paid</span><span className="text-right font-mono">{fmtInr(goodsValue)}</span>
+            <span className="text-slate-400">CNF charge</span><span className="text-right font-mono">{fmtInr(figures.charge)}</span>
+            <span className="text-slate-400">GST ({igstPct}% on goods{partnerShipped ? '' : ' + charge'})</span><span className="text-right font-mono">{fmtInr(figures.gst)}</span>
+            <span className="font-semibold">Expected total</span><span className="text-right font-mono font-semibold">{fmtInr(figures.total)}</span>
+          </div>
+        ) : (
+          <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 grid grid-cols-4 gap-x-3 gap-y-2 text-sm" data-testid="cnf-draft-figures">
+            <span></span>
+            <span className="text-right text-[10px] uppercase tracking-wider text-slate-400">Computed</span>
+            <span className="text-right text-[10px] uppercase tracking-wider text-slate-400">Adjustment</span>
+            <span className="text-right text-[10px] uppercase tracking-wider text-slate-400">Adjusted</span>
+            {[
+              ['Goods paid', goodsValue, adj.goods],
+              ['CNF charge', figures.charge, adj.charge],
+              [`GST (${igstPct}%)`, figures.gst, adj.gst],
+            ].map(([name, base, delta]) => (
+              <React.Fragment key={name as string}>
+                <span className="text-slate-400">{name}</span>
+                <span className="text-right font-mono">{fmtInr(base as number)}</span>
+                <span className="text-right font-mono">{fmtInr(delta as number)}</span>
+                <span className="text-right font-mono">{fmtInr((base as number) + (delta as number))}</span>
+              </React.Fragment>
+            ))}
+            <span className="font-semibold">Expected total</span>
+            <span className="text-right font-mono">{fmtInr(figures.total)}</span>
+            <span className="text-right font-mono">{fmtInr(adjNum)}</span>
+            <span className="text-right font-mono font-semibold">{fmtInr(adjustedTotal)}</span>
+          </div>
+        )}
         {error && <p className="text-sm text-red-500">{error}</p>}
         <div className="flex gap-3 justify-end">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
