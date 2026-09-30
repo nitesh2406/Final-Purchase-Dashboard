@@ -4,11 +4,10 @@ import { Button } from '../ui/Button';
 import {
     fetchConversionCharge, saveConversionCharge, fetchIgstRate, saveIgstRate,
     fetchCnfCommissionRates, saveCnfCommissionRates,
-    fetchCnfAirRateCategories, saveCnfAirRateCategories,
-    fetchShipmentPartners, fetchShipmentPartnerDefaults, saveShipmentPartnerDefaults,
 } from '../../services/settlementService';
-import { fetchPartnerGstRate, savePartnerGstRate } from '../../services/shippingPartnerService';
-import { CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault } from '../../types';
+import { fetchPartnerGstRate, savePartnerGstRate, fetchShippingPartners, saveShippingPartner } from '../../services/shippingPartnerService';
+import { fetchCnfAirRate, saveCnfAirRate } from '../../services/cnfService';
+import { CnfCommissionRate, ShippingPartner } from '../../types';
 
 export const ChargesConfig: React.FC = () => {
     const [chargePercent, setChargePercent] = useState<string>('0');
@@ -39,18 +38,17 @@ export const ChargesConfig: React.FC = () => {
     const [ratesError, setRatesError] = useState<string | null>(null);
     const [ratesSuccessMessage, setRatesSuccessMessage] = useState<string | null>(null);
 
-    const [airCategories, setAirCategories] = useState<CnfAirRateCategory[]>([]);
-    const [isAirCategoriesLoading, setIsAirCategoriesLoading] = useState(true);
-    const [isAirCategoriesSaving, setIsAirCategoriesSaving] = useState(false);
-    const [airCategoriesError, setAirCategoriesError] = useState<string | null>(null);
-    const [airCategoriesSuccessMessage, setAirCategoriesSuccessMessage] = useState<string | null>(null);
-
-    const [shipmentPartners, setShipmentPartners] = useState<string[]>([]);
-    const [partnerDefaults, setPartnerDefaults] = useState<Record<string, string>>({});
-    const [isPartnerDefaultsLoading, setIsPartnerDefaultsLoading] = useState(true);
-    const [isPartnerDefaultsSaving, setIsPartnerDefaultsSaving] = useState(false);
-    const [partnerDefaultsError, setPartnerDefaultsError] = useState<string | null>(null);
-    const [partnerDefaultsSuccessMessage, setPartnerDefaultsSuccessMessage] = useState<string | null>(null);
+    // Air rate per shipping partner (₹/kg): KREIZ (a setting) + each partner
+    // (its Shipping_Partners row). Inputs hold the typed strings; the saved
+    // values tell which rows changed.
+    const [kreizAirRate, setKreizAirRate] = useState<string>('');
+    const [savedKreizAirRate, setSavedKreizAirRate] = useState<number | null>(null);
+    const [airPartners, setAirPartners] = useState<ShippingPartner[]>([]);
+    const [partnerRates, setPartnerRates] = useState<Record<string, string>>({});
+    const [isAirRatesLoading, setIsAirRatesLoading] = useState(true);
+    const [isAirRatesSaving, setIsAirRatesSaving] = useState(false);
+    const [airRatesError, setAirRatesError] = useState<string | null>(null);
+    const [airRatesSuccess, setAirRatesSuccess] = useState<string | null>(null);
 
     useEffect(() => {
         (async () => {
@@ -95,34 +93,23 @@ export const ChargesConfig: React.FC = () => {
         })();
     }, []);
 
-    useEffect(() => {
-        (async () => {
-            try {
-                const categories = await fetchCnfAirRateCategories();
-                setAirCategories(categories);
-            } catch {
-                setAirCategoriesError('Could not load Air rate categories.');
-            } finally {
-                setIsAirCategoriesLoading(false);
-            }
-        })();
-    }, []);
+    const loadAirRates = async () => {
+        setIsAirRatesLoading(true);
+        const [kreiz, partners] = await Promise.allSettled([fetchCnfAirRate(), fetchShippingPartners()]);
+        const problems: string[] = [];
+        if (kreiz.status === 'fulfilled') {
+            setSavedKreizAirRate(kreiz.value);
+            setKreizAirRate(kreiz.value != null ? String(kreiz.value) : '');
+        } else problems.push('the KREIZ air rate');
+        if (partners.status === 'fulfilled') {
+            setAirPartners(partners.value);
+            setPartnerRates(Object.fromEntries(partners.value.map(p => [p.id, String(p.ratePerKg)])));
+        } else problems.push('the shipping partners');
+        setAirRatesError(problems.length ? `Could not load ${problems.join(' or ')}.` : null);
+        setIsAirRatesLoading(false);
+    };
 
-    useEffect(() => {
-        (async () => {
-            try {
-                const [partners, defaults] = await Promise.all([fetchShipmentPartners(), fetchShipmentPartnerDefaults()]);
-                setShipmentPartners(partners);
-                const map: Record<string, string> = {};
-                defaults.forEach(d => { map[d.partner] = d.defaultCategoryId; });
-                setPartnerDefaults(map);
-            } catch {
-                setPartnerDefaultsError('Could not load Shipment Partner defaults.');
-            } finally {
-                setIsPartnerDefaultsLoading(false);
-            }
-        })();
-    }, []);
+    useEffect(() => { loadAirRates(); }, []);
 
     const parsed = parseFloat(chargePercent);
     const isValid = !isNaN(parsed) && parsed >= 0;
@@ -217,59 +204,32 @@ export const ChargesConfig: React.FC = () => {
         }
     };
 
-    const handleAddAirCategoryRow = () => {
-        setAirCategories(prev => [...prev, { id: `TMP-${Date.now()}-${Math.random()}`, label: '', ratePerKg: 0 }]);
-    };
+    const rateOk = (v: string) => v.trim() !== '' && parseFloat(v) > 0;
+    const kreizChanged = kreizAirRate.trim() !== '' && parseFloat(kreizAirRate) !== savedKreizAirRate;
+    const changedPartners = airPartners.filter(p => (partnerRates[p.id] ?? '') !== String(p.ratePerKg));
+    const airRatesValid = (!kreizChanged || rateOk(kreizAirRate)) && changedPartners.every(p => rateOk(partnerRates[p.id] ?? ''));
+    const hasAirRateChanges = kreizChanged || changedPartners.length > 0;
 
-    const handleUpdateAirCategoryRow = (index: number, fields: Partial<CnfAirRateCategory>) => {
-        setAirCategories(prev => prev.map((row, i) => (i === index ? { ...row, ...fields } : row)));
-    };
-
-    const handleRemoveAirCategoryRow = (index: number) => {
-        setAirCategories(prev => prev.filter((_, i) => i !== index));
-    };
-
-    const isAirCategoriesValid = airCategories.every(c => c.label.trim().length > 0 && c.ratePerKg >= 0);
-
-    const handleSaveAirCategories = async () => {
-        if (!isAirCategoriesValid) return;
-        setIsAirCategoriesSaving(true);
-        setAirCategoriesError(null);
-        setAirCategoriesSuccessMessage(null);
-        try {
-            const saved = await saveCnfAirRateCategories(airCategories);
-            setAirCategories(saved);
-            setAirCategoriesSuccessMessage('Air rate categories updated.');
-        } catch (err: any) {
-            setAirCategoriesError(err.message || 'Failed to save Air rate categories.');
-        } finally {
-            setIsAirCategoriesSaving(false);
+    // Saves only the rows that changed: KREIZ's setting, and each partner
+    // through save_shipping_partner with its other fields unchanged.
+    const handleSaveAirRates = async () => {
+        if (!airRatesValid || !hasAirRateChanges) return;
+        setIsAirRatesSaving(true);
+        setAirRatesError(null);
+        setAirRatesSuccess(null);
+        const failed: string[] = [];
+        if (kreizChanged) {
+            try { await saveCnfAirRate(parseFloat(kreizAirRate)); } catch (err: any) { failed.push(`KREIZ (${err.message || err})`); }
         }
-    };
-
-    const handleUpdatePartnerDefault = (partner: string, categoryId: string) => {
-        setPartnerDefaults(prev => ({ ...prev, [partner]: categoryId }));
-        setPartnerDefaultsSuccessMessage(null);
-    };
-
-    const handleSavePartnerDefaults = async () => {
-        setIsPartnerDefaultsSaving(true);
-        setPartnerDefaultsError(null);
-        setPartnerDefaultsSuccessMessage(null);
-        try {
-            const payload: CnfShipmentPartnerDefault[] = shipmentPartners
-                .filter(p => partnerDefaults[p])
-                .map(p => ({ partner: p, defaultCategoryId: partnerDefaults[p] }));
-            const saved = await saveShipmentPartnerDefaults(payload);
-            const map: Record<string, string> = {};
-            saved.forEach(d => { map[d.partner] = d.defaultCategoryId; });
-            setPartnerDefaults(map);
-            setPartnerDefaultsSuccessMessage('Shipment Partner defaults updated.');
-        } catch (err: any) {
-            setPartnerDefaultsError(err.message || 'Failed to save Shipment Partner defaults.');
-        } finally {
-            setIsPartnerDefaultsSaving(false);
+        for (const p of changedPartners) {
+            try {
+                await saveShippingPartner({ id: p.id, name: p.name, gstin: p.gstin, ratePerKg: parseFloat(partnerRates[p.id]), active: p.active });
+            } catch (err: any) { failed.push(`${p.name} (${err.message || err})`); }
         }
+        await loadAirRates();
+        if (failed.length) setAirRatesError(`Not saved: ${failed.join('; ')}`);
+        else setAirRatesSuccess('Air rates updated. New draft invoices and partner bills use them.');
+        setIsAirRatesSaving(false);
     };
 
     return (
@@ -478,108 +438,54 @@ export const ChargesConfig: React.FC = () => {
             </Card>
 
             <div>
-                <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Air Rate Categories</h3>
+                <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Air rate per shipping partner</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                    Weight-based (₹/kg) categories for Air CNF entries — separate from the %-based table above, which Sea entries use. Used to pre-fill the Rate on an Air Log Entry form.
+                    ₹ per kg each partner charges for an air batch. Choosing a batch's shipping partner fills its rate: KREIZ's goes into the CNF draft invoice, another partner's into its partner bill. Add partners on the Ledgers screen.
                 </p>
             </div>
 
             <Card>
-                {isAirCategoriesLoading ? (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Loading Air rate categories…</p>
+                {isAirRatesLoading ? (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Loading air rates…</p>
                 ) : (
-                    <div className="space-y-3">
-                        {airCategories.map((cat, index) => (
-                            <div key={cat.id} className="flex items-center gap-2">
+                    <div className="space-y-3" data-testid="air-rates-card">
+                        <div className="flex items-center gap-2">
+                            <span className="flex-1 text-sm text-gray-900 dark:text-white">KREIZ <span className="text-xs text-slate-400">(CNF)</span></span>
+                            <input
+                                type="number" step="0.01" min="0" aria-label="KREIZ air rate" placeholder="Not set"
+                                value={kreizAirRate}
+                                onChange={e => { setKreizAirRate(e.target.value); setAirRatesSuccess(null); }}
+                                className="w-32 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition"
+                            />
+                            <span className="text-sm text-slate-400 w-12">₹/kg</span>
+                        </div>
+                        {airPartners.map(p => (
+                            <div key={p.id} className="flex items-center gap-2">
+                                <span className="flex-1 text-sm text-gray-900 dark:text-white">
+                                    {p.name} <span className="text-xs text-slate-400">({p.id}{p.active ? '' : ', inactive'})</span>
+                                </span>
                                 <input
-                                    type="text"
-                                    placeholder="Category label, e.g. Fragile"
-                                    value={cat.label}
-                                    onChange={e => handleUpdateAirCategoryRow(index, { label: e.target.value })}
-                                    className="flex-1 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition"
+                                    type="number" step="0.01" min="0" aria-label={`${p.name} air rate`}
+                                    value={partnerRates[p.id] ?? ''}
+                                    onChange={e => { const v = e.target.value; setPartnerRates(prev => ({ ...prev, [p.id]: v })); setAirRatesSuccess(null); }}
+                                    className="w-32 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition"
                                 />
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    placeholder="Rate per kg"
-                                    value={cat.ratePerKg}
-                                    onChange={e => handleUpdateAirCategoryRow(index, { ratePerKg: parseFloat(e.target.value) || 0 })}
-                                    className="w-28 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition"
-                                />
-                                <span className="text-sm text-slate-400">₹/kg</span>
-                                <button
-                                    type="button"
-                                    onClick={() => handleRemoveAirCategoryRow(index)}
-                                    className="text-red-500 hover:text-red-600 text-xs font-bold px-2"
-                                    title="Remove row"
-                                >
-                                    Remove
-                                </button>
+                                <span className="text-sm text-slate-400 w-12">₹/kg</span>
                             </div>
                         ))}
-
-                        <button
-                            type="button"
-                            onClick={handleAddAirCategoryRow}
-                            className="text-primary-500 hover:text-primary-600 text-xs font-bold"
-                        >
-                            + Add category
-                        </button>
-
-                        <div className="flex items-center gap-3 pt-2">
-                            <Button onClick={handleSaveAirCategories} disabled={!isAirCategoriesValid || isAirCategoriesSaving}>
-                                {isAirCategoriesSaving ? 'Saving…' : 'Save Categories'}
-                            </Button>
-                        </div>
-
-                        {!isAirCategoriesValid && (
-                            <p className="text-xs text-red-500">Every category needs a non-empty label and a non-negative rate.</p>
+                        {airPartners.length === 0 && !airRatesError && (
+                            <p className="text-xs text-slate-400">No other shipping partners yet.</p>
                         )}
-                        {airCategoriesError && <p className="text-sm text-red-500">{airCategoriesError}</p>}
-                        {airCategoriesSuccessMessage && <p className="text-sm text-emerald-600 dark:text-emerald-400">{airCategoriesSuccessMessage}</p>}
-                    </div>
-                )}
-            </Card>
-
-            <div>
-                <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Shipment Partner Defaults</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                    Each Shipment Partner's default Air Rate Category — picking a Partner on an Air Log Entry form pre-fills this Category (which then pre-fills its rate). The partner list itself is maintained in the SKU_Config sheet (column R), not here.
-                </p>
-            </div>
-
-            <Card>
-                {isPartnerDefaultsLoading ? (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Loading Shipment Partners…</p>
-                ) : shipmentPartners.length === 0 ? (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">No Shipment Partners found in SKU_Config column R yet.</p>
-                ) : (
-                    <div className="space-y-3">
-                        {shipmentPartners.map(partner => (
-                            <div key={partner} className="flex items-center gap-2">
-                                <span className="flex-1 text-sm text-gray-900 dark:text-white">{partner}</span>
-                                <select
-                                    value={partnerDefaults[partner] || ''}
-                                    onChange={e => handleUpdatePartnerDefault(partner, e.target.value)}
-                                    className="w-56 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition"
-                                >
-                                    <option value="">-- No default --</option>
-                                    {airCategories.map(cat => (
-                                        <option key={cat.id} value={cat.id}>{cat.label} (₹{cat.ratePerKg}/kg)</option>
-                                    ))}
-                                </select>
-                            </div>
-                        ))}
 
                         <div className="flex items-center gap-3 pt-2">
-                            <Button onClick={handleSavePartnerDefaults} disabled={isPartnerDefaultsSaving}>
-                                {isPartnerDefaultsSaving ? 'Saving…' : 'Save Defaults'}
+                            <Button aria-label="Save air rates" onClick={handleSaveAirRates} disabled={!airRatesValid || !hasAirRateChanges || isAirRatesSaving}>
+                                {isAirRatesSaving ? 'Saving…' : 'Save Rates'}
                             </Button>
                         </div>
 
-                        {partnerDefaultsError && <p className="text-sm text-red-500">{partnerDefaultsError}</p>}
-                        {partnerDefaultsSuccessMessage && <p className="text-sm text-emerald-600 dark:text-emerald-400">{partnerDefaultsSuccessMessage}</p>}
+                        {!airRatesValid && <p className="text-xs text-red-500">Every changed rate must be above 0.</p>}
+                        {airRatesError && <p className="text-sm text-red-500">{airRatesError}</p>}
+                        {airRatesSuccess && <p className="text-sm text-emerald-600 dark:text-emerald-400">{airRatesSuccess}</p>}
                     </div>
                 )}
             </Card>

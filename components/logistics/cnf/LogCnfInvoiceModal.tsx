@@ -54,8 +54,14 @@ export const LogCnfInvoiceModal: React.FC<{
         if (isAnc) return;
         const batchesRes = await callGas('get_batches', {}, 1);
         if (cancelled || !batchesRes || batchesRes.status !== 'success') return;
+        // An air batch's shipping partner, from its shipments. Partner-shipped
+        // batches carry no CNF charge, so their rate isn't needed here.
+        const partnerOf: Record<string, string> = {};
+        shipments.forEach(s => { if (s.shippingPartnerId) partnerOf[s.batchId] = s.shippingPartnerId; });
         const map: Record<string, ExpectedCnfCharge> = {};
-        (batchesRes.batches as Batch[] || []).forEach(b => { map[b.batch_id] = computeExpectedCnfCharge(b, rates.seaRates, rates.airCategories, rates.partnerDefaults); });
+        (batchesRes.batches as Batch[] || []).forEach(b => {
+          map[b.batch_id] = computeExpectedCnfCharge(b, rates.seaRates, { partnerId: partnerOf[b.batch_id] || '', kreizRatePerKg: rates.kreizAirRate });
+        });
         setExpectedByBatch(map);
       } catch (err: any) {
         if (!cancelled) setRateError(`Couldn't load the CNF GST % (${err.message || err}). Close and try again.`);

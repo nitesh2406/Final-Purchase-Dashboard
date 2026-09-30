@@ -133,7 +133,7 @@ var PROXY_KEY_ALWAYS_ = {
   save_cnf_draft_invoice: true, payment_reset_backup: true, log_vendor_discount: true,
   save_shipping_partner: true, set_batch_shipping_partner: true, log_partner_bill: true,
   approve_partner_bill: true, reject_partner_bill: true, log_partner_payment: true, void_partner_payment: true,
-  save_partner_gst_rate: true
+  save_partner_gst_rate: true, save_cnf_air_rate: true
 };
 var PROXY_KEY_WHEN_REAL_ = {
   payment_reset_clear: true, payment_reset_replay: true, payment_reset_restore: true,
@@ -613,6 +613,13 @@ function doPostInner_(e) {
         result = { status: 'success', partnerGstPercent: setPartnerGstPercent_(payload.partnerGstPercent) };
         break;
 
+      case 'get_cnf_air_rate':
+        return successResponse_({ ratePerKg: getCnfAirRatePerKg_() });
+
+      case 'save_cnf_air_rate':
+        result = { status: 'success', ratePerKg: setCnfAirRatePerKg_(payload.ratePerKg) };
+        break;
+
       case 'save_shipping_partner':
         result = saveShippingPartner_(payload);
         break;
@@ -801,7 +808,7 @@ var BUNDLE_READ_ACTIONS_ = {
   get_batches: true, get_product_master: true,
   get_shipping_partners: true, get_batch_shipping_partners: true, get_partner_bills: true,
   get_partner_payments: true, get_party_ledgers: true, get_partner_ledger_statement: true,
-  get_cnf_ancillary_values: true, get_partner_gst_rate: true
+  get_cnf_ancillary_values: true, get_partner_gst_rate: true, get_cnf_air_rate: true
 };
 
 function getBundle_(payload) {

@@ -771,7 +771,7 @@ function getCnfDraftInvoices_() {
   });
 }
 
-// payload: { batchId, categoryId, rate, weightKg (air), user_email (proxy) }.
+// payload: { batchId, categoryId (sea), rate, weightKg (air), user_email (proxy) }.
 // An air batch needs its shipping partner set. When that partner is not
 // KREIZ, KREIZ bills goods + GST only: charge 0, and category / rate /
 // weight are ignored (the partner bills its own fee).
@@ -798,14 +798,19 @@ function saveCnfDraftInvoice_(payload) {
       throw new Error('Batch ' + batchId + ' is not fully paid: ' + unpaid.map(function (s) { return s.shipmentId + ' (' + s.ineligibleReason + ')'; }).join(', '));
     }
     var partnerShipped = mode === 'air' && partnerId !== CNF_VENDOR_CODE_;
+    // Sea: a Sea rate category. Air shipped by KREIZ: KREIZ's ₹/kg (Settings →
+    // Air rate per shipping partner, editable on the form), no category.
     var category = null;
-    if (!partnerShipped) {
+    if (mode === 'air' && !partnerShipped) {
+      if (!(rate > 0)) throw new Error('Rate must be above 0');
+      if (!(weight > 0)) throw new Error('Enter the batch weight (kg)');
+      categoryId = '';
+      category = { label: CNF_VENDOR_CODE_ };
+    } else if (!partnerShipped) {
       if (!categoryId) throw new Error('Pick a rate category');
       if (!(rate > 0)) throw new Error('Rate must be above 0');
-      var categories = mode === 'air' ? getCnfAirRateCategories_() : getCnfCommissionRates_();
-      category = categories.filter(function (c) { return c.id === categoryId; })[0];
-      if (!category) throw new Error('Unknown ' + (mode === 'air' ? 'Air' : 'Sea') + ' rate category: ' + categoryId);
-      if (mode === 'air' && !(weight > 0)) throw new Error('Enter the batch weight (kg)');
+      category = getCnfCommissionRates_().filter(function (c) { return c.id === categoryId; })[0];
+      if (!category) throw new Error('Unknown Sea rate category: ' + categoryId);
     }
 
     var goods = cnfRound2_(ships.reduce(function (s, x) { return s + x.paidInr; }, 0));

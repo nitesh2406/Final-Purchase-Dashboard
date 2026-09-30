@@ -4,7 +4,7 @@
 import { callGas, callGasAuthed } from './gasApi';
 import type {
   CnfShipmentValue, CnfGoodsInvoice, CnfLedgerStatement, CnfDraftInvoice,
-  CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfAncillaryValue,
+  CnfCommissionRate, CnfAncillaryValue,
 } from '../types';
 
 function ensureOk(response: any, what: string): any {
@@ -65,8 +65,9 @@ export async function rejectCnfGoodsInvoice(id: string, rejectionReason: string)
 
 export interface CnfRateConfig {
   seaRates: CnfCommissionRate[];
-  airCategories: CnfAirRateCategory[];
-  partnerDefaults: CnfShipmentPartnerDefault[];
+  // KREIZ's air freight ₹/kg (Settings → Air rate per shipping partner); null = not set.
+  // Other shipping partners carry their own ratePerKg (ShippingPartner).
+  kreizAirRate: number | null;
   igstPct: number;
 }
 
@@ -75,20 +76,29 @@ export interface CnfRateConfig {
 // here throws: a silent empty list showed a false "set up Settings" hint, and
 // a silent 5% IGST made the draft preview disagree with what the server saves.
 export async function fetchCnfRateConfig(): Promise<CnfRateConfig> {
-  const [sea, air, defaults, igst] = await Promise.all([
+  const [sea, air, igst] = await Promise.all([
     callGas('get_cnf_commission_rates', {}, 1),
-    callGas('get_cnf_air_rate_categories', {}, 1),
-    callGas('get_shipment_partner_defaults', {}, 1),
+    callGas('get_cnf_air_rate', {}, 1),
     callGas('get_igst_rate', {}, 1),
   ]);
   const igstPct = Number(ensureOk(igst, 'load the IGST rate').igstPercent);
   if (!(igstPct >= 0)) throw new Error('Failed to load the IGST rate');
   return {
     seaRates: ensureOk(sea, 'load the Sea rate categories').rates || [],
-    airCategories: ensureOk(air, 'load the Air rate categories').categories || [],
-    partnerDefaults: ensureOk(defaults, 'load the carrier defaults').defaults || [],
+    kreizAirRate: airRateOf(ensureOk(air, 'load the KREIZ air rate')),
     igstPct,
   };
+}
+
+const airRateOf = (r: any): number | null => (Number(r.ratePerKg) > 0 ? Number(r.ratePerKg) : null);
+
+export async function fetchCnfAirRate(): Promise<number | null> {
+  return airRateOf(ensureOk(await callGas('get_cnf_air_rate', {}, 1), 'load the KREIZ air rate'));
+}
+
+// Needs the proxy key, so it goes through the authenticated proxy.
+export async function saveCnfAirRate(ratePerKg: number): Promise<number> {
+  return Number(ensureOk(await callGasAuthed('save_cnf_air_rate', { ratePerKg }), 'save the KREIZ air rate').ratePerKg);
 }
 
 export async function fetchCnfDraftInvoices(): Promise<CnfDraftInvoice[]> {

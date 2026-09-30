@@ -508,10 +508,10 @@ export interface Batch {
   blended_settlement_rate?: number | null;
   payment_status?: 'Unpaid' | 'Partial' | 'Paid' | 'Not Invoiced' | null;
 
-  // Persisted by syncBatchWeightAggregate_ (accounting_logger.js) the moment
-  // a vendor shipment's weight is confirmed at receiving — for CNF Agent
-  // Accounting's Air tab, which bills by weight. null until at least one
-  // shipment under this batch has a confirmed weight.
+  // Sum of the batch's shipment weights (actual, else listed, else 0),
+  // computed by the backend on every read (batchWeightsFromShipments_ in
+  // accounting_logger.js) — for CNF Agent Accounting's Air tab, which bills
+  // by weight. 0 when no shipment has a weight.
   total_weight_kg?: number | null;
 
   // ── Finance fields — only ever attached by get_batch_details (Batch Detail
@@ -689,17 +689,6 @@ export interface CnfLedgerEntry {
   ratePerKg?: number;
 }
 
-export interface CnfAirRateCategory {
-  id: string;
-  label: string;
-  ratePerKg: number;
-}
-
-export interface CnfShipmentPartnerDefault {
-  partner: string;
-  defaultCategoryId: string;
-}
-
 export interface CnfEligibleBatch {
   batch_id: string;
   status: string;
@@ -711,8 +700,7 @@ export interface CnfEligibleBatch {
   // Persisted at settlement time (see Batch.payment_status) — null until a
   // payment has settled or a backfill has run.
   payment_status?: 'Unpaid' | 'Partial' | 'Paid' | 'Not Invoiced' | null;
-  // Persisted at receiving time (see Batch.total_weight_kg) — null until a
-  // shipment's weight has been confirmed.
+  // Same on-read shipment-weight sum as Batch.total_weight_kg; 0 when none.
   total_weight_kg?: number | null;
   qty: number;
   cartons: number;

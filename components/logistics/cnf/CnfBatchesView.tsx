@@ -13,7 +13,7 @@ import {
 import { fetchCnfShipmentValues, fetchCnfDraftInvoices, fetchCnfRateConfig } from '../../../services/cnfService';
 import { fetchShippingPartners, fetchBatchShippingPartners, fetchPartnerBills, setBatchShippingPartner } from '../../../services/shippingPartnerService';
 import type {
-  Batch, CnfCommissionRate, CnfAirRateCategory, CnfShipmentPartnerDefault, CnfShipmentValue, CnfDraftInvoice,
+  Batch, CnfCommissionRate, CnfShipmentValue, CnfDraftInvoice,
   ShippingPartner, BatchShippingPartner, PartnerBill,
 } from '../../../types';
 import { LockClosedIcon } from '../../icons/Icons';
@@ -44,8 +44,7 @@ interface LoadedData {
   purchaseInvoices: PurchaseInvoice[];
   settlements: SettlementRecord[];
   seaRates: CnfCommissionRate[];
-  airCategories: CnfAirRateCategory[];
-  partnerDefaults: CnfShipmentPartnerDefault[];
+  kreizAirRate: number | null; // KREIZ's air ₹/kg; other partners carry ratePerKg
   drafts: CnfDraftInvoice[];
   igstPct: number;
   partners: ShippingPartner[];
@@ -116,7 +115,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
     };
     const batchesPart = pick(batchesR, 'batches', prev ? { batches: prev.batches, purchaseInvoices: prev.purchaseInvoices, settlements: prev.settlements } : undefined);
     const shipments = pick(shipmentsR, 'CNF shipment values', prev?.shipments);
-    const rates = pick(ratesR, 'CNF settings', prev ? { seaRates: prev.seaRates, airCategories: prev.airCategories, partnerDefaults: prev.partnerDefaults, igstPct: prev.igstPct } : undefined);
+    const rates = pick(ratesR, 'CNF settings', prev ? { seaRates: prev.seaRates, kreizAirRate: prev.kreizAirRate ?? null, igstPct: prev.igstPct } : undefined);
     const drafts = pick(draftsR, 'draft invoices', prev?.drafts);
     const partnersPart = pick(partnersR, 'shipping partners', prev ? { partners: prev.partners, assignments: prev.assignments, partnerBills: prev.partnerBills } : undefined);
     if (batchesPart && shipments && rates && drafts && partnersPart) {
@@ -173,11 +172,11 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
         const assignment = assignmentByBatch.get(b.batch_id);
         const partnerId = b.batch_type === 'air' ? (assignment?.partnerId || '') : '';
         const partnerShipped = partnerId !== '' && partnerId !== 'KREIZ';
-        const expected: ExpectedCnfCharge = b.batch_type === 'air' && !partnerId
-          ? { amount: null, categoryLabel: null, note: 'Set shipping partner' }
-          : partnerShipped
-            ? { amount: 0, categoryLabel: null, note: 'partner-shipped: no CNF charge' }
-            : computeExpectedCnfCharge(b, data.seaRates, data.airCategories, data.partnerDefaults);
+        const partner = partnerShipped ? data.partners.find(p => p.id === partnerId) : undefined;
+        const expected: ExpectedCnfCharge = computeExpectedCnfCharge(b, data.seaRates, {
+          partnerId, kreizRatePerKg: data.kreizAirRate ?? null,
+          partnerRatePerKg: partner?.ratePerKg ?? null, partnerName: partner?.name || assignment?.partnerName,
+        });
         // Same test save_cnf_draft_invoice applies on the server.
         const canDraft = b.status === 'Delivered' && batchShipments.length > 0 && batchShipments.every(s => s.eligible);
         const draft = draftsByBatch.get(b.batch_id);
@@ -281,7 +280,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
                   <td className="px-4 py-3 text-right font-mono">{batch.blended_settlement_rate != null ? batch.blended_settlement_rate.toFixed(4) : dash}</td>
                   {mode === 'air' && (
                     <td className="px-4 py-3 text-right font-mono">
-                      {batch.total_weight_kg != null ? batch.total_weight_kg.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : dash}
+                      {(Number(batch.total_weight_kg) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   )}
                   <td className="px-4 py-3">
@@ -332,8 +331,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
             goodsValue={row.eligibleValue}
             igstPct={data.igstPct}
             seaRates={data.seaRates}
-            airCategories={data.airCategories}
-            partnerDefaults={data.partnerDefaults}
+            kreizAirRate={data.kreizAirRate ?? null}
             existing={row.draft}
             partnerShipped={row.partnerShipped}
             partnerName={row.assignment?.partnerName}

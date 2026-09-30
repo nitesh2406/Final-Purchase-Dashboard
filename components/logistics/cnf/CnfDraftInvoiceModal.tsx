@@ -2,37 +2,44 @@ import React, { useMemo, useState } from 'react';
 import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { saveCnfDraftInvoice } from '../../../services/cnfService';
-import type { Batch, CnfAirRateCategory, CnfCommissionRate, CnfDraftInvoice, CnfShipmentPartnerDefault } from '../../../types';
+import type { Batch, CnfCommissionRate, CnfDraftInvoice } from '../../../types';
 import { computeDraftInvoice, initialDraftCategoryId } from './draftInvoice';
-import { defaultCnfCategory } from './expectedCharge';
+import { defaultSeaCategory } from './expectedCharge';
 import { fmtInr } from './cnfFormat';
 
 // Generate / regenerate a batch's draft CNF invoice. The figures here are a
-// preview; the backend recomputes and stores them on save.
+// preview; the backend recomputes and stores them on save. Sea: pick a Sea
+// rate category (% of goods). Air shipped by KREIZ: KREIZ's ₹/kg from
+// Settings × the batch weight, both editable. Air shipped by another
+// partner: goods + GST only.
 export const CnfDraftInvoiceModal: React.FC<{
   batch: Batch;
   goodsValue: number;
   igstPct: number;
   seaRates: CnfCommissionRate[];
-  airCategories: CnfAirRateCategory[];
-  partnerDefaults: CnfShipmentPartnerDefault[];
+  kreizAirRate: number | null; // Settings → Air rate per shipping partner (KREIZ)
   existing?: CnfDraftInvoice;
   partnerShipped?: boolean; // air batch shipped by a partner other than KREIZ
   partnerName?: string;
   onClose: () => void;
   onSaved: () => void;
-}> = ({ batch, goodsValue, igstPct, seaRates, airCategories, partnerDefaults, existing, partnerShipped, partnerName, onClose, onSaved }) => {
+}> = ({ batch, goodsValue, igstPct, seaRates, kreizAirRate, existing, partnerShipped, partnerName, onClose, onSaved }) => {
   const isAir = batch.batch_type === 'air';
-  const categories: (CnfCommissionRate | CnfAirRateCategory)[] = isAir ? airCategories : seaRates;
   const rateOf = (id: string) => {
-    const c = categories.find(x => x.id === id);
-    return c ? String(isAir ? (c as CnfAirRateCategory).ratePerKg : (c as CnfCommissionRate).ratePct) : '';
+    const c = seaRates.find(x => x.id === id);
+    return c ? String(c.ratePct) : '';
   };
-  const initialId = initialDraftCategoryId(existing?.categoryId, categories, defaultCnfCategory(batch, seaRates, airCategories, partnerDefaults)?.id);
+  const initialId = isAir ? '' : initialDraftCategoryId(existing?.categoryId, seaRates, defaultSeaCategory(seaRates)?.id);
   const [categoryId, setCategoryId] = useState(initialId);
-  // Keep the draft's own (possibly edited) rate only while its category still exists.
-  const [rate, setRate] = useState(existing && initialId === existing.categoryId ? String(existing.rate) : rateOf(initialId));
-  const [weight, setWeight] = useState(String(existing?.weightKg ?? batch.total_weight_kg ?? ''));
+  // Sea keeps the draft's own (possibly edited) rate only while its category
+  // still exists. Air (KREIZ) keeps a saved KREIZ draft's rate, else Settings'.
+  // (Air drafts saved before shipping partners existed carry no partner id: KREIZ.)
+  const keepAirRate = isAir && !!existing && (existing.shippingPartnerId || 'KREIZ') === 'KREIZ' && existing.rate > 0;
+  const [rate, setRate] = useState(isAir
+    ? (keepAirRate ? String(existing!.rate) : (kreizAirRate ? String(kreizAirRate) : ''))
+    : (existing && initialId === existing.categoryId ? String(existing.rate) : rateOf(initialId)));
+  const batchWeight = Number(batch.total_weight_kg) || 0;
+  const [weight, setWeight] = useState(String(existing?.weightKg ?? (batchWeight > 0 ? batchWeight : '')));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -43,7 +50,7 @@ export const CnfDraftInvoiceModal: React.FC<{
     () => computeDraftInvoice({ mode: isAir ? 'air' : 'sea', goods: goodsValue, rate: partnerShipped ? 0 : rateNum, weightKg: isAir && !partnerShipped ? weightNum : null, igstPct }),
     [isAir, goodsValue, rateNum, weightNum, igstPct, partnerShipped]
   );
-  const canSave = !saving && (!!partnerShipped || (!!categoryId && rateNum > 0 && (!isAir || weightNum > 0)));
+  const canSave = !saving && (!!partnerShipped || (isAir ? rateNum > 0 && weightNum > 0 : !!categoryId && rateNum > 0));
 
   const pick = (id: string) => { setCategoryId(id); setRate(rateOf(id)); };
   const save = async () => {
@@ -53,7 +60,7 @@ export const CnfDraftInvoiceModal: React.FC<{
     try {
       await saveCnfDraftInvoice(partnerShipped
         ? { batchId: batch.batch_id, categoryId: '', rate: 0, weightKg: null }
-        : { batchId: batch.batch_id, categoryId, rate: rateNum, weightKg: isAir ? weightNum : null });
+        : { batchId: batch.batch_id, categoryId: isAir ? '' : categoryId, rate: rateNum, weightKg: isAir ? weightNum : null });
       onSaved();
     } catch (err: any) {
       setError(err.message || 'Failed to save the draft invoice');
@@ -78,27 +85,36 @@ export const CnfDraftInvoiceModal: React.FC<{
           <p className="text-sm text-slate-600 dark:text-slate-300" data-testid="cnf-draft-partner-note">
             Shipped by {partnerName}: CNF bills goods + GST only, with no CNF charge. {partnerName} bills its own fee on the Ledgers screen.
           </p>
-        ) : categories.length === 0 ? (
-          <p className="text-sm text-amber-600">Add a {isAir ? 'Air' : 'Sea'} rate category in Settings first.</p>
+        ) : isAir ? (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={label}>Rate (₹ per kg)</label>
+              <input type="number" step="0.01" aria-label="Rate" value={rate} onChange={e => setRate(e.target.value)} className={input} />
+              <p className="text-[10px] text-slate-400 mt-1" data-testid="cnf-draft-rate-source">
+                {kreizAirRate ? `KREIZ's rate in Settings: ${fmtInr(kreizAirRate)}/kg` : 'No KREIZ air rate in Settings yet; enter it here.'}
+              </p>
+            </div>
+            <div>
+              <label className={label}>Weight (kg)</label>
+              <input type="number" step="0.01" aria-label="Weight" value={weight} onChange={e => setWeight(e.target.value)} className={input} />
+              <p className="text-[10px] text-slate-400 mt-1">Sum of the batch's shipment weights; change it to the chargeable weight.</p>
+            </div>
+          </div>
+        ) : seaRates.length === 0 ? (
+          <p className="text-sm text-amber-600">Add a Sea rate category in Settings first.</p>
         ) : (
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className={label}>Rate category</label>
               <select aria-label="Rate category" value={categoryId} onChange={e => pick(e.target.value)} className={input}>
                 <option value="">Choose…</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                {seaRates.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
             </div>
             <div>
-              <label className={label}>{isAir ? 'Rate (₹ per kg)' : 'Rate (% of goods)'}</label>
+              <label className={label}>Rate (% of goods)</label>
               <input type="number" step="0.01" aria-label="Rate" value={rate} onChange={e => setRate(e.target.value)} className={input} />
             </div>
-            {isAir && (
-              <div>
-                <label className={label}>Weight (kg)</label>
-                <input type="number" step="0.01" aria-label="Weight" value={weight} onChange={e => setWeight(e.target.value)} className={input} />
-              </div>
-            )}
           </div>
         )}
         <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 grid grid-cols-2 gap-2 text-sm" data-testid="cnf-draft-figures">
