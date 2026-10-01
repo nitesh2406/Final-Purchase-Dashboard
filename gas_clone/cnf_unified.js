@@ -212,12 +212,14 @@ function cnfLiveCnfInvoiceForVendorInvoice_(invoiceNo) {
 
 // What a payment actually cost per RMB — see
 // docs/superpowers/specs/2026-09-29-ancillary-cnf-invoices-design.md.
-// SettlementLedger keeps only the charge-adjusted rate; what we paid is the
-// payment's own ER2. A cross-vendor wallet (IDP-) holds only an adjusted
+// What we paid is the payment's own ER2. A cross-vendor wallet (IDP-) holds a
 // blend, so its cost is traced: the shortfall part through the settlements
 // of its XFER-<id>-<vendor> invoice (unpaid shortfall at that invoice's ER1),
 // the part drawn from the source's wallets scaled by the source's
-// actual ÷ adjusted ratio on its DP- payments up to the transfer date.
+// ER2 ÷ Settled ER2 ratio on its DP- payments up to the transfer date.
+// Since 2026-10-01 Settled ER2 = ER2 everywhere (the 2% conversion-charge
+// adjustment was removed and the history re-priced), so that ratio is 1 and
+// SettlementLedger itself is on actual rates; the tracing stays as a guard.
 // rateFor returns null when it can't tell; callers then keep the stored rate.
 // ledger / info are optional pre-read tables (cnfReadSheet_ / cnfPurchaseInvoiceInfo_).
 function cnfActualRates_(ledger, info) {
@@ -273,7 +275,7 @@ function cnfActualRates_(ledger, info) {
       if ((source && d.vendor !== source) || d.date > date) return;
       inr += d.inr; adj += d.adj;
     });
-    return adj > 0 ? inr / adj : 1 + getConversionChargePercent_() / 100;
+    return adj > 0 ? inr / adj : 1;
   }
 
   var memo = {}, visiting = {};

@@ -458,18 +458,13 @@ function doPostInner_(e) {
         return r;
       }
 
+      // The conversion-charge setting is gone (2026-10-01): payments settle at
+      // their actual ER2. A screen still asking gets 0; saving is refused.
       case 'get_conversion_charge':
-        return successResponse_({ chargePercent: getConversionChargePercent_() });
+        return successResponse_({ chargePercent: 0 });
 
-      case 'save_conversion_charge': {
-        const pctInput = payload.chargePercent !== undefined ? payload.chargePercent : (payload.record && payload.record.chargePercent);
-        try {
-          const saved = setConversionChargePercent_(pctInput);
-          return successResponse_({ chargePercent: saved });
-        } catch (e) {
-          return errorResponse_(e.message || String(e));
-        }
-      }
+      case 'save_conversion_charge':
+        return errorResponse_('The conversion charge was removed: payments settle at their actual ER2.');
 
             case 'get_igst_rate':
         return successResponse_({ igstPercent: getIgstPercent_() });
@@ -663,7 +658,7 @@ function doPostInner_(e) {
         break;
 
       case 'payment_reset_verify':
-        result = paymentResetVerify_();
+        result = paymentResetVerify_(payload);
         break;
 
       case 'payment_reset_restore':

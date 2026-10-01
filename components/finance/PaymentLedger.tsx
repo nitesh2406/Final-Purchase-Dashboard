@@ -23,8 +23,7 @@ import {
   submitPaymentLog,
   getPaymentLogs,
   VendorMaster,
-  IS_DEVELOPMENT_MODE,
-  fetchConversionCharge
+  IS_DEVELOPMENT_MODE
 } from '../../services/settlementService';
 import { useSubmissionLock } from '../../hooks/useSubmissionLock';
 
@@ -115,12 +114,6 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
     checkPaymentId();
   }, []);
 
-  // Conversion Charge % (Settings > Charges) — used to preview the settled rate that will
-  // actually be stored/used for forex calculations, which differs from the raw ER2 entered.
-  const [conversionChargePercent, setConversionChargePercent] = useState<number>(0);
-  useEffect(() => {
-    fetchConversionCharge().then(setConversionChargePercent);
-  }, []);
 
   // FINANCIAL TRIAD AUTOMATED CALCULATION & INVERSION logic
   const activeTriadCount = useMemo(() => {
@@ -160,15 +153,12 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
     return { type: null, value: null, rmb: isNaN(rmb) ? 0 : rmb, fx: isNaN(fx) ? 0 : fx, inr: isNaN(inr) ? 0 : inr, valid: false };
   }, [rmbAmount, fxRate, inrAmount, activeTriadCount]);
 
-  // Settled ER2 preview: the raw ER2 above still includes the conversion/payment charge
-  // baked into a manual money-transfer rate. This is what actually gets used for forex
-  // gain/loss once the payment is logged (see Settings > Charges).
+  // The rate forex gain/loss uses once the payment is logged: the actual ER2
+  // (INR paid ÷ RMB). Since 2026-10-01 there is no conversion-charge adjustment.
   const settledRatePreview = useMemo(() => {
     if (!triadCalculations.valid || !triadCalculations.fx || triadCalculations.fx <= 0) return null;
-    return conversionChargePercent > 0
-      ? triadCalculations.fx / (1 + conversionChargePercent / 100)
-      : triadCalculations.fx;
-  }, [triadCalculations, conversionChargePercent]);
+    return triadCalculations.fx;
+  }, [triadCalculations]);
 
   // Set default initial allocation row matching primary vendor + total RMB
   const targetRmbAmount = useMemo(() => {
@@ -780,7 +770,7 @@ export const PaymentLedger: React.FC<PaymentLedgerProps> = ({ onNavigate, vendor
                   <div className="flex items-center gap-1.5">
                     <Coins className="w-3.5 h-3.5 shrink-0" />
                     <span>
-                      Applicable Settled Rate (ER2 adjusted for {conversionChargePercent}% conversion charge) — used for forex gain/loss:
+                      Rate used for forex gain/loss (actual ER2):
                     </span>
                   </div>
                   <span className="font-mono bg-blue-500/15 px-2 py-0.5 rounded text-[11px]">

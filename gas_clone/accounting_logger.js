@@ -344,23 +344,6 @@ function getVendorCurrency_(vendorCode) {
 
 
 // ─────────────────────────────────────────────────────────────
-// CONVERSION CHARGE CONFIG
-// ─────────────────────────────────────────────────────────────
-
-function getConversionChargePercent_() {
-  const v = PropertiesService.getScriptProperties().getProperty('CONVERSION_CHARGE_PCT');
-  const pct = parseFloat(v);
-  return (v !== null && !isNaN(pct) && pct >= 0) ? pct : 0;
-}
-
-function setConversionChargePercent_(pct) {
-  const val = parseFloat(pct);
-  if (isNaN(val) || val < 0) throw new Error('chargePercent must be a non-negative number');
-  PropertiesService.getScriptProperties().setProperty('CONVERSION_CHARGE_PCT', String(val));
-  return val;
-}
-
-// ─────────────────────────────────────────────────────────────
 // IGST % CONFIG
 // ─────────────────────────────────────────────────────────────
 
@@ -1241,17 +1224,12 @@ function addPaymentLog(data) {
       return successResponse_({ message: 'Payment already logged (duplicate submission ignored)', paymentId: payId });
     }
 
-    // Settled ER2 is ER2 adjusted for the conversion/payment charge baked into a manual
-    // money-transfer rate. Computed once, here, and persisted — every later settlement
-    // against this payment (direct FIFO below, or a cross-vendor wallet draw much later)
-    // always uses this stored value, so a later change to the charge % never retroactively
-    // reprices an already-logged payment. INR-native vendors have no real money-transfer
-    // conversion happening — this charge only makes sense for actual RMB currency
-    // conversion — so they're exempted entirely, keeping ER2 (already 1.0 for these
-    // vendors) unadjusted and forexGainLoss at exactly 0.
-    const chargePct      = getConversionChargePercent_();
-    const vendorCurrency = getVendorCurrency_(vCode);
-    const settledEr2     = (chargePct > 0 && vendorCurrency !== 'INR') ? er2 / (1 + chargePct / 100) : er2;
+    // Settled ER2 is the rate every later settlement against this payment uses (direct
+    // FIFO below, or a cross-vendor wallet draw much later). Since 2026-10-01 it is the
+    // actual ER2 (INR paid ÷ RMB): the old 2% "conversion charge" adjustment
+    // (ER2 ÷ 1.02) is gone, and payment_reset_resettle re-priced the history on it.
+    // The column is kept so every reader keeps working.
+    const settledEr2     = er2;
 
     const headers  = paymentSheet.getDataRange().getValues()[0];
     const dateIdx  = findHeaderIndex_(headers, 'Date');

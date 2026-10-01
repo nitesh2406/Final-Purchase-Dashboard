@@ -203,14 +203,11 @@ function paymentResetReplay_(payload) {
   var limit = Number(p.limit) > 0 ? Number(p.limit) : 100000;
   var budgetMs = Number(p.budget_ms) > 0 ? Number(p.budget_ms) : 270000;
   var entries = prReplayEntries_();
-  var implied = prImpliedChargePct_(entries);
-  var current = getConversionChargePercent_();
-  var preflight = { impliedChargePct: implied, currentChargePct: current, ok: implied === null || Math.abs(implied - current) <= 0.1 };
+  // Payments replay at their actual ER2 (addPaymentLog, since the 2%
+  // conversion charge was removed on 2026-10-01), whatever the backup holds.
+  var preflight = { impliedChargePctInBackup: prImpliedChargePct_(entries), replaysAt: 'actual ER2', ok: true };
   if (dryRun) {
     return { status: 'success', dry_run: true, preflight: preflight, total: entries.length, entries: entries };
-  }
-  if (!preflight.ok) {
-    throw new Error('Conversion charge is ' + current + '% now but the payments were logged at about ' + implied + '%. Set it back before replaying.');
   }
 
   var live = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('PaymentLogs').getDataRange().getValues();
@@ -306,7 +303,11 @@ function prCnfPaidTotal_(values) {
   return prRound2_(total);
 }
 
-function paymentResetVerify_() {
+// payload.scope 'rmb' (after a re-pricing resettle): compare only the RMB side
+// — balances, settled amounts, ledgers, payment status, XFER- invoices and
+// the total paid to CNF — since rates, INR and forex are meant to change.
+function paymentResetVerify_(payload) {
+  var rmbOnly = !!(payload && payload.scope === 'rmb');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var diffs = [];
   var matched = { payments: 0, invoices: 0, settledInvoices: 0, vendors: 0, batches: 0, cnfPaidTotal: 0 };
@@ -321,7 +322,7 @@ function paymentResetVerify_() {
   Object.keys(pb).concat(Object.keys(pl).filter(function (k) { return !pb[k]; })).forEach(function (k) {
     if (!pb[k] || !pl[k]) { diff('payments', k, 'presence', !!pb[k], !!pl[k]); return; }
     var ok = true;
-    [['RMB', 0.01], ['INR Amount', 1], ['Settled ER2', 0.0001], ['Balance', 0.01]].forEach(function (f) {
+    (rmbOnly ? [['RMB', 0.01], ['Balance', 0.01]] : [['RMB', 0.01], ['INR Amount', 1], ['Settled ER2', 0.0001], ['Balance', 0.01]]).forEach(function (f) {
       var a = prField_(pb[k], f[0]), b = prField_(pl[k], f[0]);
       if (a === undefined && b === undefined) return;
       if (!same(a, b, f[1])) { ok = false; diff('payments', k, f[0], a, b); }
@@ -343,7 +344,7 @@ function paymentResetVerify_() {
   var sb = prSettlementTotals_(bak.SettlementLedger), sl = prSettlementTotals_(live.SettlementLedger);
   Object.keys(sb).concat(Object.keys(sl).filter(function (k) { return !sb[k]; })).forEach(function (k) {
     var a = sb[k] || { rmb: 0, inr: 0 }, b = sl[k] || { rmb: 0, inr: 0 };
-    var ok = same(a.rmb, b.rmb, 0.01) && same(a.inr, b.inr, 1);
+    var ok = same(a.rmb, b.rmb, 0.01) && (rmbOnly || same(a.inr, b.inr, 1));
     if (!ok) diff('settlements', k, 'rmb/inr applied', prRound2_(a.rmb) + ' / ' + prRound2_(a.inr), prRound2_(b.rmb) + ' / ' + prRound2_(b.inr));
     else matched.settledInvoices++;
   });
@@ -359,7 +360,7 @@ function paymentResetVerify_() {
   Object.keys(bb).forEach(function (k) {
     if (!bl[k]) { diff('batches', k, 'presence', true, false); return; }
     var ok = true;
-    [['paid_amount_inr', 1], ['blended_settlement_rate', 0.0001]].forEach(function (f) {
+    (rmbOnly ? [] : [['paid_amount_inr', 1], ['blended_settlement_rate', 0.0001]]).forEach(function (f) {
       var a = prField_(bb[k], f[0]), b = prField_(bl[k], f[0]);
       if ((a === '' || a === undefined) && (b === '' || b === undefined)) return;
       if (!same(a, b, f[1])) { ok = false; diff('batches', k, f[0], a, b); }
@@ -373,7 +374,8 @@ function paymentResetVerify_() {
   if (!same(cnfBefore, cnfAfter, 1)) diff('cnfLedger', 'paid to CNF', 'total', cnfBefore, cnfAfter); else matched.cnfPaidTotal = 1;
 
   return {
-    status: 'success', ok: diffs.length === 0, differenceCount: diffs.length, differences: diffs.slice(0, 200), matched: matched,
+    status: 'success', scope: rmbOnly ? 'rmb' : 'all', ok: diffs.length === 0, differenceCount: diffs.length, differences: diffs.slice(0, 200), matched: matched,
+    repriced: rmbOnly ? prRepriceSummary_() : undefined,
     expected: { settlementRowsBefore: bak.SettlementLedger.length - 1, settlementRowsAfter: live.SettlementLedger.length - 1,
                 note: 'Settlement row labels/dates may differ (auto-settlement rows become FIFO rows); only per-invoice totals are compared.' }
   };
@@ -471,7 +473,7 @@ function prResettlePlan_() {
   var c = { id: col('Payment ID'), vendor: col('Vendor Code'), rmb: col('RMB'), date: col('Date'), bal: col('Balance'),
             er2: col('ER2'), settled: col('Settled ER2'), source: col('Source Vendor'), inr: col('INR Amount') };
   if (c.id === -1 || c.vendor === -1 || c.rmb === -1 || c.date === -1 || c.bal === -1) throw new Error('PaymentLogs is missing Date / Payment ID / Vendor Code / RMB / Balance');
-  var chargePct = getConversionChargePercent_();
+  if (c.er2 === -1 || c.settled === -1 || c.inr === -1) throw new Error('PaymentLogs is missing ER2 / Settled ER2 / INR Amount');
   var ih = inv[0];
   var ic = { no: findHeaderIndex_(ih, 'invoice_no'), rmb: findHeaderIndex_(ih, 'RMB'), settled: findHeaderIndex_(ih, 'Settled Amount'), bal: findHeaderIndex_(ih, 'Balance') };
   if (ic.no === -1 || ic.rmb === -1 || ic.settled === -1 || ic.bal === -1) throw new Error('PurchaseInvoices is missing invoice_no / RMB / Settled Amount / Balance');
@@ -493,14 +495,7 @@ function prResettlePlan_() {
       sourceVendor: c.source !== -1 ? String(r[c.source] || '').trim() : '', rmb: prRound2_(r[c.rmb]), date: cnfYmd_(r[c.date]),
       er2: c.er2 !== -1 ? Number(r[c.er2]) || 0 : 0, settledEr2: c.settled !== -1 ? Number(r[c.settled]) || 0 : 0
     };
-    // The rate the app settled with when the payment was logged, which is
-    // unrounded — the sheet's Settled ER2 is rounded to 2 dp. A DP- used
-    // ER2 / (1 + charge%) (addPaymentLog); an IDP- used its blended rate, which
-    // its INR Amount (RMB × rate, 2 dp) recovers.
-    var inr = c.inr !== -1 ? Number(r[c.inr]) || 0 : 0;
-    if (kind === 'DP' && e.er2 > 0) e.rate = (chargePct > 0 && getVendorCurrency_(e.vendorCode) !== 'INR') ? e.er2 / (1 + chargePct / 100) : e.er2;
-    else if (kind === 'IDP' && e.rmb > 0 && inr > 0) e.rate = inr / e.rmb;
-    else e.rate = resolveSettledRate_({ 'Settled ER2': e.settledEr2, ER2: e.er2 });
+    if (kind === 'DP' && !(e.er2 > 0)) throw new Error('PaymentLogs row ' + (i + 1) + ': ' + id + ' has no ER2');
     if (kind === 'IDP') {
       if (!e.sourceVendor) throw new Error('PaymentLogs row ' + (i + 1) + ': transfer ' + id + ' has no Source Vendor');
       var x = xfer['XFER-' + id + '-' + e.vendorCode];
@@ -514,11 +509,55 @@ function prResettlePlan_() {
   }
   var orphans = Object.keys(xfer).filter(function (k) { return !xfer[k].used; });
   if (orphans.length) throw new Error('XFER- invoices with no matching transfer in PaymentLogs: ' + orphans.join(', '));
-  var implied = prImpliedChargePct_(entries);
-  if (implied !== null && Math.abs(implied - chargePct) > 0.1) {
-    throw new Error('Conversion charge is ' + chargePct + '% now but the payments were logged at about ' + implied + '%. Set it back before resettling.');
-  }
+  prResettleRates_(entries);
   return { prefix: prefix, entries: entries, c: c, ic: ic, xfer: xfer, payRows: pay.length - 1 };
+}
+
+// Settlement rates, at the actual ER2 (2026-10-01: the 2% conversion charge
+// is gone). Worked out from the BACKUP, so every chunk of a run gets the same
+// rates however far earlier chunks have rewritten PaymentLogs.
+//  - DP-: its own ER2.
+//  - IDP-: its historical make-up kept — the shortfall part at the market rate
+//    it was priced at (its XFER- invoice), the part drawn from the source's
+//    wallets moved from the adjusted to the actual rate by the source's
+//    ER2 ÷ Settled ER2 ratio on its DP- payments up to the transfer date
+//    (1.02 when they were all logged at 2%). An all-shortfall transfer keeps
+//    its rate. Same scaling cnfActualRates_ (CNF values) has used since piece 4.
+// Sets e.rate and e.oldRate (what it settled at before, for the summary).
+function prResettleRates_(entries) {
+  var bak = prBackupValues_('PaymentLogs'), h = bak[0];
+  var col = function (n) { return findHeaderIndex_(h, n); };
+  var c = { id: col('Payment ID'), vendor: col('Vendor Code'), rmb: col('RMB'), date: col('Date'), er2: col('ER2'), settled: col('Settled ER2'), inr: col('INR Amount') };
+  var byKey = {}, directs = [];
+  for (var i = 1; i < bak.length; i++) {
+    var r = bak[i], id = String(r[c.id] || '').trim();
+    if (!id) continue;
+    var p = { rmb: Number(r[c.rmb]) || 0, er2: Number(r[c.er2]) || 0, settled: Number(r[c.settled]) || 0, inr: Number(r[c.inr]) || 0,
+              vendor: String(r[c.vendor] || '').trim(), date: cnfYmd_(r[c.date]) };
+    byKey[id + '|' + p.vendor] = p;
+    if (/^DP-/i.test(id) && p.rmb > 0 && p.er2 > 0) directs.push({ vendor: p.vendor, date: p.date, actual: p.rmb * p.er2, adjusted: p.rmb * (p.settled > 0 ? p.settled : p.er2) });
+  }
+  var factor = function (source, date) {
+    var a = 0, d = 0;
+    directs.forEach(function (x) { if (x.vendor === source && x.date <= date) { a += x.actual; d += x.adjusted; } });
+    return d > 0 ? a / d : 1;
+  };
+  var shortRates = prShortfallRates_();
+  entries.forEach(function (e) {
+    var b = byKey[e.paymentId + '|' + e.vendorCode];
+    if (!b) throw new Error(e.paymentId + ' (' + e.vendorCode + ') is not in the backup');
+    e.oldRate = b.rmb > 0 && b.inr > 0 ? b.inr / b.rmb : resolveSettledRate_({ 'Settled ER2': b.settled, ER2: b.er2 });
+    if (e.kind === 'DP') { e.rate = b.er2; return; }
+    var shortRate = 0;
+    if (e.xferId) {
+      shortRate = shortRates[e.xferId];
+      if (!(shortRate > 0)) throw new Error(e.xferId + ' has no RMB / INR to recover its market rate from');
+    }
+    var shortInr = e.xferRmb * shortRate;
+    var walletInr = Math.max(0, e.oldRate * e.rmb - shortInr);
+    e.walletFactor = e.walletPortion > 0.01 ? factor(e.sourceVendor, e.date) : 1;
+    e.rate = e.rmb > 0 ? (shortInr + walletInr * e.walletFactor) / e.rmb : e.oldRate;
+  });
 }
 
 // Holds every wallet and XFER- invoice at Balance 0 (opened in turn by
@@ -540,7 +579,13 @@ function prResettleReset_(plan) {
 
   var zeros = [];
   for (var i = 0; i < plan.payRows; i++) zeros.push([0]);
-  ss.getSheetByName('PaymentLogs').getRange(2, plan.c.bal + 1, plan.payRows, 1).setValues(zeros);
+  var paySheet = ss.getSheetByName('PaymentLogs');
+  paySheet.getRange(2, plan.c.bal + 1, plan.payRows, 1).setValues(zeros);
+  // DP- wallets settle (and are drawn from) at their actual ER2 from now on.
+  // IDP- rows get their new rate as the run reaches them (prResettleEntry_).
+  var settledCol = paySheet.getRange(2, plan.c.settled + 1, plan.payRows, 1).getValues();
+  plan.entries.forEach(function (e) { if (e.kind === 'DP') settledCol[e.row - 2] = [e.er2]; });
+  paySheet.getRange(2, plan.c.settled + 1, plan.payRows, 1).setValues(settledCol);
 
   var batches = ss.getSheetByName('Batches'), bv = batches.getDataRange().getValues();
   if (bv.length > 1) {
@@ -579,17 +624,42 @@ function prResettleDraw_(plan, e) {
 
 function prResettleEntry_(plan, e) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var paySheet = ss.getSheetByName('PaymentLogs');
   if (e.kind === 'IDP') {
     prResettleDraw_(plan, e);
+    // The transfer's re-priced rate (prResettleRates_), written like
+    // settleViaWalletTransfer_ writes a new wallet.
+    paySheet.getRange(e.row, plan.c.er2 + 1).setValue(prRound2_(e.rate));
+    paySheet.getRange(e.row, plan.c.settled + 1).setValue(prRound2_(e.rate));
+    paySheet.getRange(e.row, plan.c.inr + 1).setValue(prRound2_(e.rmb * e.rate));
     if (e.xferId) {
       ss.getSheetByName('PurchaseInvoices').getRange(plan.xfer[e.xferId].row, plan.ic.bal + 1).setValue(e.xferRmb);
       invalidateSheetCache_('PurchaseInvoices');
       autoSettleAdvanceFromInvoice_(e.sourceVendor, e.date, e.xferId, e.xferRmb);
     }
   }
-  ss.getSheetByName('PaymentLogs').getRange(e.row, plan.c.bal + 1).setValue(e.rmb);
+  paySheet.getRange(e.row, plan.c.bal + 1).setValue(e.rmb);
   invalidateSheetCache_('PaymentLogs');
   fifoLiquidate_(e.vendorCode, e.date, e.paymentId, e.rmb, e.rate);
+}
+
+// Before (backup) vs now: each payment's rate and INR, and total forex.
+function prRepriceSummary_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var bak = prBackupValues_('PaymentLogs'), live = ss.getSheetByName('PaymentLogs').getDataRange().getValues();
+  var key = function (o) { var id = String(prField_(o, 'Payment ID') || '').trim(); return id ? id + '|' + String(prField_(o, 'Vendor Code') || '').trim() : ''; };
+  var pb = prIndexRows_(bak, key), pl = prIndexRows_(live, key);
+  var payments = Object.keys(pl).filter(function (k) { return pb[k]; }).map(function (k) {
+    return { payment: k, settledEr2Before: Number(prField_(pb[k], 'Settled ER2')) || 0, settledEr2After: Number(prField_(pl[k], 'Settled ER2')) || 0,
+             inrBefore: Number(prField_(pb[k], 'INR Amount')) || 0, inrAfter: Number(prField_(pl[k], 'INR Amount')) || 0 };
+  });
+  var fx = function (values) {
+    var h = values[0], f = findHeaderIndex_(h, 'Forex Gain / Loss'), t = 0;
+    for (var i = 1; i < values.length; i++) t += Number(values[i][f]) || 0;
+    return prRound2_(t);
+  };
+  var fxBefore = fx(prBackupValues_('SettlementLedger')), fxAfter = fx(ss.getSheetByName('SettlementLedger').getDataRange().getValues());
+  return { forexBefore: fxBefore, forexAfter: fxAfter, forexChange: prRound2_(fxAfter - fxBefore), payments: payments };
 }
 
 // Per vendor after the run: what is still owed and what is still unspent.
@@ -657,7 +727,7 @@ function paymentResetResettle_(payload) {
     bumpBatchDataVersion_();
     progress.done = true;
     props.setProperty(PR_RESETTLE_PROP_, JSON.stringify(progress));
-    return { status: 'success', dry_run: false, done: true, processed: processed, total: plan.entries.length, summary: prResettleSummary_() };
+    return { status: 'success', dry_run: false, done: true, processed: processed, total: plan.entries.length, summary: prResettleSummary_(), repriced: prRepriceSummary_() };
   } finally {
     lock.releaseLock();
   }
