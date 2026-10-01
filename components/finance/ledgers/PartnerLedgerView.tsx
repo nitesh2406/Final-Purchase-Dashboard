@@ -67,7 +67,11 @@ export const PartnerLedgerView: React.FC<{ partnerId: string; refreshKey: number
       if (mine !== loadSeq.current) return;
       const partner = partners.find(x => x.id === partnerId);
       if (!partner) throw new Error(`Shipping partner ${partnerId} not found`);
-      setData({ partner, statement, bills, payments, assignments, weights, gstPct });
+      // A batch's chargeable-weight override (set on the CNF draft modal) takes
+      // precedence over the derived batch weight when pre-filling a bill.
+      const effWeights = { ...weights };
+      assignments.forEach(a => { if (a.chargeableWeightKg != null) effWeights[a.batchId] = a.chargeableWeightKg; });
+      setData({ partner, statement, bills, payments, assignments, weights: effWeights, gstPct });
     } catch (err: any) {
       if (mine === loadSeq.current) setLoadError(err.message || 'Failed to load the ledger');
     } finally {

@@ -2,9 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { saveCnfDraftInvoice } from '../../../services/cnfService';
+import { setBatchChargeableWeight } from '../../../services/shippingPartnerService';
 import type { Batch, CnfCommissionRate, CnfDraftInvoice } from '../../../types';
 import { computeDraftInvoice, computeDraftAdjustment, initialDraftCategoryId } from './draftInvoice';
 import { defaultSeaCategory } from './expectedCharge';
+import { computePartnerFeeEstimate } from '../../finance/ledgers/partnerBill';
 import { fmtInr } from './cnfFormat';
 
 // Generate / regenerate a batch's draft CNF invoice. The figures here are a
@@ -21,9 +23,12 @@ export const CnfDraftInvoiceModal: React.FC<{
   existing?: CnfDraftInvoice;
   partnerShipped?: boolean; // air batch shipped by a partner other than KREIZ
   partnerName?: string;
+  partnerRatePerKg?: number | null; // the partner's ₹/kg (for the fee estimate)
+  partnerGstPct?: number; // Settings → shipping partner GST %
+  chargeableWeightKg?: number | null; // the batch's saved chargeable-weight override
   onClose: () => void;
   onSaved: () => void;
-}> = ({ batch, goodsValue, igstPct, seaRates, kreizAirRate, existing, partnerShipped, partnerName, onClose, onSaved }) => {
+}> = ({ batch, goodsValue, igstPct, seaRates, kreizAirRate, existing, partnerShipped, partnerName, partnerRatePerKg, partnerGstPct = 18, chargeableWeightKg, onClose, onSaved }) => {
   const isAir = batch.batch_type === 'air';
   const rateOf = (id: string) => {
     const c = seaRates.find(x => x.id === id);
@@ -35,11 +40,18 @@ export const CnfDraftInvoiceModal: React.FC<{
   // still exists. Air (KREIZ) keeps a saved KREIZ draft's rate, else Settings'.
   // (Air drafts saved before shipping partners existed carry no partner id: KREIZ.)
   const keepAirRate = isAir && !!existing && (existing.shippingPartnerId || 'KREIZ') === 'KREIZ' && existing.rate > 0;
-  const [rate, setRate] = useState(isAir
-    ? (keepAirRate ? String(existing!.rate) : (kreizAirRate ? String(kreizAirRate) : ''))
-    : (existing && initialId === existing.categoryId ? String(existing.rate) : rateOf(initialId)));
+  const [rate, setRate] = useState(partnerShipped
+    ? (partnerRatePerKg ? String(partnerRatePerKg) : '')
+    : isAir
+      ? (keepAirRate ? String(existing!.rate) : (kreizAirRate ? String(kreizAirRate) : ''))
+      : (existing && initialId === existing.categoryId ? String(existing.rate) : rateOf(initialId)));
   const batchWeight = Number(batch.total_weight_kg) || 0;
-  const [weight, setWeight] = useState(String(existing?.weightKg ?? (batchWeight > 0 ? batchWeight : '')));
+  // Partner batch: the weight is the batch's chargeable-weight override (or the
+  // derived batch weight when none is saved). KREIZ/sea: the draft's own weight.
+  const initialWeight = partnerShipped
+    ? String(chargeableWeightKg ?? (batchWeight > 0 ? batchWeight : ''))
+    : String(existing?.weightKg ?? (batchWeight > 0 ? batchWeight : ''));
+  const [weight, setWeight] = useState(initialWeight);
   // Adjustment (₹, + or −) to match an invoice worked out by hand on an old
   // manual ER; a saved draft's own adjustment and reason are kept.
   const [adjustment, setAdjustment] = useState(existing?.adjustment ? String(existing.adjustment) : '');
@@ -54,13 +66,16 @@ export const CnfDraftInvoiceModal: React.FC<{
     () => computeDraftInvoice({ mode: isAir ? 'air' : 'sea', goods: goodsValue, rate: partnerShipped ? 0 : rateNum, weightKg: isAir && !partnerShipped ? weightNum : null, igstPct }),
     [isAir, goodsValue, rateNum, weightNum, igstPct, partnerShipped]
   );
+  // The partner's own fee for context only (billed on Ledgers, never in CNF's
+  // invoice): ₹/kg × the chargeable weight, + partner GST.
+  const partnerFee = useMemo(() => computePartnerFeeEstimate(rateNum, weightNum, partnerGstPct), [rateNum, weightNum, partnerGstPct]);
   const adjText = adjustment.trim();
   const adjValid = adjText === '' || isFinite(Number(adjText));
   const adjNum = adjValid && adjText !== '' ? Math.round(Number(adjText) * 100) / 100 : 0;
   const adj = computeDraftAdjustment(goodsValue, figures.charge, figures.gst, adjNum);
   const adjustedTotal = Math.round((figures.total + adjNum) * 100) / 100;
   const adjProblem = !adjValid ? 'Enter the adjustment as a number, e.g. -1181.25' : adjustedTotal <= 0 ? 'The adjustment would take the total to 0 or below' : null;
-  const canSave = !saving && !adjProblem && (!!partnerShipped || (isAir ? rateNum > 0 && weightNum > 0 : !!categoryId && rateNum > 0));
+  const canSave = !saving && !adjProblem && (partnerShipped ? weightNum >= 0 : (isAir ? rateNum > 0 && weightNum > 0 : !!categoryId && rateNum > 0));
 
   const pick = (id: string) => { setCategoryId(id); setRate(rateOf(id)); };
   const save = async () => {
@@ -72,6 +87,11 @@ export const CnfDraftInvoiceModal: React.FC<{
       await saveCnfDraftInvoice(partnerShipped
         ? { batchId: batch.batch_id, categoryId: '', rate: 0, weightKg: null, ...adjustmentFields }
         : { batchId: batch.batch_id, categoryId: isAir ? '' : categoryId, rate: rateNum, weightKg: isAir ? weightNum : null, ...adjustmentFields });
+      // Persist the chargeable-weight override only when the user changed it;
+      // a blank weight clears it. The CNF draft above never carries it.
+      if (partnerShipped && weight !== initialWeight) {
+        await setBatchChargeableWeight(batch.batch_id, weightNum);
+      }
       onSaved();
     } catch (err: any) {
       setError(err.message || 'Failed to save the draft invoice');
@@ -93,9 +113,31 @@ export const CnfDraftInvoiceModal: React.FC<{
             : "What CNF's tax invoice for this batch should come to: goods paid + CNF charge + GST on both."}
         </p>
         {partnerShipped ? (
-          <p className="text-sm text-slate-600 dark:text-slate-300" data-testid="cnf-draft-partner-note">
-            Shipped by {partnerName}: CNF bills goods + GST only, with no CNF charge. {partnerName} bills its own fee on the Ledgers screen.
-          </p>
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600 dark:text-slate-300" data-testid="cnf-draft-partner-note">
+              Shipped by {partnerName}: CNF bills goods + GST only, with no CNF charge. {partnerName} bills its own fee on the Ledgers screen.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={label}>Rate (₹ per kg)</label>
+                <input type="number" step="0.01" aria-label="Rate" value={rate} onChange={e => setRate(e.target.value)} className={input} />
+                <p className="text-[10px] text-slate-400 mt-1" data-testid="cnf-draft-rate-source">
+                  {partnerRatePerKg ? `${partnerName}'s rate in Settings: ${fmtInr(partnerRatePerKg)}/kg` : `No ${partnerName || 'partner'} rate in Settings yet.`}
+                </p>
+              </div>
+              <div>
+                <label className={label}>Weight (kg)</label>
+                <input type="number" step="0.01" aria-label="Weight" value={weight} onChange={e => setWeight(e.target.value)} className={input} />
+                <p className="text-[10px] text-slate-400 mt-1">Chargeable weight; pre-fills {partnerName}'s bill. Blank clears it.</p>
+              </div>
+            </div>
+            <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3 grid grid-cols-2 gap-1.5 text-sm" data-testid="cnf-draft-partner-fee">
+              <span className="col-span-2 text-[10px] uppercase tracking-wider text-slate-400">{partnerName}'s fee — billed on Ledgers, not in this invoice</span>
+              <span className="text-slate-400">Fee ({weightNum || 0} kg × {fmtInr(rateNum || 0)})</span><span className="text-right font-mono">{fmtInr(partnerFee.fee)}</span>
+              <span className="text-slate-400">GST ({partnerGstPct}%)</span><span className="text-right font-mono">{fmtInr(partnerFee.gst)}</span>
+              <span className="font-semibold">Partner total</span><span className="text-right font-mono font-semibold">{fmtInr(partnerFee.total)}</span>
+            </div>
+          </div>
         ) : isAir ? (
           <div className="grid grid-cols-2 gap-3">
             <div>

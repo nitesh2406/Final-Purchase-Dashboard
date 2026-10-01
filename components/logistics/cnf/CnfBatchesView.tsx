@@ -11,7 +11,7 @@ import {
   SettlementRecord,
 } from '../../../services/settlementService';
 import { fetchCnfShipmentValues, fetchCnfDraftInvoices, fetchCnfRateConfig } from '../../../services/cnfService';
-import { fetchShippingPartners, fetchBatchShippingPartners, fetchPartnerBills, setBatchShippingPartner } from '../../../services/shippingPartnerService';
+import { fetchShippingPartners, fetchBatchShippingPartners, fetchPartnerBills, fetchPartnerGstRate, setBatchShippingPartner } from '../../../services/shippingPartnerService';
 import type {
   Batch, CnfCommissionRate, CnfShipmentValue, CnfDraftInvoice,
   ShippingPartner, BatchShippingPartner, PartnerBill,
@@ -50,6 +50,7 @@ interface LoadedData {
   partners: ShippingPartner[];
   assignments: BatchShippingPartner[];
   partnerBills: PartnerBill[];
+  partnerGstPct: number; // Settings → shipping partner GST %, for the fee estimate
 }
 
 // get_batches takes no caller identity (see entry_points.js), so it goes
@@ -71,9 +72,9 @@ async function loadBatchesPart(): Promise<Pick<LoadedData, 'batches' | 'purchase
 
 // Shipping partners, which air batch has which, and their bills — for the
 // partner column and the partner-bill line under CNF invoiced.
-async function loadPartnersPart(): Promise<Pick<LoadedData, 'partners' | 'assignments' | 'partnerBills'>> {
-  const [partners, assignments, partnerBills] = await Promise.all([fetchShippingPartners(), fetchBatchShippingPartners(), fetchPartnerBills()]);
-  return { partners, assignments, partnerBills };
+async function loadPartnersPart(): Promise<Pick<LoadedData, 'partners' | 'assignments' | 'partnerBills' | 'partnerGstPct'>> {
+  const [partners, assignments, partnerBills, partnerGstPct] = await Promise.all([fetchShippingPartners(), fetchBatchShippingPartners(), fetchPartnerBills(), fetchPartnerGstRate()]);
+  return { partners, assignments, partnerBills, partnerGstPct };
 }
 
 export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () => void }> = ({ refreshKey, onDataChanged }) => {
@@ -117,7 +118,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
     const shipments = pick(shipmentsR, 'CNF shipment values', prev?.shipments);
     const rates = pick(ratesR, 'CNF settings', prev ? { seaRates: prev.seaRates, kreizAirRate: prev.kreizAirRate ?? null, igstPct: prev.igstPct } : undefined);
     const drafts = pick(draftsR, 'draft invoices', prev?.drafts);
-    const partnersPart = pick(partnersR, 'shipping partners', prev ? { partners: prev.partners, assignments: prev.assignments, partnerBills: prev.partnerBills } : undefined);
+    const partnersPart = pick(partnersR, 'shipping partners', prev ? { partners: prev.partners, assignments: prev.assignments, partnerBills: prev.partnerBills, partnerGstPct: prev.partnerGstPct } : undefined);
     if (batchesPart && shipments && rates && drafts && partnersPart) {
       const loaded: LoadedData = { ...batchesPart, shipments, ...rates, drafts, ...partnersPart };
       dataRef.current = loaded;
@@ -173,7 +174,11 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
         const partnerId = b.batch_type === 'air' ? (assignment?.partnerId || '') : '';
         const partnerShipped = partnerId !== '' && partnerId !== 'KREIZ';
         const partner = partnerShipped ? data.partners.find(p => p.id === partnerId) : undefined;
-        const expected: ExpectedCnfCharge = computeExpectedCnfCharge(b, data.seaRates, {
+        // Partner-shipped: the expected-fee note uses the chargeable-weight
+        // override when one is saved, else the derived batch weight.
+        const chargeOverride = partnerShipped ? assignment?.chargeableWeightKg ?? null : null;
+        const batchForCharge = chargeOverride != null ? { ...b, total_weight_kg: chargeOverride } : b;
+        const expected: ExpectedCnfCharge = computeExpectedCnfCharge(batchForCharge, data.seaRates, {
           partnerId, kreizRatePerKg: data.kreizAirRate ?? null,
           partnerRatePerKg: partner?.ratePerKg ?? null, partnerName: partner?.name || assignment?.partnerName,
         });
@@ -182,7 +187,7 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
         const draft = draftsByBatch.get(b.batch_id);
         const stale = draft ? draftStaleness(draft, { goods: eligibleValue, shipmentIds: batchShipments.map(s => s.shipmentId), shippingPartnerId: partnerId }) : null;
         return { batch: b, paymentStatus, eligibleValue, invoiced, invoicedTotal, openToInvoice, expected, canDraft, draft, stale,
-          assignment, partnerId, partnerShipped, partnerBill: liveBillByBatch.get(b.batch_id) };
+          assignment, partnerId, partnerShipped, partnerRatePerKg: partner?.ratePerKg ?? null, partnerBill: liveBillByBatch.get(b.batch_id) };
       });
   }, [data, mode]);
 
@@ -341,6 +346,9 @@ export const CnfBatchesView: React.FC<{ refreshKey: number; onDataChanged: () =>
             existing={row.draft}
             partnerShipped={row.partnerShipped}
             partnerName={row.assignment?.partnerName}
+            partnerRatePerKg={row.partnerRatePerKg}
+            partnerGstPct={data.partnerGstPct}
+            chargeableWeightKg={row.assignment?.chargeableWeightKg ?? null}
             onClose={() => setDraftFor(null)}
             onSaved={() => { setDraftFor(null); onDataChanged(); }}
           />

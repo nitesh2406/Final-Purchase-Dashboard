@@ -13,7 +13,10 @@
 var SP_PARTNERS_SHEET_ = 'Shipping_Partners';
 var SP_PARTNER_HEADERS_ = ['ID', 'Name', 'GSTIN', 'Rate Per Kg', 'Active', 'Created By', 'Created At', 'Updated By', 'Updated At'];
 var SP_ASSIGN_SHEET_ = 'Batch_Shipping_Partner';
-var SP_ASSIGN_HEADERS_ = ['Batch ID', 'Partner ID', 'Set By', 'Set At'];
+// Chargeable Weight Kg (col 5, 2026-10-01): a per-batch override of the derived
+// batch weight for a partner-shipped batch, set from the CNF draft modal. Blank
+// = no override; the partner bill then pre-fills from the derived batch weight.
+var SP_ASSIGN_HEADERS_ = ['Batch ID', 'Partner ID', 'Set By', 'Set At', 'Chargeable Weight Kg'];
 var SP_BILLS_SHEET_ = 'Shipping_Partner_Bills';
 var SP_BILL_HEADERS_ = ['ID', 'Partner ID', 'Batch ID', 'Bill No', 'Bill Date', 'File URL', 'Weight Kg', 'Rate Per Kg',
   'Expected Fee', 'Fee', 'GST', 'Total', 'Override Reason', 'Status', 'Submitted By', 'Decided By', 'Decided At',
@@ -159,9 +162,20 @@ function saveShippingPartner_(payload) {
 
 // ── Batch → partner ─────────────────────────────────────────
 
+// Older Batch_Shipping_Partner sheets (pre-2026-10-01) have only the first four
+// columns; add the Chargeable Weight Kg header before writing col 5.
+function spEnsureAssignColumns_(sheet) {
+  var header = sheet.getRange(1, 1, 1, SP_ASSIGN_HEADERS_.length).getValues()[0];
+  if (String(header[4] || '') !== SP_ASSIGN_HEADERS_[4]) {
+    sheet.getRange(1, 1, 1, SP_ASSIGN_HEADERS_.length).setValues([SP_ASSIGN_HEADERS_]);
+  }
+}
+
 function readBatchPartnerAssignments_() {
   return spRows_(SP_ASSIGN_SHEET_).map(function (x) {
-    return { batchId: String(x.r[0]).trim(), partnerId: String(x.r[1] || '').trim(), setBy: String(x.r[2] || ''), setAt: spIso_(x.r[3]), rowNumber: x.rowNumber };
+    var cw = Number(x.r[4]);
+    return { batchId: String(x.r[0]).trim(), partnerId: String(x.r[1] || '').trim(), setBy: String(x.r[2] || ''), setAt: spIso_(x.r[3]),
+             chargeableWeightKg: (x.r[4] !== '' && x.r[4] != null && !isNaN(cw) && cw > 0) ? cw : null, rowNumber: x.rowNumber };
   });
 }
 
@@ -207,7 +221,8 @@ function getBatchShippingPartners_() {
     var reason = spBatchLockReason_(a.batchId, invoices, bills);
     return {
       batchId: a.batchId, partnerId: a.partnerId, partnerName: names[a.partnerId] || a.partnerId,
-      locked: reason !== '', lockReason: reason, setBy: a.setBy, setAt: a.setAt
+      locked: reason !== '', lockReason: reason, setBy: a.setBy, setAt: a.setAt,
+      chargeableWeightKg: a.chargeableWeightKg
     };
   });
 }
@@ -236,10 +251,47 @@ function setBatchShippingPartner_(payload) {
     var reason = spBatchLockReason_(batchId, readCnfInvoices_(), readPartnerBills_());
     if (reason) throw new Error('The shipping partner of ' + batchId + ' is locked: ' + reason);
     var sheet = spSheet_(SP_ASSIGN_SHEET_, SP_ASSIGN_HEADERS_, true);
-    var row = [batchId, partnerId, who, new Date().toISOString()];
+    spEnsureAssignColumns_(sheet);
+    // Keep any chargeable-weight override (col 5): it is a physical weight,
+    // unrelated to which partner ships the batch.
+    var keepWeight = current && current.chargeableWeightKg ? current.chargeableWeightKg : '';
+    var row = [batchId, partnerId, who, new Date().toISOString(), keepWeight];
     if (current) sheet.getRange(current.rowNumber, 1, 1, row.length).setValues([row]);
     else sheet.appendRow(row);
     return { status: 'success', batchId: batchId, partnerId: partnerId };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Set (or clear) a partner-shipped batch's chargeable-weight override — the
+// weight its partner's Ledgers bill pre-fills from, in place of the derived
+// batch weight. payload: { batchId, weightKg, user_email (proxy) }. weightKg 0
+// or blank clears the override. Refused for KREIZ batches and unset partners:
+// KREIZ's weight lives on its CNF draft, not here.
+function setBatchChargeableWeight_(payload) {
+  var p = payload || {};
+  cnfRequireUser_(p);
+  var batchId = String(p.batchId || '').trim();
+  if (!batchId) throw new Error('batchId is required');
+  var raw = p.weightKg;
+  var clearing = raw === '' || raw === null || raw === undefined;
+  var weight = clearing ? 0 : parseFloat(raw);
+  if (!clearing && (isNaN(weight) || weight < 0)) throw new Error('Chargeable weight must be a non-negative number');
+  weight = clearing ? 0 : cnfRound2_(weight);
+
+  var lock = spLock_('chargeable weight');
+  try {
+    var type = spBatchTypes_()[batchId];
+    if (!type) throw new Error('Batch ' + batchId + ' not found');
+    if (type !== 'air') throw new Error('Batch ' + batchId + ' is not an air batch');
+    var current = readBatchPartnerAssignments_().filter(function (a) { return a.batchId === batchId; })[0];
+    if (!current || !current.partnerId) throw new Error('Set the batch\'s shipping partner first');
+    if (current.partnerId === CNF_VENDOR_CODE_) throw new Error('KREIZ batches do not use a chargeable-weight override; set the weight on the draft invoice instead');
+    var sheet = spSheet_(SP_ASSIGN_SHEET_, SP_ASSIGN_HEADERS_, true);
+    spEnsureAssignColumns_(sheet);
+    sheet.getRange(current.rowNumber, 5, 1, 1).setValues([[weight > 0 ? weight : '']]);
+    return { status: 'success', batchId: batchId, chargeableWeightKg: weight > 0 ? weight : null };
   } finally {
     lock.releaseLock();
   }

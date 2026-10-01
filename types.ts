@@ -888,6 +888,7 @@ export interface BatchShippingPartner {
   lockReason: string;
   setBy: string;
   setAt: string;
+  chargeableWeightKg: number | null; // per-batch override of the derived batch weight (partner batches)
 }
 
 export type PartnerBillStatus = 'Pending Approval' | 'Approved' | 'Rejected';

@@ -27,6 +27,15 @@ export function checkPartnerBill(i: { weightKg: number; ratePerKg: number; fee: 
   return { expectedFee, defaultGst, feeOff, totalOff, gstOff, needsOverride: feeOff || totalOff || gstOff };
 }
 
+// The partner's expected fee for a batch: ₹/kg × weight, + gstPct GST. Shown as
+// context in the CNF draft modal (billed by the partner on Ledgers, never in
+// CNF's invoice). Same arithmetic as the bill's expected fee / default GST.
+export function computePartnerFeeEstimate(ratePerKg: number, weightKg: number, gstPct = PARTNER_GST_PCT): { fee: number; gst: number; total: number } {
+  const fee = round2((Number(ratePerKg) || 0) * (Number(weightKg) || 0));
+  const gst = round2(fee * gstPct / 100);
+  return { fee, gst, total: round2(fee + gst) };
+}
+
 // Same rule as logPartnerPayment_: amount > 0, TDS ≥ 0, amount + TDS ≤ balance.
 export function paymentFits(balance: number, amount: number, tds: number): boolean {
   return amount > 0 && tds >= 0 && amount + tds <= balance + 0.01;

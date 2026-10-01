@@ -131,7 +131,7 @@ function doPost(e) {
 var PROXY_KEY_ALWAYS_ = {
   log_cnf_goods_invoice: true, approve_cnf_goods_invoice: true, reject_cnf_goods_invoice: true,
   save_cnf_draft_invoice: true, payment_reset_backup: true, log_vendor_discount: true,
-  save_shipping_partner: true, set_batch_shipping_partner: true, log_partner_bill: true,
+  save_shipping_partner: true, set_batch_shipping_partner: true, set_batch_chargeable_weight: true, log_partner_bill: true,
   approve_partner_bill: true, reject_partner_bill: true, log_partner_payment: true, void_partner_payment: true,
   save_partner_gst_rate: true, save_cnf_air_rate: true
 };
@@ -621,6 +621,10 @@ function doPostInner_(e) {
 
       case 'set_batch_shipping_partner':
         result = setBatchShippingPartner_(payload);
+        break;
+
+      case 'set_batch_chargeable_weight':
+        result = setBatchChargeableWeight_(payload);
         break;
 
       case 'log_partner_bill':

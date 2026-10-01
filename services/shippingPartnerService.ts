@@ -20,7 +20,8 @@ export async function fetchShippingPartners(): Promise<ShippingPartner[]> {
 }
 
 export async function fetchBatchShippingPartners(): Promise<BatchShippingPartner[]> {
-  return ensureOk(await callGas('get_batch_shipping_partners', {}, 1), 'load batch shipping partners').assignments || [];
+  const assignments = ensureOk(await callGas('get_batch_shipping_partners', {}, 1), 'load batch shipping partners').assignments || [];
+  return assignments.map((a: any) => ({ ...a, chargeableWeightKg: a.chargeableWeightKg ?? null }));
 }
 
 export async function fetchPartnerBills(partnerId?: string): Promise<PartnerBill[]> {
@@ -51,6 +52,14 @@ export async function saveShippingPartner(input: SaveShippingPartnerInput): Prom
 
 export async function setBatchShippingPartner(batchId: string, partnerId: string): Promise<void> {
   ensureOk(await callGasAuthed('set_batch_shipping_partner', { batchId, partnerId }), 'set the shipping partner');
+}
+
+// A partner-shipped batch's chargeable-weight override (the weight its partner's
+// Ledgers bill pre-fills from). weightKg 0 clears it and falls back to the
+// derived batch weight. Returns the stored value (null when cleared).
+export async function setBatchChargeableWeight(batchId: string, weightKg: number): Promise<number | null> {
+  const r = ensureOk(await callGasAuthed('set_batch_chargeable_weight', { batchId, weightKg }), 'save the chargeable weight');
+  return r.chargeableWeightKg ?? null;
 }
 
 export interface LogPartnerBillInput {
