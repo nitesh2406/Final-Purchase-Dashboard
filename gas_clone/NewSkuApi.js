@@ -3777,6 +3777,44 @@ function apiUpdateSkuFields(payload) {
         platforms.easyecom = result.ok ? 'success' : 'failed';
         platformDetails.easyecom = { payload: { ...eeFields, customFields: eeCustomFields }, response: result.message || (result.ok ? 'OK' : '') };
         if (!result.ok) Logger.log('apiUpdateSkuFields: EasyEcom update failed — ' + result.message);
+
+        // Mirror the same change into the local 'EE Product Master' sheet so
+        // reads that price or match from it see it NOW, instead of waiting for
+        // the next daily full EasyEcom resync. This is what unblocks a
+        // "set the weight in Update SKU, then Retry EasyEcom push" sequence:
+        // the push re-prices via priceLinesInInr_ -> loadPoPricingInputs_,
+        // which reads the package weight straight off this sheet. Only on a
+        // successful EasyEcom update, so the local copy never diverges from
+        // what EasyEcom actually accepted. Best-effort — a hiccup here must
+        // not fail the save (the daily resync self-heals either way).
+        if (result.ok) {
+          try {
+            const masterRow = { 'SKU': before.ee_sku };
+            if (touched('listing_name') || touched('variant')) masterRow['Product Name'] = eeFields.ModelName;
+            if (touched('pkg_weight_gm')) masterRow['Weight'] = after.pkg_weight_gm;
+            if (touched('pkg_height_cm')) masterRow['Height'] = after.pkg_height_cm;
+            if (touched('pkg_length_cm')) masterRow['Length'] = after.pkg_length_cm;
+            if (touched('pkg_width_cm'))  masterRow['Width']  = after.pkg_width_cm;
+            if (touched('pack_size'))     masterRow['Pack Size'] = after.pack_size || '';
+            if (touched('mrp'))           masterRow['MRP'] = after.mrp;
+            if (touched('shopify_selling_price')) masterRow['POS Selling Price'] = after.shopify_selling_price;
+            if (touched('unit_price'))    masterRow['RMB_Price'] = after.unit_price;
+            if ((touched('unit_price') || touched('pkg_weight_gm')) && pricing) masterRow['Cost'] = pricing.landing;
+            if (touched('ean')) { masterRow['EAN'] = after.ean || ''; masterRow['EE Scan Identifier'] = after.ean || ''; }
+            if (touched('fnsku')) masterRow['FNSKU'] = after.fnsku || before.ee_sku;
+            if (touched('factory_code')) {
+              if (eeCustomFields['Article Number'] !== undefined) masterRow['Article Number'] = eeCustomFields['Article Number'];
+              if (eeFields.AccountingSKU !== undefined) masterRow['Other Factory Item Code'] = eeFields.AccountingSKU;
+            }
+            if (touched('lead_time'))     masterRow['Lead_Time'] = after.lead_time || '';
+            if (touched('moq'))           masterRow['MOQ'] = after.moq || '';
+            if (touched('threshold_qty')) masterRow['Threshold_Qty'] = after.threshold_qty || '';
+            if (touched('supplier_code')) masterRow['Supplier_Code'] = after.supplier_code || '';
+            if (Object.keys(masterRow).length > 1) upsertEeProductMasterRow_(masterRow);
+          } catch (mirrorErr) {
+            Logger.log('apiUpdateSkuFields: EE Product Master local mirror failed — ' + mirrorErr.message);
+          }
+        }
       } catch(e) {
         platforms.easyecom = 'failed';
         platformDetails.easyecom = { response: e.message };
