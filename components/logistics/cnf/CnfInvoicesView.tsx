@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../../ui/Card';
 import { Button } from '../../ui/Button';
 import { invalidateReadCache } from '../../../services/gasApi';
-import { fetchCnfShipmentValues, fetchCnfGoodsInvoices, fetchCnfAncillaryValues, approveCnfGoodsInvoice, rejectCnfGoodsInvoice } from '../../../services/cnfService';
-import type { CnfShipmentValue, CnfGoodsInvoice, CnfAncillaryValue } from '../../../types';
+import { fetchCnfShipmentValues, fetchCnfGoodsInvoices, fetchCnfAncillaryValues, fetchCnfDraftInvoices, approveCnfGoodsInvoice, rejectCnfGoodsInvoice } from '../../../services/cnfService';
+import type { CnfShipmentValue, CnfGoodsInvoice, CnfAncillaryValue, CnfDraftInvoice } from '../../../types';
 import { LogCnfInvoiceModal } from './LogCnfInvoiceModal';
+import { computeReceivableFigures } from './receivable';
 import { fmtInr } from './cnfFormat';
 import { readViewCache, writeViewCache } from './viewCache';
 
@@ -20,13 +21,14 @@ const STATUS_BADGE: Record<string, string> = {
 };
 const badge = (s: string) => `px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${STATUS_BADGE[s] || 'bg-slate-100 text-slate-500'}`;
 
-type CachedView = { shipments: CnfShipmentValue[]; invoices: CnfGoodsInvoice[]; ancillary?: CnfAncillaryValue[] };
+type CachedView = { shipments: CnfShipmentValue[]; invoices: CnfGoodsInvoice[]; ancillary?: CnfAncillaryValue[]; drafts?: CnfDraftInvoice[] };
 
 export const CnfInvoicesView: React.FC<{ refreshKey: number; onDataChanged: () => void }> = ({ refreshKey, onDataChanged }) => {
   const cached = readViewCache<CachedView>('invoices');
   const [shipments, setShipments] = useState<CnfShipmentValue[]>(cached?.shipments ?? []);
   const [invoices, setInvoices] = useState<CnfGoodsInvoice[]>(cached?.invoices ?? []);
   const [ancillary, setAncillary] = useState<CnfAncillaryValue[]>(cached?.ancillary ?? []);
+  const [drafts, setDrafts] = useState<CnfDraftInvoice[]>(cached?.drafts ?? []);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -44,12 +46,13 @@ export const CnfInvoicesView: React.FC<{ refreshKey: number; onDataChanged: () =
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [s, i, a] = await Promise.all([fetchCnfShipmentValues(), fetchCnfGoodsInvoices(), fetchCnfAncillaryValues()]);
+      const [s, i, a, d] = await Promise.all([fetchCnfShipmentValues(), fetchCnfGoodsInvoices(), fetchCnfAncillaryValues(), fetchCnfDraftInvoices()]);
       if (mine !== loadSeq.current) return;
-      writeViewCache('invoices', { shipments: s, invoices: i, ancillary: a });
+      writeViewCache('invoices', { shipments: s, invoices: i, ancillary: a, drafts: d });
       setShipments(s);
       setInvoices(i);
       setAncillary(a);
+      setDrafts(d);
     } catch (err: any) {
       if (mine === loadSeq.current) setLoadError(err.message || 'Failed to load CNF invoices');
     } finally {
@@ -59,6 +62,9 @@ export const CnfInvoicesView: React.FC<{ refreshKey: number; onDataChanged: () =
 
   useEffect(() => { load(refreshKey > 0); }, [refreshKey]);
 
+  // Per-shipment "to be billed / billed / remaining" against the batch draft
+  // invoice when one exists (goods + CNF charge + GST), else goods only.
+  const receivable = useMemo(() => computeReceivableFigures(shipments, drafts), [shipments, drafts]);
   const delivered = useMemo(() => shipments.filter(s => s.batchStatus === 'Delivered'), [shipments]);
   const openToInvoice = useMemo(() => delivered.filter(s => s.eligible && s.remainingInr >= 1), [delivered]);
   const summaryRows = showAll ? delivered : openToInvoice;
@@ -99,7 +105,7 @@ export const CnfInvoicesView: React.FC<{ refreshKey: number; onDataChanged: () =
         <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">Receivable from CNF ({summaryRows.length})</h3>
-            <p className="text-xs text-slate-400 mt-0.5">Delivered shipments whose vendor invoice is fully paid, and how much of that value CNF has invoiced.</p>
+            <p className="text-xs text-slate-400 mt-0.5">Delivered shipments whose vendor invoice is fully paid. "To be billed" is the batch's draft invoice (goods + CNF charge + GST) when one exists, else goods only.</p>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             <label className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -116,8 +122,8 @@ export const CnfInvoicesView: React.FC<{ refreshKey: number; onDataChanged: () =
                 <th className={th}>Batch</th>
                 <th className={th}>Shipment</th>
                 <th className={th}>Vendor</th>
-                <th className={`${th} text-right`}>Goods Paid (INR)</th>
-                <th className={`${th} text-right`}>CNF Invoiced</th>
+                <th className={`${th} text-right`}>To be billed</th>
+                <th className={`${th} text-right`}>Billed</th>
                 <th className={`${th} text-right`}>Remaining</th>
                 <th className={th}>Status</th>
               </tr>
@@ -127,19 +133,25 @@ export const CnfInvoicesView: React.FC<{ refreshKey: number; onDataChanged: () =
                 <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
               ) : summaryRows.length === 0 ? (
                 <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Nothing waiting for a CNF invoice.</td></tr>
-              ) : summaryRows.map(s => (
+              ) : summaryRows.map(s => {
+                const r = receivable.get(s.shipmentId) ?? { toBill: s.paidInr, billed: s.invoicedInr, remaining: s.eligible ? s.remainingInr : 0, hasDraft: false };
+                return (
                 <tr key={s.shipmentId}>
                   <td className="px-4 py-3 font-mono">{s.batchId}</td>
                   <td className="px-4 py-3 font-mono">{s.shipmentId}</td>
                   <td className="px-4 py-3">{s.vendorName} ({s.vendorCode})</td>
-                  <td className="px-4 py-3 text-right font-mono">{fmtInr(s.paidInr)}</td>
-                  <td className="px-4 py-3 text-right font-mono">{fmtInr(s.invoicedInr)}</td>
-                  <td className="px-4 py-3 text-right font-mono">{s.eligible ? fmtInr(s.remainingInr) : '—'}</td>
+                  <td className="px-4 py-3 text-right font-mono">
+                    {fmtInr(r.toBill)}
+                    <div className="text-[10px] font-sans text-slate-400">{r.hasDraft ? 'incl. CNF charge + GST' : 'goods only'}</div>
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono">{fmtInr(r.billed)}</td>
+                  <td className="px-4 py-3 text-right font-mono">{s.eligible ? fmtInr(r.remaining) : '—'}</td>
                   <td className="px-4 py-3">
                     {s.eligible ? <span className={badge(s.invoiceStatus)}>{s.invoiceStatus}</span> : <span className="text-xs text-slate-400">{s.ineligibleReason}</span>}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
