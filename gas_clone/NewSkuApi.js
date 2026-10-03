@@ -1730,7 +1730,7 @@ function priceLinesInInr_(lines) {
     if (!pricing) {
       unpriced.push(l.sku + ' (' + (
         !l.rmbPrice ? 'no RMB price on the shipment line'
-        : (l.rmbPrice <= threshold && !weightGm) ? 'no package weight on EasyEcom'
+        : (l.rmbPrice >= threshold && !weightGm) ? 'no package weight on EasyEcom'
         : 'pricing failed') + ')');
       return;
     }
@@ -1783,7 +1783,7 @@ function getExistingPoLines_(shipmentId) {
       if (!pricing) {
         unpriced.push(`${sku} (${
           !rmbPrice ? 'no RMB price on the shipment line'
-          : (rmbPrice <= threshold && !weightGm) ? 'no package weight on EasyEcom'
+          : (rmbPrice >= threshold && !weightGm) ? 'no package weight on EasyEcom'
           : 'pricing failed'})`);
         return;
       }
@@ -3077,8 +3077,8 @@ function explainPricingFailure_(unitPriceCny, weightGm, config) {
            `Fix the sheet, then retry.`;
   }
   const threshold = Number(config.threshold) || 40;
-  if (unitPriceCny <= threshold && !weightGm) {
-    return `Package weight is required for items costing ¥${threshold} or less (they ship by air, charged per gram). ` +
+  if (unitPriceCny >= threshold && !weightGm) {
+    return `Package weight is required for items costing ¥${threshold} or more (they ship by air, charged per gram). ` +
            `Enter Pkg Weight, save, then retry.`;
   }
   return 'Pricing calculation failed — check the cost and the pricing config.';
@@ -3103,11 +3103,11 @@ function calculatePricing_(unitPriceCny, weightGm, config) {
   const shopifyCost  = config.shopify_cost_pct|| 0.18;
   const gstRate      = config.gst_rate        != null ? config.gst_rate : 0.05;
 
-  // Step 1: Landing Price — RMB price ABOVE threshold ships SEA (multiplier
-  // on the converted cost); at/below threshold ships AIR (converted cost
-  // plus per-gram air freight).
+  // Step 1: Landing Price — RMB price BELOW threshold ships SEA (multiplier
+  // on the converted cost); at/above threshold ships AIR (converted cost
+  // plus per-gram air freight), which needs a package weight.
   let landing, mode;
-  if (unitPriceCny > threshold) {
+  if (unitPriceCny < threshold) {
     mode    = 'SEA';
     landing = unitPriceCny * cnyRate * seaMult;
   } else {

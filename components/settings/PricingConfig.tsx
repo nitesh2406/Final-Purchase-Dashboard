@@ -392,7 +392,7 @@ export const PricingConfig: React.FC<{
                     <SettingRow label="Sea Freight Multiplier" unit="×" value={config.SEA_MULTIPLIER} step={0.01}
                         onChange={v => update('SEA_MULTIPLIER', v)} />
                     <SettingRow label="AIR / SEA Threshold" unit="RMB ¥" value={config.THRESHOLD} step={1}
-                        description="RMB price above this ships SEA; at or below ships AIR."
+                        description="RMB price below this ships SEA; at or above ships AIR."
                         onChange={v => update('THRESHOLD', v)} />
                     <SettingRow label="Pick & Pack Fee" unit="₹ / unit" value={config.PICK_PACK} step={1}
                         onChange={v => update('PICK_PACK', v)} />

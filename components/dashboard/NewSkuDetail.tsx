@@ -704,9 +704,9 @@ export const NewSkuDetail: React.FC<{
     // prices is the honest result; the banner below says why.
     if (!hasPricingBrackets(config)) return null;
 
-    // Step 1: Landing — RMB price ABOVE threshold ships SEA; at/below ships AIR
+    // Step 1: Landing — RMB price BELOW threshold ships SEA; at/above ships AIR
     let landing: number, mode: string;
-    if (rmbPrice > config.threshold) {
+    if (rmbPrice < config.threshold) {
       mode    = 'SEA';
       landing = rmbPrice * config.cny_conv_rate * config.sea_multiplier;
     } else {
@@ -2567,7 +2567,7 @@ export const NewSkuDetail: React.FC<{
                   </Button>
                   {needsWeight && (
                     <p className="text-[10px] text-amber-600 dark:text-amber-400 -mt-1">
-                      Enter Pkg Weight first — items costing ¥{pricingConfig?.threshold ?? 40} or less ship by air and are priced per gram.
+                      Enter Pkg Weight first — items costing ¥{pricingConfig?.threshold ?? 40} or more ship by air and are priced per gram.
                     </p>
                   )}
                   {canDoStep('ee') && (
